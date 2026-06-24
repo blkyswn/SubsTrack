@@ -1,0 +1,6 @@
+{
+  "name": "Bookish",
+  "description": "A book subscriptions and pre-orders tracking application featuring beautiful interactive stats, offline-first SQLite persistence via Room, custom categories, calendar views, and Excel-compatible CSV data exporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

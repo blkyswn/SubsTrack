@@ -1,0 +1,44 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Outer decorative shadow/glow -->
+    <path
+        android:fillColor="#336366F1"
+        android:pathData="M54,18 A36,36 0 1,1 53.9,18 Z" />
+
+    <!-- Book base / Cover -->
+    <path
+        android:fillColor="#F43F5E"
+        android:pathData="M24,70 L24,36 C24,30 28,28 54,34 C80,28 84,30 84,36 L84,70 C84,64 80,62 54,66 C28,62 24,64 24,70 Z" />
+
+    <!-- Left Book Pages -->
+    <path
+        android:fillColor="#FDFEFE"
+        android:pathData="M27,67 L27,34 C27,30 30,29 54,33 L54,64 C30,60 27,61 27,67 Z" />
+
+    <!-- Right Book Pages -->
+    <path
+        android:fillColor="#F1F5F9"
+        android:pathData="M81,67 L81,34 C81,30 78,29 54,33 L54,64 C78,60 81,61 81,67 Z" />
+
+    <!-- Book Spine/Center Shadow -->
+    <path
+        android:fillColor="#CBD5E1"
+        android:pathData="M53.5,33 L54.5,33 L54.5,64 L53.5,64 Z" />
+
+    <!-- Sparkle/Star Indicator -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M54,16 L56,22 L62,24 L56,26 L54,32 L52,26 L46,24 L52,22 Z" />
+        
+    <!-- Smaller Sparkles -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M34,22 L35,25 L38,26 L35,27 L34,30 L33,27 L30,26 L33,25 Z" />
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M74,22 L75,25 L78,26 L75,27 L74,30 L73,27 L70,26 L73,25 Z" />
+</vector>
