@@ -53,6 +53,9 @@ interface ScheduledSubscriptionDao {
     @Query("SELECT * FROM scheduled_subscriptions ORDER BY dueDate ASC")
     fun getAllScheduledSubscriptions(): Flow<List<ScheduledSubscription>>
 
+    @Query("SELECT * FROM scheduled_subscriptions WHERE subscriptionTypeId = :subTypeId")
+    suspend fun getScheduledSubscriptionsForType(subTypeId: Int): List<ScheduledSubscription>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(scheduledSubscription: ScheduledSubscription): Long
 
@@ -61,6 +64,12 @@ interface ScheduledSubscriptionDao {
 
     @Delete
     suspend fun delete(scheduledSubscription: ScheduledSubscription)
+
+    @Query("SELECT * FROM scheduled_subscriptions WHERE id = :id LIMIT 1")
+    suspend fun getScheduledSubscriptionById(id: Int): ScheduledSubscription?
+
+    @Query("DELETE FROM scheduled_subscriptions WHERE subscriptionTypeId = :subTypeId AND dueDate > :date")
+    suspend fun deleteScheduledSubsAfterDate(subTypeId: Int, date: Long)
 }
 
 @Dao
@@ -76,4 +85,28 @@ interface PreorderDao {
 
     @Delete
     suspend fun delete(preorder: Preorder)
+}
+
+@Dao
+interface SubscriptionSkipDao {
+    @Query("SELECT * FROM subscription_skips ORDER BY id ASC")
+    fun getAllSubscriptionSkips(): Flow<List<SubscriptionSkip>>
+
+    @Query("SELECT * FROM subscription_skips WHERE subscriptionTypeId = :subTypeId LIMIT 1")
+    suspend fun getSkipForSubscriptionType(subTypeId: Int): SubscriptionSkip?
+
+    @Query("SELECT * FROM subscription_skips WHERE subscriptionTypeId = :subTypeId ORDER BY id ASC")
+    suspend fun getSkipsForSubscriptionType(subTypeId: Int): List<SubscriptionSkip>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(subscriptionSkip: SubscriptionSkip): Long
+
+    @Update
+    suspend fun update(subscriptionSkip: SubscriptionSkip)
+
+    @Delete
+    suspend fun delete(subscriptionSkip: SubscriptionSkip)
+
+    @Query("DELETE FROM subscription_skips WHERE subscriptionTypeId = :subTypeId")
+    suspend fun deleteBySubscriptionTypeId(subTypeId: Int)
 }

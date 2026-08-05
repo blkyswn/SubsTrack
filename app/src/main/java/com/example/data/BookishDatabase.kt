@@ -11,9 +11,10 @@ import androidx.room.RoomDatabase
         Bookstore::class,
         SubscriptionType::class,
         ScheduledSubscription::class,
-        Preorder::class
+        Preorder::class,
+        SubscriptionSkip::class
     ],
-    version = 1,
+    version = 10,
     exportSchema = false
 )
 abstract class BookishDatabase : RoomDatabase() {
@@ -22,6 +23,7 @@ abstract class BookishDatabase : RoomDatabase() {
     abstract fun subscriptionTypeDao(): SubscriptionTypeDao
     abstract fun scheduledSubscriptionDao(): ScheduledSubscriptionDao
     abstract fun preorderDao(): PreorderDao
+    abstract fun subscriptionSkipDao(): SubscriptionSkipDao
 
     companion object {
         @Volatile

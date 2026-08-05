@@ -35,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.Bookstore
 import com.example.ui.viewmodel.BookishViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +53,24 @@ fun BookstoresScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
+    val onDeleteBookstore: (Bookstore) -> Unit = { bookstore ->
+        viewModel.deleteBookstore(bookstore)
+        coroutineScope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = snackbarHostState.showSnackbar(
+                message = "Deleted bookstore: ${bookstore.name}",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.restoreBookstore(bookstore)
+            }
+        }
+    }
 
     val filteredBookstores = remember(bookstores, searchQuery) {
         if (searchQuery.isBlank()) {
@@ -122,6 +141,7 @@ fun BookstoresScreen(
                 }
             )
         },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         modifier = modifier
     ) { innerPadding ->
         if (bookstores.isEmpty()) {
@@ -194,14 +214,77 @@ fun BookstoresScreen(
                                 modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp)
                             )
                         }
-                        items(stores) { bookstore ->
-                            BookstoreListItem(
-                                bookstore = bookstore,
-                                onClick = {
-                                    selectedBookstore = bookstore
-                                    showDetailDialog = true
+                        items(stores, key = { it.id }) { bookstore ->
+                             val dismissState = rememberSwipeToDismissBoxState(
+                                confirmValueChange = { dismissValue ->
+                                    when (dismissValue) {
+                                        SwipeToDismissBoxValue.StartToEnd -> {
+                                            onDeleteBookstore(bookstore)
+                                            true
+                                        }
+                                        SwipeToDismissBoxValue.EndToStart -> {
+                                            selectedBookstore = bookstore
+                                            showEditDialog = true
+                                            false
+                                        }
+                                        else -> false
+                                    }
                                 }
                             )
+
+                            SwipeToDismissBox(
+                                state = dismissState,
+                                backgroundContent = {
+                                    val color = when (dismissState.dismissDirection) {
+                                        SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.errorContainer
+                                        SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.secondaryContainer
+                                        else -> Color.Transparent
+                                    }
+                                    val alignment = when (dismissState.dismissDirection) {
+                                        SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
+                                        SwipeToDismissBoxValue.EndToStart -> Alignment.CenterEnd
+                                        else -> Alignment.Center
+                                    }
+                                    val icon = when (dismissState.dismissDirection) {
+                                        SwipeToDismissBoxValue.StartToEnd -> Icons.Default.Delete
+                                        SwipeToDismissBoxValue.EndToStart -> Icons.Default.Edit
+                                        else -> null
+                                    }
+                                    val iconTint = when (dismissState.dismissDirection) {
+                                        SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.onErrorContainer
+                                        SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.onSecondaryContainer
+                                        else -> Color.Transparent
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(vertical = 4.dp)
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(color)
+                                            .padding(horizontal = 20.dp),
+                                        contentAlignment = alignment
+                                    ) {
+                                        icon?.let {
+                                            Icon(
+                                                imageVector = it,
+                                                contentDescription = null,
+                                                tint = iconTint
+                                            )
+                                        }
+                                    }
+                                },
+                                enableDismissFromStartToEnd = true,
+                                enableDismissFromEndToStart = true
+                            ) {
+                                BookstoreListItem(
+                                    bookstore = bookstore,
+                                    onClick = {
+                                        selectedBookstore = bookstore
+                                        showEditDialog = true
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -288,7 +371,7 @@ fun BookstoresScreen(
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (!store.profilePic.isNullOrEmpty()) {
+                            if (!store.profilePic.isNullOrEmpty() && store.profilePic != "ic_launcher_foreground") {
                                 AsyncImage(
                                     model = store.profilePic,
                                     contentDescription = "${store.name} Logo",
@@ -296,7 +379,13 @@ fun BookstoresScreen(
                                     modifier = Modifier.fillMaxSize()
                                 )
                             } else {
-                                Icon(imageVector = Icons.Default.Storefront, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                val initial = (store.name.firstOrNull { it.isLetterOrDigit() } ?: 'B').uppercaseChar().toString()
+                                Text(
+                                    text = initial,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
                         Text(store.name, fontWeight = FontWeight.Bold)
@@ -324,12 +413,6 @@ fun BookstoresScreen(
                                     }
                                 }
                                 .padding(vertical = 4.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "This bookstore manages your subscriptions and preorders locally on your device.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
@@ -395,7 +478,7 @@ fun BookstoresScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = {
-                                viewModel.deleteBookstore(store)
+                                onDeleteBookstore(store)
                                 showEditDialog = false
                                 selectedBookstore = null
                             },
@@ -480,7 +563,7 @@ fun BookstoreListItem(
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                if (!bookstore.profilePic.isNullOrEmpty()) {
+                if (!bookstore.profilePic.isNullOrEmpty() && bookstore.profilePic != "ic_launcher_foreground") {
                     AsyncImage(
                         model = bookstore.profilePic,
                         contentDescription = "${bookstore.name} Logo",
@@ -488,11 +571,12 @@ fun BookstoreListItem(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    Icon(
-                        imageVector = Icons.Default.Storefront,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
+                    val initial = (bookstore.name.firstOrNull { it.isLetterOrDigit() } ?: 'B').uppercaseChar().toString()
+                    Text(
+                        text = initial,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }

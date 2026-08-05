@@ -1,44 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    
-    <!-- Outer decorative shadow/glow -->
-    <path
-        android:fillColor="#336366F1"
-        android:pathData="M54,18 A36,36 0 1,1 53.9,18 Z" />
 
-    <!-- Book base / Cover -->
+    <!-- Dark Navy shadow/inner block at top of the book -->
     <path
-        android:fillColor="#F43F5E"
-        android:pathData="M24,70 L24,36 C24,30 28,28 54,34 C80,28 84,30 84,36 L84,70 C84,64 80,62 54,66 C28,62 24,64 24,70 Z" />
+        android:fillColor="#030A24"
+        android:pathData="M18,24 C30,18 48,24 54,30 C60,24 78,18 90,24 L90,27 C78,21 60,27 54,33 C48,27 30,21 18,27 Z" />
 
-    <!-- Left Book Pages -->
+    <!-- Main Book Pages and Cover in Light Mint -->
     <path
-        android:fillColor="#FDFEFE"
-        android:pathData="M27,67 L27,34 C27,30 30,29 54,33 L54,64 C30,60 27,61 27,67 Z" />
+        android:fillColor="#B8D3CE"
+        android:pathData="M18,27 C30,21 48,27 54,33 C60,27 78,21 90,27 L90,81 C78,75 60,81 54,86 C48,81 30,75 18,81 Z" />
 
-    <!-- Right Book Pages -->
+    <!-- Spine Left Vertical Line -->
     <path
-        android:fillColor="#F1F5F9"
-        android:pathData="M81,67 L81,34 C81,30 78,29 54,33 L54,64 C78,60 81,61 81,67 Z" />
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M48.5,33 L48.5,85.5" />
 
-    <!-- Book Spine/Center Shadow -->
+    <!-- Spine Right Vertical Line -->
     <path
-        android:fillColor="#CBD5E1"
-        android:pathData="M53.5,33 L54.5,33 L54.5,64 L53.5,64 Z" />
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:pathData="M59.5,33 L59.5,85.5" />
 
-    <!-- Sparkle/Star Indicator -->
+    <!-- Pill Badge/Detail on Right Page -->
     <path
-        android:fillColor="#F59E0B"
-        android:pathData="M54,16 L56,22 L62,24 L56,26 L54,32 L52,26 L46,24 L52,22 Z" />
-        
-    <!-- Smaller Sparkles -->
+        android:strokeColor="#030A24"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:pathData="M65,40 L81,40" />
+
+    <!-- Stylized Text 'SUBSTRACKED' vertically on Spine -->
+    <!-- S -->
     <path
-        android:fillColor="#38BDF8"
-        android:pathData="M34,22 L35,25 L38,26 L35,27 L34,30 L33,27 L30,26 L33,25 Z" />
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M56,35 L52.5,35 L52.5,36.3 L55.5,36.3 L55.5,37.6 L52,37.6" />
+
+    <!-- U -->
     <path
-        android:fillColor="#38BDF8"
-        android:pathData="M74,22 L75,25 L78,26 L75,27 L74,30 L73,27 L70,26 L73,25 Z" />
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M52.5,38.4 L52.5,41.0 L55.5,41.0 L55.5,38.4" />
+
+    <!-- B -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M52.5,41.8 L52.5,44.4 L55,44.4 C55.5,44.4 55.8,44.1 55.8,43.7 L55.8,43.3 C55.8,42.9 55.5,42.6 55,42.6 L52.5,42.6 M52.5,42.6 L55,42.6 C55.5,42.6 55.8,42.3 55.8,41.9 L55.8,41.8 L52.5,41.8" />
+
+    <!-- S -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M56,45.2 L52.5,45.2 L52.5,46.5 L55.5,46.5 L55.5,47.8 L52,47.8" />
+
+    <!-- T -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M52,48.6 L56,48.6 M54,48.6 L54,51.2" />
+
+    <!-- R -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M52.5,54.6 L52.5,52.0 L55,52.0 C55.5,52.0 55.8,52.3 55.8,52.7 L55.8,53.3 C55.8,53.7 55.5,54.0 55,54.0 L52.5,54.0 M54,53.8 L55.8,54.6" />
+
+    <!-- A -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M52.5,58.0 L52.5,55.4 L55.5,55.4 L55.5,58.0 M52.5,56.7 L55.5,56.7" />
+
+    <!-- C -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M55.8,58.8 L52.5,58.8 L52.5,61.4 L55.8,61.4" />
+
+    <!-- K -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M52.5,62.2 L52.5,64.8 M55.8,62.2 L53.0,63.5 L55.8,64.8" />
+
+    <!-- E -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M55.8,65.6 L52.5,65.6 L52.5,68.2 L55.8,68.2 M52.5,66.9 L55.0,66.9" />
+
+    <!-- D -->
+    <path
+        android:strokeColor="#030A24"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M52.5,69.0 L52.5,71.6 L54.8,71.6 C55.4,71.6 55.8,71.2 55.8,70.6 L55.8,70.0 C55.8,69.4 55.4,69.0 54.8,69.0 L52.5,69.0" />
+
 </vector>
