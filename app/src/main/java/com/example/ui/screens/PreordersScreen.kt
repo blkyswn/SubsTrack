@@ -62,10 +62,10 @@ fun PreordersScreen(
 ) {
     val context = LocalContext.current
     val isDark = isSystemInDarkTheme()
-    val currency = "$"
 
     // Observe flows
     val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
     val preordersList by viewModel.filteredPreordersState.collectAsState()
     val bookstores by viewModel.bookstoresState.collectAsState()
 
@@ -696,8 +696,9 @@ fun PreorderItemRow(
     viewModel: BookishViewModel,
     onDeleted: (Preorder) -> Unit
 ) {
-    val currency = viewModel.userState.collectAsState().value?.currency ?: "$"
-    val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
+    val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
+    val userDateFormatPattern = userState?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
 
     val isDark = isSystemInDarkTheme()
@@ -1066,13 +1067,17 @@ fun AddPreorderDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val currency = viewModel.userState.collectAsState().value?.currency ?: "$"
+    val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
     var selectedBookstoreId by remember { mutableStateOf(bookstores.firstOrNull()?.id ?: 0) }
     var bookTitle by remember { mutableStateOf("") }
     var bookAuthor by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var priceStr by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Preordered") }
+    val calendar = Calendar.getInstance()
+    var saleDateStart by remember { mutableStateOf(calendar.timeInMillis) }
+    var saleDateEnd by remember { mutableStateOf(0L) }
+
     var imageUrl by remember { mutableStateOf("") }
     var rating by remember { mutableStateOf(0.0) }
     var reminderEnabled by remember { mutableStateOf(false) }
@@ -1081,9 +1086,13 @@ fun AddPreorderDialog(
     var reminderMinute by remember { mutableStateOf(0) }
     var showTimePicker by remember { mutableStateOf(false) }
 
-    val calendar = Calendar.getInstance()
-    var saleDateStart by remember { mutableStateOf(calendar.timeInMillis) }
-    var saleDateEnd by remember { mutableStateOf(0L) }
+    val initialTargetDate = if (saleDateEnd > 0L) saleDateEnd else saleDateStart
+    var status by remember { mutableStateOf(if (initialTargetDate > System.currentTimeMillis()) "Upcoming" else "Released") }
+    
+    LaunchedEffect(saleDateStart, saleDateEnd) {
+        val targetDate = if (saleDateEnd > 0L) saleDateEnd else saleDateStart
+        status = if (targetDate > System.currentTimeMillis()) "Upcoming" else "Released"
+    }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
@@ -1450,7 +1459,8 @@ fun EditPreorderDialog(
 ) {
     val pr = preorderWithBookstore.preorder
     val context = LocalContext.current
-    val currency = viewModel.userState.collectAsState().value?.currency ?: "$"
+    val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
 
     var selectedBookstoreId by remember { mutableStateOf(pr.bookstoreId) }
     var bookTitle by remember { mutableStateOf(pr.bookTitle) }

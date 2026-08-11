@@ -427,7 +427,7 @@ fun SubscriptionsScreen(
                                 !it.scheduled.status.equals("Skipped", ignoreCase = true)
                             }
                             val totalSpent = totalSpentScheduled.sumOf { it.subscriptionType?.price ?: 0.0 }
-                            val currency = viewModel.userState.value?.currency ?: "$"
+                            val currency = userState?.currency ?: "$"
 
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 Row(
@@ -852,7 +852,7 @@ fun SubscriptionsScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Est. Spend / Month", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                "${viewModel.userState.value?.currency ?: "$"}${String.format("%.2f", monthlyTotal)}",
+                                "${userState?.currency ?: "$"}${String.format("%.2f", monthlyTotal)}",
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.secondary
@@ -867,7 +867,7 @@ fun SubscriptionsScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Est. Spend / Year", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                "${viewModel.userState.value?.currency ?: "$"}${String.format("%.2f", yearlyTotal)}",
+                                "${userState?.currency ?: "$"}${String.format("%.2f", yearlyTotal)}",
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.secondary
@@ -1008,8 +1008,9 @@ fun SubscriptionsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
-    val currency = viewModel.userState.collectAsState().value?.currency ?: "$"
-    val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
+    val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
+    val userDateFormatPattern = userState?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
     val displayTitle = if (item.scheduled.bookTitle.isBlank()) {
         item.subscriptionType?.title ?: "Subscription"
@@ -1403,7 +1404,8 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewModel) {
-    val currency = viewModel.userState.collectAsState().value?.currency ?: "$"
+    val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
     var showEditDialog by remember { mutableStateOf(false) }
     var isExpanded by remember { mutableStateOf(false) }
     var totalDragX by remember { mutableFloatStateOf(0f) }
@@ -1879,7 +1881,8 @@ fun AddSubscriptionTypeDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val currency = viewModel.userState.collectAsState().value?.currency ?: "$"
+    val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
     var selectedBookstoreId by remember { mutableStateOf(bookstores.firstOrNull()?.id ?: 0) }
     var title by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Active") }
@@ -2326,7 +2329,8 @@ fun EditSubscriptionTypeDialog(
 ) {
     val sub = subscriptionWithBookstore.subscription
     val context = LocalContext.current
-    val currency = viewModel.userState.collectAsState().value?.currency ?: "$"
+    val userState by viewModel.userState.collectAsState()
+    val currency = userState?.currency ?: "$"
 
     var selectedBookstoreId by remember { mutableStateOf(sub.bookstoreId) }
     var title by remember { mutableStateOf(sub.title) }
@@ -2959,6 +2963,7 @@ fun EditScheduledSubscriptionDialog(
     onDismiss: () -> Unit
 ) {
     val sc = scheduledWithDetails.scheduled
+    val subType = scheduledWithDetails.subscriptionType
     val context = LocalContext.current
 
     var bookTitle by remember { mutableStateOf(sc.bookTitle) }
@@ -2970,6 +2975,10 @@ fun EditScheduledSubscriptionDialog(
 
     var dueDate by remember { mutableStateOf(sc.dueDate) }
     var showDueDatePicker by remember { mutableStateOf(false) }
+
+    var reminderHour by remember { mutableStateOf(subType?.reminderHour ?: 8) }
+    var reminderMinute by remember { mutableStateOf(subType?.reminderMinute ?: 0) }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
@@ -2990,7 +2999,7 @@ fun EditScheduledSubscriptionDialog(
                 }
 
                 item {
-                    val subTypeName = scheduledWithDetails.subscriptionType?.title ?: "N/A"
+                    val subTypeName = subType?.title ?: "N/A"
                     OutlinedTextField(
                         value = subTypeName,
                         onValueChange = {},
@@ -3059,6 +3068,43 @@ fun EditScheduledSubscriptionDialog(
                     }
                 }
 
+                if (subType != null) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
+                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .clickable { showTimePicker = true }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
+                                Text(
+                                    text = "Delivery Time: $timeLabel",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Text(
+                                text = "Edit Time",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+
                 item {
                     OutlinedTextField(
                         value = bookTitle,
@@ -3111,6 +3157,16 @@ fun EditScheduledSubscriptionDialog(
 
                 Button(
                     onClick = {
+                        subType?.let { st ->
+                            if (st.reminderHour != reminderHour || st.reminderMinute != reminderMinute) {
+                                viewModel.updateSubscriptionType(
+                                    st.copy(
+                                        reminderHour = reminderHour,
+                                        reminderMinute = reminderMinute
+                                    )
+                                )
+                            }
+                        }
                         viewModel.updateScheduledSubscription(
                             sc.copy(
                                 bookTitle = bookTitle,
@@ -3140,6 +3196,78 @@ fun EditScheduledSubscriptionDialog(
             initialDateMillis = dueDate,
             onDateSelected = { dueDate = it },
             onDismiss = { showDueDatePicker = false }
+        )
+    }
+
+    if (showTimePicker) {
+        var tempHour by remember { mutableStateOf(reminderHour) }
+        var tempMinute by remember { mutableStateOf(reminderMinute) }
+
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("Set Delivery Time", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "Set the time for scheduled subscription events.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Hour", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            RevolverWheelPicker(
+                                items = (0..23).toList(),
+                                selectedItem = tempHour,
+                                onItemSelected = { hr -> tempHour = hr },
+                                modifier = Modifier.width(55.dp),
+                                label = { hr -> String.format("%02d", hr) }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(":", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Min", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            RevolverWheelPicker(
+                                items = (0..59).toList(),
+                                selectedItem = tempMinute,
+                                onItemSelected = { mn -> tempMinute = mn },
+                                modifier = Modifier.width(55.dp),
+                                label = { mn -> String.format("%02d", mn) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        reminderHour = tempHour
+                        reminderMinute = tempMinute
+                        showTimePicker = false
+                    }
+                ) {
+                    Text("Set")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePicker = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }

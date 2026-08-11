@@ -1,7 +1,14 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import com.example.R
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,6 +28,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
@@ -29,9 +37,17 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.*
@@ -72,6 +88,7 @@ fun HomeScreen(
 
     var selectedPreorderForEdit by remember { mutableStateOf<PreorderWithBookstore?>(null) }
     var selectedScheduledForEdit by remember { mutableStateOf<ScheduledWithDetails?>(null) }
+    var groupedEventsPopupData by remember { mutableStateOf<GroupedEventsPopupData?>(null) }
 
     val coroutineScope = rememberCoroutineScope()
     val statsPagerState = rememberPagerState(pageCount = { 2 })
@@ -88,82 +105,197 @@ fun HomeScreen(
     }
 
     val allActiveUpcomingEvents = remember(scheduled, preorders) {
-        val scheduledEvents = scheduled.map {
+        val now = System.currentTimeMillis()
+        val calToday = Calendar.getInstance().apply {
+            timeInMillis = now
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val todayStart = calToday.timeInMillis
+
+        val scheduledEvents = scheduled.filter {
+            val status = it.scheduled.status
+            !it.scheduled.isSkipped &&
+                    !status.equals("Skipped", ignoreCase = true) &&
+                    !status.equals("Received", ignoreCase = true) &&
+                    !status.equals("Cancelled", ignoreCase = true) &&
+                    it.scheduled.dueDate >= todayStart
+        }.map {
+            val subTypeName = it.subscriptionType?.title?.ifBlank { null } ?: it.scheduled.bookTitle
+            val startDt = it.scheduled.dueDate
+            val endDt = it.scheduled.dueDate
+            val reminderHour = if (it.subscriptionType?.reminderEnabled == true) it.subscriptionType?.reminderHour else null
+            val reminderMinute = if (it.subscriptionType?.reminderEnabled == true) it.subscriptionType?.reminderMinute else null
+
             UpcomingEvent(
                 id = "sched_${it.scheduled.id}",
-                title = it.scheduled.bookTitle,
+                title = subTypeName,
                 author = it.scheduled.bookAuthor,
-                date = it.scheduled.dueDate,
+                date = startDt,
+                startDate = startDt,
+                endDate = endDt,
                 type = "scheduled",
                 status = it.scheduled.status,
-                isSkipped = it.scheduled.status.equals("Skipped", ignoreCase = true),
-                subTitle = it.subscriptionType?.title ?: "Scheduled Delivery",
+                isSkipped = false,
+                subTitle = subTypeName,
                 price = it.subscriptionType?.price,
                 rawScheduled = it,
                 rawPreorder = null,
-                reminderHour = it.subscriptionType?.reminderHour ?: 8,
-                reminderMinute = it.subscriptionType?.reminderMinute ?: 0
+                reminderHour = reminderHour,
+                reminderMinute = reminderMinute,
+                hasTime = reminderHour != null
             )
         }
-        val preorderEvents = preorders.map {
+
+        val preorderEvents = preorders.filter {
+            val status = it.preorder.status
+            val endDt = if (it.preorder.rangedSaleDateEnd > 0L) it.preorder.rangedSaleDateEnd else it.preorder.rangedSaleDateStart
+            !status.equals("Received", ignoreCase = true) &&
+                    !status.equals("Cancelled", ignoreCase = true) &&
+                    endDt >= todayStart
+        }.map {
+            val bookstoreName = it.bookstore?.name?.trim() ?: ""
+            val titleText = if (bookstoreName.isNotBlank()) "${it.preorder.bookTitle} ($bookstoreName)" else it.preorder.bookTitle
+            val startDt = it.preorder.rangedSaleDateStart
+            val endDt = if (it.preorder.rangedSaleDateEnd > 0L) it.preorder.rangedSaleDateEnd else startDt
+
+            val calStart = Calendar.getInstance().apply { timeInMillis = startDt }
+            val startHour: Int? = if (calStart.get(Calendar.HOUR_OF_DAY) != 0 || calStart.get(Calendar.MINUTE) != 0) {
+                calStart.get(Calendar.HOUR_OF_DAY)
+            } else null
+            val startMinute: Int? = if (calStart.get(Calendar.HOUR_OF_DAY) != 0 || calStart.get(Calendar.MINUTE) != 0) {
+                calStart.get(Calendar.MINUTE)
+            } else null
+
+            val preorderReminderHour: Int? = if (it.preorder.reminderEnabled) it.preorder.reminderHour else null
+            val preorderReminderMinute: Int? = if (it.preorder.reminderEnabled) it.preorder.reminderMinute else null
+
+            val finalReminderHour = startHour ?: preorderReminderHour
+            val finalReminderMinute = startMinute ?: preorderReminderMinute
+
             UpcomingEvent(
                 id = "pre_${it.preorder.id}",
-                title = it.preorder.bookTitle,
+                title = titleText,
                 author = it.preorder.bookAuthor,
-                date = it.preorder.rangedSaleDateStart,
+                date = startDt,
+                startDate = startDt,
+                endDate = endDt,
                 type = "preorder",
                 status = it.preorder.status,
                 isSkipped = false,
-                subTitle = it.bookstore?.name ?: "Preorder Book",
+                subTitle = bookstoreName,
                 price = it.preorder.price,
                 rawScheduled = null,
                 rawPreorder = it,
-                reminderHour = it.preorder.reminderHour,
-                reminderMinute = it.preorder.reminderMinute
+                reminderHour = finalReminderHour,
+                reminderMinute = finalReminderMinute,
+                hasTime = finalReminderHour != null
             )
         }
+
         (scheduledEvents + preorderEvents)
-            .filter { !it.isSkipped && !it.status.equals("Paid", ignoreCase = true) && !it.status.equals("Renewed", ignoreCase = true) && !it.status.equals("Received", ignoreCase = true) && !it.status.equals("Released", ignoreCase = true) && !it.status.equals("Cancelled", ignoreCase = true) && !it.status.equals("Canceled", ignoreCase = true) }
-            .sortedBy { it.date }
+            .sortedBy { it.startDate }
     }
 
     val upcomingEvents = remember(allActiveUpcomingEvents) {
         allActiveUpcomingEvents.take(5)
     }
 
+    var parentBoxWindowY by remember { mutableFloatStateOf(0f) }
+    var currentTargetY by remember { mutableFloatStateOf(-1f) }
+    val density = LocalDensity.current
+    val defaultTargetY = with(density) { 380.dp.toPx() }
+    val curveHeightPx = with(density) { 380.dp.toPx() }
+
+    val isDark = isSystemInDarkTheme()
+    val backgroundColor = MaterialTheme.colorScheme.background
+    val calendarCardBgColor = MaterialTheme.colorScheme.primary
+
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.AutoStories,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
-                        Text("SubsTrack", fontWeight = FontWeight.Bold)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                modifier = Modifier.testTag("home_top_bar")
-            )
-        },
-        modifier = modifier
+        modifier = modifier,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .clipToBounds()
                 .padding(innerPadding)
+                .onGloballyPositioned { coordinates ->
+                    parentBoxWindowY = coordinates.positionInWindow().y
+                }
         ) {
+            val activeTargetY = if (currentTargetY != -1f) currentTargetY else defaultTargetY
+
+            if (activeTargetY > 0f) {
+                Canvas(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val extraWidth = size.width * 0.25f
+                    val arcWidth = size.width + extraWidth * 2f
+                    val arcRadiusY = arcWidth / 2f
+                    val rectHeight = (activeTargetY - arcRadiusY).coerceAtLeast(0f)
+
+                    val archBrush = Brush.verticalGradient(
+                        0.0f to backgroundColor,
+                        1.0f to calendarCardBgColor,
+                        startY = 0f,
+                        endY = activeTargetY
+                    )
+
+                    // Fill rectangle above the half circle diameter line
+                    if (rectHeight > 0f) {
+                        drawRect(
+                            brush = archBrush,
+                            topLeft = Offset(-extraWidth, 0f),
+                            size = Size(arcWidth, rectHeight)
+                        )
+                    }
+
+                    // Draw wider half circle arc ending at activeTargetY
+                    drawArc(
+                        brush = archBrush,
+                        startAngle = 0f,
+                        sweepAngle = 180f,
+                        useCenter = true,
+                        topLeft = Offset(-extraWidth, activeTargetY - 2f * arcRadiusY),
+                        size = Size(arcWidth, 2f * arcRadiusY)
+                    )
+                }
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(top = 52.dp, bottom = 4.dp)
+                        .testTag("home_top_bar"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoStories,
+                        contentDescription = "SubsTrack Icon",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "SubsTrack",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 24.sp
+                    )
+                }
+            }
+
             // Welcome Header & Calendar Overview Card
             item {
                 val now = System.currentTimeMillis()
@@ -183,44 +315,103 @@ fun HomeScreen(
 
                 val dayNameFormat = remember { SimpleDateFormat("EEEE", Locale.getDefault()) }
                 val dayNumberFormat = remember { SimpleDateFormat("d", Locale.getDefault()) }
-                val nextDayHeaderFormat = remember { SimpleDateFormat("EEEE, d MMM", Locale.getDefault()) }
+                val dayOfWeekFormat = remember { SimpleDateFormat("EEEE", Locale.getDefault()) }
+                val dayMonthFormat = remember { SimpleDateFormat("d MMM", Locale.getDefault()) }
+                val sevenDaysOutStart = todayStart + 7 * 24 * 60 * 60 * 1000L
 
                 val todayDate = Date(now)
                 val todayDayName = dayNameFormat.format(todayDate).uppercase(Locale.getDefault())
                 val todayDayNumber = dayNumberFormat.format(todayDate)
 
-                val todayEvents = allActiveUpcomingEvents.filter { getDayStart(it.date) <= todayStart }
-                val tomorrowEvents = allActiveUpcomingEvents.filter { getDayStart(it.date) == tomorrowStart }
-                val futureEvents = allActiveUpcomingEvents.filter { getDayStart(it.date) >= dayAfterTomorrowStart }
+                fun eventCoversDay(event: UpcomingEvent, targetDayStart: Long): Boolean {
+                    val s = getDayStart(event.startDate)
+                    val e = getDayStart(event.endDate)
+                    return targetDayStart in s..e
+                }
 
-                val nextDayStart = futureEvents.firstOrNull()?.date?.let { getDayStart(it) }
+                val todayEvents = allActiveUpcomingEvents.filter { eventCoversDay(it, todayStart) }
+                val tomorrowEvents = allActiveUpcomingEvents.filter { eventCoversDay(it, tomorrowStart) }
+
+                val futureEvents = allActiveUpcomingEvents.filter { getDayStart(it.startDate) >= dayAfterTomorrowStart }
+                val nextDayStart = futureEvents.firstOrNull()?.let { getDayStart(it.startDate) }
                 val nextDayEvents = if (nextDayStart != null) {
-                    futureEvents.filter { getDayStart(it.date) == nextDayStart }
+                    allActiveUpcomingEvents.filter { eventCoversDay(it, nextDayStart) }
                 } else {
                     emptyList()
                 }
 
-                val displayedToday = todayEvents.take(2)
-                val displayedTomorrow = tomorrowEvents.take(2)
-                val displayedNextDay = nextDayEvents.take(2)
+                val displayedToday = todayEvents
+                val displayedTomorrow = tomorrowEvents
+                val displayedNextDay = nextDayEvents
 
                 val totalDisplayed = displayedToday.size + displayedTomorrow.size + displayedNextDay.size
                 val remainingCount = (allActiveUpcomingEvents.size - totalDisplayed).coerceAtLeast(0)
 
-                Spacer(modifier = Modifier.height(8.dp))
+                val isDark = isSystemInDarkTheme()
+                val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                val (greetingPrefix, greetingIcon) = when {
+                    currentHour in 5..11 -> "Good morning" to Icons.Default.WbSunny
+                    currentHour in 12..17 -> "Good afternoon" to Icons.Default.WbTwilight
+                    else -> "Good night" to Icons.Default.NightsStay
+                }
+                val userName = user?.username?.ifBlank { "User" } ?: "User"
+                val greetingText = "$greetingPrefix, $userName!"
+
+                val greetingBgColor = backgroundColor
+                val greetingBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                        .testTag("home_greeting_box"),
+                    shape = RoundedCornerShape(12.dp),
+                    color = greetingBgColor,
+                    border = BorderStroke(1.dp, greetingBorderColor)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = greetingIcon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = greetingText,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDark) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("home_greeting_text")
+                        )
+                    }
+                }
+
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .onGloballyPositioned { coordinates ->
+                            val cardWindowY = coordinates.positionInWindow().y
+                            val cardHeight = coordinates.size.height
+                            currentTargetY = cardWindowY + (cardHeight * 0.80f) - parentBoxWindowY
+                        }
                         .testTag("welcome_calendar_box"),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(22.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primary
-                    )
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(18.dp)
+                            .padding(horizontal = 16.dp, vertical = 14.dp)
                     ) {
                         // Calendar Widget Layout
                         Row(
@@ -229,234 +420,210 @@ fun HomeScreen(
                         ) {
                             // LEFT COLUMN: Today Date & Today's Events
                             Column(
-                                modifier = Modifier.weight(0.55f)
+                                modifier = Modifier.weight(0.48f)
                             ) {
-                                Text(
-                                    text = todayDayName,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                                )
-                                Text(
-                                    text = todayDayNumber,
-                                    fontSize = 38.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    lineHeight = 40.sp
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (todayEvents.size > 1) {
+                                                Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .clickable {
+                                                        groupedEventsPopupData = GroupedEventsPopupData("Today's Events (${todayEvents.size})", todayEvents)
+                                                    }
+                                            } else Modifier
+                                        ),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = todayDayName,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                                        )
+                                        Text(
+                                            text = todayDayNumber,
+                                            fontSize = 38.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            lineHeight = 40.sp
+                                        )
+                                    }
+                                    if (todayEvents.size > 1) {
+                                        Icon(
+                                            imageVector = Icons.Default.Layers,
+                                            contentDescription = "Grouped events",
+                                            tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
+                                            modifier = Modifier
+                                                .size(18.dp)
+                                                .padding(end = 2.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
 
                                 if (todayEvents.isNotEmpty()) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        todayEvents.take(2).forEach { event ->
-                                            val priceStr = if ((user?.displayAmounts == true) && event.price != null && event.price > 0) " (${currency}${String.format("%.2f", event.price)})" else ""
-                                            val eventDisplayTitle = if (event.type == "scheduled") event.subTitle else event.title
-                                            Box(
-                                                modifier = Modifier
-                                                    .wrapContentWidth()
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.18f))
-                                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                                ) {
-                                                    Icon(
-                                                        imageVector = if (event.type == "scheduled") Icons.Default.CalendarMonth else Icons.Default.Book,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                                        modifier = Modifier.size(13.dp)
-                                                    )
-                                                    Text(
-                                                        text = "$eventDisplayTitle$priceStr",
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.onPrimary,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
+                                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        todayEvents.forEach { event ->
+                                            CalendarBoxEventItem(
+                                                event = event,
+                                                targetDayStart = todayStart,
+                                                userDisplayAmounts = user?.displayAmounts == true,
+                                                currency = currency,
+                                                onClick = {
+                                                    if (event.type == "preorder" && event.rawPreorder != null) {
+                                                        selectedPreorderForEdit = event.rawPreorder
+                                                    } else if (event.type == "scheduled" && event.rawScheduled != null) {
+                                                        selectedScheduledForEdit = event.rawScheduled
+                                                    }
                                                 }
-                                            }
+                                            )
                                         }
                                     }
                                 } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .wrapContentWidth()
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f))
-                                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                                    ) {
-                                        Text(
-                                            text = "No events today",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    }
+                                    Text(
+                                        text = "No events today",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
+                                    )
                                 }
                             }
 
-                            // RIGHT COLUMN: Tomorrow & Next Day with Event
+                            // RIGHT COLUMN: Grouped Future Events
                             Column(
-                                modifier = Modifier.weight(0.45f),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                modifier = Modifier.weight(0.52f),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // SECTION 1: TOMORROW
-                                Column {
+                                val futureEventsList = allActiveUpcomingEvents.filter {
+                                    getDayStart(it.startDate) >= tomorrowStart || getDayStart(it.endDate) >= tomorrowStart
+                                }
+
+                                if (futureEventsList.isEmpty()) {
                                     Text(
-                                        text = "TOMORROW",
+                                        text = "No upcoming events",
                                         fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
                                     )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    if (tomorrowEvents.isNotEmpty()) {
-                                        tomorrowEvents.take(2).forEach { event ->
-                                            val timeStr = if (event.reminderHour != null) String.format("%d:%02d", event.reminderHour, event.reminderMinute ?: 0) else "All day"
-                                            val priceStr = if ((user?.displayAmounts == true) && event.price != null && event.price > 0) " • ${currency}${String.format("%.2f", event.price)}" else ""
-                                            val displayTitle = if (event.type == "scheduled") event.subTitle else event.title
-                                            val displaySubtitle = if (event.type == "scheduled") "$timeStr$priceStr" else "$timeStr • ${event.subTitle}$priceStr"
+                                } else {
+                                    val groupedFuture = futureEventsList.groupBy { event ->
+                                        val startDay = getDayStart(event.startDate)
+                                        if (startDay >= tomorrowStart) startDay else tomorrowStart
+                                    }.toSortedMap()
+
+                                    val topDayGroups = groupedFuture.entries.take(2)
+                                    val displayedFutureCount = topDayGroups.sumOf { it.value.size }
+                                    val totalDisplayedCount = todayEvents.size + displayedFutureCount
+                                    val leftOverCount = (allActiveUpcomingEvents.size - totalDisplayedCount).coerceAtLeast(0)
+
+                                    topDayGroups.forEach { (dayStartTs, eventsForDay) ->
+                                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            val groupHeaderStr = when {
+                                                dayStartTs == tomorrowStart -> "TOMORROW"
+                                                dayStartTs < sevenDaysOutStart -> dayOfWeekFormat.format(Date(dayStartTs)).uppercase(Locale.getDefault())
+                                                else -> dayMonthFormat.format(Date(dayStartTs)).uppercase(Locale.getDefault())
+                                            }
+
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .height(IntrinsicSize.Min)
-                                                    .padding(vertical = 1.dp),
+                                                    .then(
+                                                        if (eventsForDay.size > 1) {
+                                                            Modifier
+                                                                .clip(RoundedCornerShape(4.dp))
+                                                                .clickable {
+                                                                    groupedEventsPopupData = GroupedEventsPopupData("Events for $groupHeaderStr (${eventsForDay.size})", eventsForDay)
+                                                                }
+                                                        } else Modifier
+                                                    ),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .width(3.dp)
-                                                        .fillMaxHeight()
-                                                        .background(
-                                                            MaterialTheme.colorScheme.onPrimary,
-                                                            shape = RoundedCornerShape(2.dp)
-                                                        )
+                                                Text(
+                                                    text = groupHeaderStr,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+                                                    style = TextStyle(
+                                                        platformStyle = PlatformTextStyle(includeFontPadding = false)
+                                                    )
                                                 )
-                                                Column(
-                                                    modifier = Modifier.weight(1f),
-                                                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                                                ) {
-                                                    Text(
-                                                        text = displayTitle,
-                                                        fontSize = 11.5.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = MaterialTheme.colorScheme.onPrimary,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        lineHeight = 14.sp
-                                                    )
-                                                    Text(
-                                                        text = displaySubtitle,
-                                                        fontSize = 10.sp,
-                                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        lineHeight = 12.sp
-                                                    )
+
+                                                if (eventsForDay.size > 1) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Layers,
+                                                            contentDescription = "Grouped events",
+                                                            tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
+                                                            modifier = Modifier.size(11.dp)
+                                                        )
+                                                        Text(
+                                                            text = "${eventsForDay.size} items",
+                                                            fontSize = 9.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
+                                                        )
+                                                    }
                                                 }
                                             }
-                                        }
-                                    } else {
-                                        Text(
-                                            text = "No events tomorrow",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
-                                        )
-                                    }
-                                }
 
-                                // SECTION 2: NEXT DAY WITH EVENT
-                                Column {
-                                    val nextDayHeader = if (nextDayStart != null) {
-                                        nextDayHeaderFormat.format(Date(nextDayStart)).uppercase(Locale.getDefault())
-                                    } else {
-                                        "UPCOMING"
-                                    }
-                                    Text(
-                                        text = nextDayHeader,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    if (nextDayEvents.isNotEmpty()) {
-                                        nextDayEvents.take(2).forEach { event ->
-                                            val timeStr = if (event.reminderHour != null) String.format("%d:%02d", event.reminderHour, event.reminderMinute ?: 0) else "All day"
-                                            val priceStr = if ((user?.displayAmounts == true) && event.price != null && event.price > 0) " • ${currency}${String.format("%.2f", event.price)}" else ""
-                                            val displayTitle = if (event.type == "scheduled") event.subTitle else event.title
-                                            val displaySubtitle = if (event.type == "scheduled") "$timeStr$priceStr" else "$timeStr • ${event.subTitle}$priceStr"
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(IntrinsicSize.Min)
-                                                    .padding(vertical = 1.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .width(3.dp)
-                                                        .fillMaxHeight()
-                                                        .background(
-                                                            MaterialTheme.colorScheme.onPrimary,
-                                                            shape = RoundedCornerShape(2.dp)
-                                                        )
+                                            eventsForDay.forEach { event ->
+                                                CalendarBoxEventItem(
+                                                    event = event,
+                                                    targetDayStart = dayStartTs,
+                                                    userDisplayAmounts = user?.displayAmounts == true,
+                                                    currency = currency,
+                                                    onClick = {
+                                                        if (event.type == "preorder" && event.rawPreorder != null) {
+                                                            selectedPreorderForEdit = event.rawPreorder
+                                                        } else if (event.type == "scheduled" && event.rawScheduled != null) {
+                                                            selectedScheduledForEdit = event.rawScheduled
+                                                        }
+                                                    }
                                                 )
-                                                Column(
-                                                    modifier = Modifier.weight(1f),
-                                                    verticalArrangement = Arrangement.spacedBy(0.dp)
-                                                ) {
-                                                    Text(
-                                                        text = displayTitle,
-                                                        fontSize = 11.5.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = MaterialTheme.colorScheme.onPrimary,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        lineHeight = 14.sp
-                                                    )
-                                                    Text(
-                                                        text = displaySubtitle,
-                                                        fontSize = 10.sp,
-                                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                        lineHeight = 12.sp
-                                                    )
-                                                }
                                             }
                                         }
-                                    } else if (todayEvents.isEmpty() && tomorrowEvents.isEmpty()) {
-                                        Text(
-                                            text = "No upcoming events",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
-                                        )
                                     }
-                                }
 
-                                // FOOTER: REMAINING COUNT
-                                if (remainingCount > 0) {
-                                    Row(
-                                        modifier = Modifier.height(IntrinsicSize.Min),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Box(
+                                    if (leftOverCount > 0) {
+                                        val leftoverList = futureEventsList.drop(displayedFutureCount)
+                                        Row(
                                             modifier = Modifier
-                                                .width(3.dp)
-                                                .fillMaxHeight()
-                                                .background(MaterialTheme.colorScheme.onPrimary, shape = RoundedCornerShape(2.dp))
-                                        )
-                                        Text(
-                                            text = "$remainingCount more events",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
-                                        )
+                                                .height(IntrinsicSize.Min)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .clickable {
+                                                    groupedEventsPopupData = GroupedEventsPopupData(
+                                                        "Grouped Upcoming Events (${if (leftoverList.isNotEmpty()) leftoverList.size else allActiveUpcomingEvents.size})",
+                                                        if (leftoverList.isNotEmpty()) leftoverList else allActiveUpcomingEvents
+                                                    )
+                                                }
+                                                .padding(vertical = 2.dp, horizontal = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(2.5.dp)
+                                                    .fillMaxHeight()
+                                                    .background(
+                                                        MaterialTheme.colorScheme.onPrimary,
+                                                        shape = RoundedCornerShape(2.dp)
+                                                    )
+                                            )
+                                            Text(
+                                                text = "+$leftOverCount more event${if (leftOverCount > 1) "s" else ""}",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -636,11 +803,11 @@ fun HomeScreen(
                                             .clip(RoundedCornerShape(16.dp))
                                             .background(contrastColor.copy(alpha = 0.05f))
                                             .border(BorderStroke(1.dp, contrastColor.copy(alpha = 0.15f)), RoundedCornerShape(16.dp))
-                                            .padding(12.dp)
+                                            .padding(horizontal = 9.dp, vertical = 7.dp)
                                     ) {
                                         Column {
                                             Text("Skips Available", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Spacer(modifier = Modifier.height(1.dp))
                                             Text(skipsText, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                             if (skipType != null && !skipType.equals("Unlimited", ignoreCase = true) && !skipType.equals("None", ignoreCase = true)) {
                                                 val skipEndDate = activeRegister?.skipEndDate ?: run {
@@ -667,7 +834,7 @@ fun HomeScreen(
                                                 if (skipEndDate != null) {
                                                     val diffMs = skipEndDate - now
                                                     val daysUntilSkipsRenew = kotlin.math.ceil(diffMs.toDouble() / (1000 * 60 * 60 * 24)).toLong().coerceAtLeast(0)
-                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Spacer(modifier = Modifier.height(1.dp))
                                                     Text(
                                                         text = "Skips renew in $daysUntilSkipsRenew days",
                                                         fontSize = 10.sp,
@@ -695,11 +862,11 @@ fun HomeScreen(
                                                 ),
                                                 RoundedCornerShape(16.dp)
                                             )
-                                            .padding(12.dp)
+                                            .padding(horizontal = 9.dp, vertical = 7.dp)
                                     ) {
                                         Column {
                                             Text("Next Renewal", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Spacer(modifier = Modifier.height(1.dp))
                                             Text(
                                                 renewalText,
                                                 fontSize = 13.sp,
@@ -749,9 +916,9 @@ fun HomeScreen(
                     cal.get(Calendar.YEAR) == currentYear
                 }
 
-                // Monthly spend: preorders in month status NOT IN ("Upcoming", "Released") + scheduled subs in month status NOT IN ("Upcoming", "Skipped")
+                // Monthly spend: preorders in month (active) + scheduled subs in month (active/renewed/shipped/received)
                 val monthlySpend = preordersThisMonth
-                    .filter { !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) }
+                    .filter { !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
                     .sumOf { it.preorder.price } +
                     scheduledThisMonth
                     .filter { !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
@@ -761,9 +928,9 @@ fun HomeScreen(
                 val monthlyPreview = preordersThisMonth.sumOf { it.preorder.price } +
                     scheduledThisMonth.sumOf { it.subscriptionType?.price ?: 0.0 }
 
-                // Yearly spend: preorders in year status NOT IN ("Upcoming", "Released") + scheduled subs in year status NOT IN ("Upcoming", "Skipped")
+                // Yearly spend: preorders in year (active) + scheduled subs in year (active/renewed/shipped/received)
                 val yearlySpend = preordersThisYear
-                    .filter { !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) }
+                    .filter { !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
                     .sumOf { it.preorder.price } +
                     scheduledThisYear
                     .filter { !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
@@ -830,6 +997,7 @@ fun HomeScreen(
                     Card(
                         modifier = Modifier
                             .weight(1f)
+                            .height(180.dp)
                             .clickable {
                                 selectedStatType = "subscriptions"
                                 showDetailsSheet = true
@@ -843,14 +1011,18 @@ fun HomeScreen(
                     ) {
                         Column(
                             modifier = Modifier
+                                .fillMaxSize()
                                 .padding(16.dp)
                         ) {
                             HorizontalPager(
                                 state = spendsPagerState,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxSize()
                             ) { spendPage ->
                                 if (spendPage == 0) {
-                                    Column {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -892,42 +1064,47 @@ fun HomeScreen(
                                             }
                                         }
 
-                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Spacer(modifier = Modifier.height(10.dp))
 
-                                        Text(
-                                            text = "${currency}${String.format("%.2f", monthlySpend)}",
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            letterSpacing = (-0.5).sp
-                                        )
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Text(
+                                                text = "${currency}${String.format("%.2f", monthlySpend)}",
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                letterSpacing = (-0.5).sp
+                                            )
 
-                                        Text(
-                                            text = "Monthly Spend",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            Text(
+                                                text = "Monthly Spend",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
 
-                                        Spacer(modifier = Modifier.height(8.dp))
+                                            Spacer(modifier = Modifier.height(6.dp))
 
-                                        Text(
-                                            text = "${currency}${String.format("%.2f", monthlyPreview)}",
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = contrastColor,
-                                            letterSpacing = (-0.5).sp
-                                        )
+                                            Text(
+                                                text = "${currency}${String.format("%.2f", monthlyPreview)}",
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = contrastColor,
+                                                letterSpacing = (-0.5).sp
+                                            )
 
-                                        Text(
-                                            text = "Monthly Preview",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            Text(
+                                                text = "Monthly Preview",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 } else {
-                                    Column {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -969,39 +1146,41 @@ fun HomeScreen(
                                             }
                                         }
 
-                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Spacer(modifier = Modifier.height(10.dp))
 
-                                        Text(
-                                            text = "${currency}${String.format("%.2f", yearlySpend)}",
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            letterSpacing = (-0.5).sp
-                                        )
+                                        Column(modifier = Modifier.fillMaxWidth()) {
+                                            Text(
+                                                text = "${currency}${String.format("%.2f", yearlySpend)}",
+                                                fontSize = 20.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                letterSpacing = (-0.5).sp
+                                            )
 
-                                        Text(
-                                            text = "Yearly Spend",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            Text(
+                                                text = "Yearly Spend",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
 
-                                        Spacer(modifier = Modifier.height(8.dp))
+                                            Spacer(modifier = Modifier.height(6.dp))
 
-                                        Text(
-                                            text = "${currency}${String.format("%.2f", yearlyPreview)}",
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = contrastColor,
-                                            letterSpacing = (-0.5).sp
-                                        )
+                                            Text(
+                                                text = "${currency}${String.format("%.2f", yearlyPreview)}",
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = contrastColor,
+                                                letterSpacing = (-0.5).sp
+                                            )
 
-                                        Text(
-                                            text = "Yearly Preview",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                            Text(
+                                                text = "Yearly Preview",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1012,6 +1191,7 @@ fun HomeScreen(
                     Card(
                         modifier = Modifier
                             .weight(2f)
+                            .height(180.dp)
                             .then(
                                 if (topActiveSubsPagerState.currentPage == 0 && totalActiveSubs > 0) {
                                     Modifier.clickable { onNavigateToSubscriptions() }
@@ -1026,170 +1206,179 @@ fun HomeScreen(
                     ) {
                         Column(
                             modifier = Modifier
+                                .fillMaxSize()
                                 .padding(16.dp)
                         ) {
                             HorizontalPager(
                                 state = topActiveSubsPagerState,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxSize()
                             ) { topPage ->
                                 if (topPage == 0) {
-                                    Column {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
                                             Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(36.dp)
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                        .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)),
-                                                    contentAlignment = Alignment.Center
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                                 ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.AutoStories,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.tertiary,
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(36.dp)
+                                                            .clip(RoundedCornerShape(10.dp))
+                                                            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.AutoStories,
+                                                            contentDescription = null,
+                                                            tint = MaterialTheme.colorScheme.tertiary,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "$totalActiveSubs",
+                                                            fontSize = 20.sp,
+                                                            fontWeight = FontWeight.ExtraBold,
+                                                            color = MaterialTheme.colorScheme.onSurface,
+                                                            letterSpacing = (-0.5).sp,
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .clickable {
+                                                                    if (totalActiveSubs > 0) {
+                                                                        statusFilterTitle = "Active Subscriptions ($totalActiveSubs)"
+                                                                        statusFilterSubItems = activeSubs
+                                                                        statusFilterScheduledItems = null
+                                                                    } else {
+                                                                        onNavigateToSubscriptions()
+                                                                    }
+                                                                }
+                                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                                        )
+                                                        Text(
+                                                            text = "•",
+                                                            fontSize = 14.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.secondary
+                                                        )
+                                                        Text(
+                                                            text = "$totalPausedSubs paused",
+                                                            fontSize = 16.sp,
+                                                            fontWeight = FontWeight.ExtraBold,
+                                                            color = MaterialTheme.colorScheme.secondary,
+                                                            letterSpacing = (-0.5).sp,
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .clickable {
+                                                                    if (totalPausedSubs > 0) {
+                                                                        statusFilterTitle = "Paused Subscriptions ($totalPausedSubs)"
+                                                                        statusFilterSubItems = pausedSubs
+                                                                        statusFilterScheduledItems = null
+                                                                    } else {
+                                                                        onNavigateToSubscriptions()
+                                                                    }
+                                                                }
+                                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                                        )
+                                                    }
                                                 }
 
                                                 Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Text(
-                                                        text = "$totalActiveSubs",
-                                                        fontSize = 20.sp,
-                                                        fontWeight = FontWeight.ExtraBold,
-                                                        color = MaterialTheme.colorScheme.onSurface,
-                                                        letterSpacing = (-0.5).sp,
+                                                    Box(
                                                         modifier = Modifier
-                                                            .clip(RoundedCornerShape(6.dp))
-                                                            .clickable {
-                                                                if (totalActiveSubs > 0) {
-                                                                    statusFilterTitle = "Active Subscriptions ($totalActiveSubs)"
-                                                                    statusFilterSubItems = activeSubs
-                                                                    statusFilterScheduledItems = null
-                                                                } else {
-                                                                    onNavigateToSubscriptions()
-                                                                }
-                                                            }
-                                                            .padding(horizontal = 2.dp, vertical = 2.dp)
+                                                            .size(if (topActiveSubsPagerState.currentPage == 0) 7.dp else 5.dp)
+                                                            .clip(CircleShape)
+                                                            .background(if (topActiveSubsPagerState.currentPage == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                                            .clickable { coroutineScope.launch { topActiveSubsPagerState.animateScrollToPage(0) } }
                                                     )
-                                                    Text(
-                                                        text = "•",
-                                                        fontSize = 14.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.secondary
-                                                    )
-                                                    Text(
-                                                        text = "$totalPausedSubs paused",
-                                                        fontSize = 16.sp,
-                                                        fontWeight = FontWeight.ExtraBold,
-                                                        color = MaterialTheme.colorScheme.secondary,
-                                                        letterSpacing = (-0.5).sp,
+                                                    Box(
                                                         modifier = Modifier
-                                                            .clip(RoundedCornerShape(6.dp))
-                                                            .clickable {
-                                                                if (totalPausedSubs > 0) {
-                                                                    statusFilterTitle = "Paused Subscriptions ($totalPausedSubs)"
-                                                                    statusFilterSubItems = pausedSubs
-                                                                    statusFilterScheduledItems = null
-                                                                } else {
-                                                                    onNavigateToSubscriptions()
-                                                                }
-                                                            }
-                                                            .padding(horizontal = 2.dp, vertical = 2.dp)
+                                                            .size(if (topActiveSubsPagerState.currentPage == 1) 7.dp else 5.dp)
+                                                            .clip(CircleShape)
+                                                            .background(if (topActiveSubsPagerState.currentPage == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                                            .clickable { coroutineScope.launch { topActiveSubsPagerState.animateScrollToPage(1) } }
                                                     )
                                                 }
                                             }
 
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(if (topActiveSubsPagerState.currentPage == 0) 7.dp else 5.dp)
-                                                        .clip(CircleShape)
-                                                        .background(if (topActiveSubsPagerState.currentPage == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
-                                                        .clickable { coroutineScope.launch { topActiveSubsPagerState.animateScrollToPage(0) } }
-                                                )
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(if (topActiveSubsPagerState.currentPage == 1) 7.dp else 5.dp)
-                                                        .clip(CircleShape)
-                                                        .background(if (topActiveSubsPagerState.currentPage == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
-                                                        .clickable { coroutineScope.launch { topActiveSubsPagerState.animateScrollToPage(1) } }
-                                                )
-                                            }
-                                        }
+                                            Spacer(modifier = Modifier.height(8.dp))
 
-                                        Spacer(modifier = Modifier.height(2.dp))
-
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Text(
-                                                text = "Active Subscriptions",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-
-                                        Spacer(modifier = Modifier.height(12.dp))
-
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
                                                 Text(
-                                                    text = if (statsPagerState.currentPage == 0) "This month" else "This year",
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
+                                                    text = "Active Subscriptions",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(if (statsPagerState.currentPage == 0) 7.dp else 5.dp)
-                                                        .clip(CircleShape)
-                                                        .background(if (statsPagerState.currentPage == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
-                                                        .clickable { coroutineScope.launch { statsPagerState.animateScrollToPage(0) } }
-                                                )
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(if (statsPagerState.currentPage == 1) 7.dp else 5.dp)
-                                                        .clip(CircleShape)
-                                                        .background(if (statsPagerState.currentPage == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
-                                                        .clickable { coroutineScope.launch { statsPagerState.animateScrollToPage(1) } }
                                                 )
                                             }
                                         }
 
-                                        Spacer(modifier = Modifier.height(6.dp))
-
-                                        HorizontalPager(
-                                            state = statsPagerState,
+                                        Column(
                                             modifier = Modifier.fillMaxWidth()
-                                        ) { page ->
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = if (statsPagerState.currentPage == 0) "This month" else "This year",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(if (statsPagerState.currentPage == 0) 7.dp else 5.dp)
+                                                            .clip(CircleShape)
+                                                            .background(if (statsPagerState.currentPage == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                                            .clickable { coroutineScope.launch { statsPagerState.animateScrollToPage(0) } }
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(if (statsPagerState.currentPage == 1) 7.dp else 5.dp)
+                                                            .clip(CircleShape)
+                                                            .background(if (statsPagerState.currentPage == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                                            .clickable { coroutineScope.launch { statsPagerState.animateScrollToPage(1) } }
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(6.dp))
+
+                                            HorizontalPager(
+                                                state = statsPagerState,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) { page ->
                                             if (page == 0) {
                                                 // Status color indicators for current month
                                                 Row(
@@ -1339,8 +1528,12 @@ fun HomeScreen(
                                             }
                                         }
                                     }
+                                }
                                 } else {
-                                    Column {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2063,6 +2256,158 @@ fun HomeScreen(
             )
         }
 
+        // Grouped Events Detail Popup
+        groupedEventsPopupData?.let { popupData ->
+            AlertDialog(
+                onDismissRequest = { groupedEventsPopupData = null },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Event,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = popupData.title,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                    ) {
+                        val isDark = isSystemInDarkTheme()
+                        val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
+                        val displayFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
+
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(popupData.events) { event ->
+                                val statusLower = event.status.lowercase()
+                                val statusColor = when (statusLower) {
+                                    "upcoming" -> Color(0xFF64748B)
+                                    "renewed", "paid", "preordered" -> Color(0xFF2563EB)
+                                    "released" -> Color(0xFFEA580C)
+                                    "skipped" -> Color(0xFFEF4444)
+                                    "shipped" -> Color(0xFF8B5CF6)
+                                    "received" -> Color(0xFF10B981)
+                                    else -> Color(0xFF64748B)
+                                }
+                                val statusBgColor = when (statusLower) {
+                                    "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
+                                    "renewed", "paid", "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+                                    "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
+                                    "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
+                                    "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
+                                    "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
+                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                }
+                                val statusTextColor = when (statusLower) {
+                                    "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
+                                    "renewed", "paid", "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+                                    "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
+                                    "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
+                                    "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
+                                    "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            groupedEventsPopupData = null
+                                            if (event.type == "preorder" && event.rawPreorder != null) {
+                                                selectedPreorderForEdit = event.rawPreorder
+                                            } else if (event.type == "scheduled" && event.rawScheduled != null) {
+                                                selectedScheduledForEdit = event.rawScheduled
+                                            }
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                    ),
+                                    border = BorderStroke(1.dp, statusColor.copy(alpha = 0.3f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = event.title.ifBlank { event.subTitle },
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (event.author.isNotBlank()) {
+                                                Text(
+                                                    text = "by ${event.author}" + if (event.subTitle.isNotBlank()) " • ${event.subTitle}" else "",
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            } else if (event.subTitle.isNotBlank()) {
+                                                Text(
+                                                    text = event.subTitle,
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            val rH = event.reminderHour
+                                            val rM = event.reminderMinute
+                                            val timeStr = if (rH != null && rM != null) String.format("%d:%02d", rH, rM) else null
+                                            val dateLabel = displayFormat.format(Date(event.startDate))
+                                            Text(
+                                                text = if (timeStr != null) "Due: $dateLabel at $timeStr" else "Due: $dateLabel",
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(statusBgColor)
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = event.status.ifEmpty { if (event.type == "preorder") "Preorder" else "Scheduled" },
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = statusTextColor
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { groupedEventsPopupData = null }) {
+                        Text("Close")
+                    }
+                }
+            )
+        }
+
         // Discrete Toast Helper Pill
         AnimatedVisibility(
             visible = discreteToastMessage != null,
@@ -2092,11 +2437,18 @@ fun HomeScreen(
 }
 }
 
+data class GroupedEventsPopupData(
+    val title: String,
+    val events: List<UpcomingEvent>
+)
+
 data class UpcomingEvent(
     val id: String,
     val title: String,
     val author: String,
     val date: Long,
+    val startDate: Long = date,
+    val endDate: Long = date,
     val type: String, // "scheduled" or "preorder"
     val status: String,
     val isSkipped: Boolean = false,
@@ -2105,7 +2457,8 @@ data class UpcomingEvent(
     val rawScheduled: ScheduledWithDetails? = null,
     val rawPreorder: PreorderWithBookstore? = null,
     val reminderHour: Int? = null,
-    val reminderMinute: Int? = null
+    val reminderMinute: Int? = null,
+    val hasTime: Boolean = false
 )
 
 @Composable
@@ -2120,7 +2473,7 @@ fun MiniStatusDot(
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(color.copy(alpha = 0.12f))
             .then(
                 if (onClick != null || onZeroClick != null) {
@@ -2133,18 +2486,18 @@ fun MiniStatusDot(
                     }
                 } else Modifier
             )
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .padding(vertical = 5.dp, horizontal = 2.dp),
         contentAlignment = Alignment.Center
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             if (icon != null) {
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    modifier = Modifier.size(11.dp),
+                    modifier = Modifier.size(15.dp),
                     tint = color
                 )
             } else {
@@ -2155,12 +2508,133 @@ fun MiniStatusDot(
                         .background(color)
                 )
             }
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = "$count",
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = color
+                fontSize = 11.sp,
+                lineHeight = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = color,
+                textAlign = TextAlign.Center,
+                style = TextStyle(
+                    platformStyle = PlatformTextStyle(
+                        includeFontPadding = false
+                    )
+                )
             )
+        }
+    }
+}
+
+@Composable
+private fun CalendarBoxEventItem(
+    event: UpcomingEvent,
+    targetDayStart: Long,
+    userDisplayAmounts: Boolean,
+    currency: String,
+    onClick: (() -> Unit)? = null
+) {
+    val displayTitle = event.title.ifBlank { event.subTitle }
+    val priceStr = if (userDisplayAmounts && event.price != null && event.price > 0) " (${currency}${String.format("%.2f", event.price)})" else ""
+
+    val barColor = MaterialTheme.colorScheme.onPrimary
+    val titleColor = MaterialTheme.colorScheme.onPrimary
+    val subColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f)
+    val containerBg = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f)
+
+    fun getDayStartMs(ts: Long): Long {
+        val c = Calendar.getInstance().apply {
+            timeInMillis = ts
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return c.timeInMillis
+    }
+
+    val eventStartDay = getDayStartMs(event.startDate)
+    val eventEndDay = getDayStartMs(event.endDate)
+    val hasTime = event.hasTime || event.reminderHour != null
+    val reminderH = event.reminderHour ?: 8
+    val reminderM = event.reminderMinute ?: 0
+    val timeStr = String.format("%d:%02d", reminderH, reminderM)
+
+    val displaySubtitle = if (eventStartDay == eventEndDay) {
+        if (hasTime) "Starts at $timeStr" else "All day"
+    } else {
+        when (targetDayStart) {
+            eventStartDay -> if (hasTime) "Starts at $timeStr" else "Starts at 8:00"
+            eventEndDay -> if (hasTime) "Until $timeStr" else "Until 20:00"
+            else -> "All day"
+        }
+    }
+
+    val fullTitle = "$displayTitle$priceStr"
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(containerBg)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable { onClick.invoke() }
+                } else Modifier
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(2.5.dp)
+                    .fillMaxHeight()
+                    .padding(vertical = 1.5.dp)
+                    .background(
+                        barColor,
+                        shape = RoundedCornerShape(1.dp)
+                    )
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
+            ) {
+                Text(
+                    text = fullTitle,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = titleColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both
+                        )
+                    )
+                )
+                Text(
+                    text = displaySubtitle,
+                    fontSize = 9.5.sp,
+                    color = subColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = LineHeightStyle.Alignment.Center,
+                            trim = LineHeightStyle.Trim.Both
+                        )
+                    )
+                )
+            }
         }
     }
 }
@@ -2181,6 +2655,38 @@ fun BentoTimelineItem(
         MaterialTheme.colorScheme.primary
     } else {
         MaterialTheme.colorScheme.tertiary
+    }
+
+    val isDark = isSystemInDarkTheme()
+    val statusLower = event.status.lowercase()
+
+    val statusBgColor = when (statusLower) {
+        "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
+        "renewed", "paid", "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+        "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
+        "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
+        "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
+        "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val statusTextColor = when (statusLower) {
+        "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
+        "renewed", "paid", "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+        "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
+        "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
+        "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
+        "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val statusIcon = when (statusLower) {
+        "upcoming" -> if (event.type == "scheduled") Icons.Default.Schedule else Icons.Default.ShoppingBag
+        "preordered" -> Icons.Default.ShoppingBag
+        "renewed", "paid" -> Icons.Default.Payments
+        "released" -> Icons.Default.NewReleases
+        "shipped" -> Icons.Default.LocalShipping
+        "received" -> Icons.Default.CheckCircle
+        "skipped" -> Icons.Default.Block
+        else -> Icons.Default.Info
     }
 
     Card(
@@ -2244,15 +2750,26 @@ fun BentoTimelineItem(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .background(statusBgColor)
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
-                            Text(
-                                text = event.status,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    imageVector = statusIcon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(10.dp),
+                                    tint = statusTextColor
+                                )
+                                Text(
+                                    text = event.status,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = statusTextColor
+                                )
+                            }
                         }
                     }
 
