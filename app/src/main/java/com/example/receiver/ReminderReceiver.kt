@@ -87,8 +87,12 @@ class ReminderReceiver : BroadcastReceiver() {
             .setContentIntent(pendingIntent)
             .build()
 
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(id, notification)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        try {
+            notificationManager?.notify(id, notification)
+        } catch (e: Exception) {
+            Log.e("ReminderReceiver", "Error posting notification", e)
+        }
     }
 }
 
@@ -96,50 +100,54 @@ object ReminderScheduler {
     const val CHANNEL_ID = "sub_track_reminders_channel"
 
     fun createNotificationChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Reminders"
-            val descriptionText = "Notifications for preorders and subscription renewals"
-            val importance = NotificationManager.IMPORTANCE_HIGH
-            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
-                description = descriptionText
-                enableLights(true)
-                enableVibration(true)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val name = "Reminders"
+                val descriptionText = "Notifications for preorders and subscription renewals"
+                val importance = NotificationManager.IMPORTANCE_HIGH
+                val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                    description = descriptionText
+                    enableLights(true)
+                    enableVibration(true)
+                }
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                notificationManager?.createNotificationChannel(channel)
             }
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
+        } catch (e: Exception) {
+            Log.e("ReminderScheduler", "Failed to create notification channel", e)
         }
     }
 
     fun schedulePreorderReminder(context: Context, preorderId: Int, title: String, saleDateStart: Long, offsetDays: Int, hour: Int, minute: Int) {
-        var targetTimeMs = calculateReminderTime(saleDateStart, offsetDays, hour, minute)
-        if (targetTimeMs <= System.currentTimeMillis()) {
-            if (saleDateStart >= System.currentTimeMillis() - 24 * 60 * 60 * 1000L) {
-                targetTimeMs = System.currentTimeMillis() + 1000L
-            } else {
-                // Already in the past and not current/recent, don't schedule
-                return
-            }
-        }
-
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, ReminderReceiver::class.java).apply {
-            action = "com.example.ACTION_REMINDER"
-            putExtra("type", "preorder")
-            putExtra("id", preorderId)
-            putExtra("title", title)
-            putExtra("date", saleDateStart)
-        }
-
-        // Generate a unique request code for preorder alarms (e.g. 100000 + preorderId)
-        val requestCode = 100000 + preorderId
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         try {
+            var targetTimeMs = calculateReminderTime(saleDateStart, offsetDays, hour, minute)
+            if (targetTimeMs <= System.currentTimeMillis()) {
+                if (saleDateStart >= System.currentTimeMillis() - 24 * 60 * 60 * 1000L) {
+                    targetTimeMs = System.currentTimeMillis() + 1000L
+                } else {
+                    // Already in the past and not current/recent, don't schedule
+                    return
+                }
+            }
+
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(context, ReminderReceiver::class.java).apply {
+                action = "com.example.ACTION_REMINDER"
+                putExtra("type", "preorder")
+                putExtra("id", preorderId)
+                putExtra("title", title)
+                putExtra("date", saleDateStart)
+            }
+
+            // Generate a unique request code for preorder alarms (e.g. 100000 + preorderId)
+            val requestCode = 100000 + preorderId
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, targetTimeMs, pendingIntent)
             } else {
@@ -152,53 +160,57 @@ object ReminderScheduler {
     }
 
     fun cancelPreorderReminder(context: Context, preorderId: Int) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, ReminderReceiver::class.java).apply {
-            action = "com.example.ACTION_REMINDER"
-        }
-        val requestCode = 100000 + preorderId
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-        )
-        if (pendingIntent != null) {
-            alarmManager.cancel(pendingIntent)
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(context, ReminderReceiver::class.java).apply {
+                action = "com.example.ACTION_REMINDER"
+            }
+            val requestCode = 100000 + preorderId
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pendingIntent != null) {
+                alarmManager.cancel(pendingIntent)
+            }
+        } catch (e: Exception) {
+            Log.e("ReminderScheduler", "Failed to cancel preorder alarm", e)
         }
     }
 
     fun scheduleScheduledSubReminder(context: Context, scheduledSubId: Int, subTitle: String, bookTitle: String, dueDate: Long, offsetDays: Int, hour: Int, minute: Int) {
-        var targetTimeMs = calculateReminderTime(dueDate, offsetDays, hour, minute)
-        if (targetTimeMs <= System.currentTimeMillis()) {
-            if (dueDate >= System.currentTimeMillis() - 24 * 60 * 60 * 1000L) {
-                targetTimeMs = System.currentTimeMillis() + 1000L
-            } else {
-                // Already in the past and not current/recent, don't schedule
-                return
-            }
-        }
-
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, ReminderReceiver::class.java).apply {
-            action = "com.example.ACTION_REMINDER"
-            putExtra("type", "subscription")
-            putExtra("id", scheduledSubId)
-            putExtra("title", subTitle)
-            putExtra("book", bookTitle)
-            putExtra("date", dueDate)
-        }
-
-        // Generate a unique request code for scheduled sub alarms (e.g. 200000 + scheduledSubId)
-        val requestCode = 200000 + scheduledSubId
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         try {
+            var targetTimeMs = calculateReminderTime(dueDate, offsetDays, hour, minute)
+            if (targetTimeMs <= System.currentTimeMillis()) {
+                if (dueDate >= System.currentTimeMillis() - 24 * 60 * 60 * 1000L) {
+                    targetTimeMs = System.currentTimeMillis() + 1000L
+                } else {
+                    // Already in the past and not current/recent, don't schedule
+                    return
+                }
+            }
+
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(context, ReminderReceiver::class.java).apply {
+                action = "com.example.ACTION_REMINDER"
+                putExtra("type", "subscription")
+                putExtra("id", scheduledSubId)
+                putExtra("title", subTitle)
+                putExtra("book", bookTitle)
+                putExtra("date", dueDate)
+            }
+
+            // Generate a unique request code for scheduled sub alarms (e.g. 200000 + scheduledSubId)
+            val requestCode = 200000 + scheduledSubId
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, targetTimeMs, pendingIntent)
             } else {
@@ -211,19 +223,23 @@ object ReminderScheduler {
     }
 
     fun cancelScheduledSubReminder(context: Context, scheduledSubId: Int) {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, ReminderReceiver::class.java).apply {
-            action = "com.example.ACTION_REMINDER"
-        }
-        val requestCode = 200000 + scheduledSubId
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-        )
-        if (pendingIntent != null) {
-            alarmManager.cancel(pendingIntent)
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(context, ReminderReceiver::class.java).apply {
+                action = "com.example.ACTION_REMINDER"
+            }
+            val requestCode = 200000 + scheduledSubId
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pendingIntent != null) {
+                alarmManager.cancel(pendingIntent)
+            }
+        } catch (e: Exception) {
+            Log.e("ReminderScheduler", "Failed to cancel sub alarm", e)
         }
     }
 

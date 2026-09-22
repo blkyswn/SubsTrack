@@ -1,11 +1,16 @@
 package com.example.ui.screens
 
+import com.example.ui.components.InlineReminderSelector
+import com.example.ui.components.OtherFormTabContent
+
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.rememberDatePickerState
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import com.example.utils.saveImageToInternalStorage
 import androidx.compose.animation.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.BorderStroke
@@ -21,11 +26,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
@@ -42,10 +52,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.ui.components.InteractiveImagePicker
+import com.example.ui.components.ImageOptionsDialog
+import com.example.ui.components.ImageViewerDialog
 import com.example.data.*
 import com.example.ui.components.CalendarMarker
 import com.example.ui.components.MonthCalendar
@@ -121,6 +135,28 @@ fun PreordersScreen(
             )
             if (result == SnackbarResult.ActionPerformed) {
                 viewModel.restorePreorder(preorder)
+            }
+        }
+    }
+
+    val onPreorderStateChanged: (Preorder, Preorder, String) -> Unit = { oldPreorder, newPreorder, message ->
+        viewModel.updatePreorder(newPreorder)
+        val oldStatus = oldPreorder.status.lowercase().trim()
+        val newStatus = newPreorder.status.lowercase().trim()
+        val isUpcomingToSkipped = oldStatus == "upcoming" && newStatus == "skipped"
+        val isSkippedToUpcoming = oldStatus == "skipped" && newStatus == "upcoming"
+
+        if (!isUpcomingToSkipped && !isSkippedToUpcoming) {
+            coroutineScope.launch {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                val result = snackbarHostState.showSnackbar(
+                    message = message,
+                    actionLabel = "Undo",
+                    duration = SnackbarDuration.Short
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    viewModel.updatePreorder(oldPreorder)
+                }
             }
         }
     }
@@ -207,7 +243,7 @@ fun PreordersScreen(
                 }
             }
         },
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState, modifier = Modifier.testTag("preorders_snackbar_host")) },
         modifier = modifier
     ) { innerPadding ->
         Column(
@@ -215,279 +251,584 @@ fun PreordersScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            val timeframes = listOf("7 Days", "This Month", "Next Month", "Yearly")
-            val preorderStatsPagerState = rememberPagerState(initialPage = 0, pageCount = { timeframes.size })
+            val timeframes = remember(preorderListViewTab) {
+                when (preorderListViewTab) {
+                    1 -> listOf("Last Week", "Last Month", "Last Year")
+                    2 -> listOf("Last Year", "Last Month", "Last Week", "This Week", "This Month", "Next Week & Month", "This Year")
+                    else -> listOf("This Week", "This Month", "Next Week & Month", "This Year")
+                }
+            }
+            val preorderStatsPagerState = rememberPagerState(
+                initialPage = if (preorderListViewTab == 2) 3 else 0,
+                pageCount = { timeframes.size }
+            )
+
+            LaunchedEffect(preorderListViewTab) {
+                val targetPage = if (preorderListViewTab == 2) 3 else 0
+                if (preorderStatsPagerState.currentPage != targetPage) {
+                    preorderStatsPagerState.scrollToPage(targetPage)
+                }
+            }
             var showCosts by remember(userState?.displayAmounts) { mutableStateOf(userState?.displayAmounts ?: false) }
             val contrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.tertiary
             val statsCardBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.05f)
             val statsCardBorder = if (!isDark) BorderStroke(1.dp, Color(0xFFFF5722).copy(alpha = 0.15f)) else null
 
-            // Display Upper Stats grid with counters (supports swiping left/right to switch timeframe)
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = statsCardBg
-                ),
-                border = statsCardBorder
-            ) {
-                Column(
+            if (!isCalendarView) {
+                // Display Upper Stats grid with counters (supports swiping left/right to switch timeframe)
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = statsCardBg
+                    ),
+                    border = statsCardBorder
                 ) {
-                    val currentLabel = timeframes[preorderStatsPagerState.currentPage]
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 8.dp, start = 4.dp, end = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(12.dp)
                     ) {
-                        Text(
-                            text = currentLabel,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = contrastColor,
-                            modifier = Modifier.testTag("stats_timeframe_title")
-                        )
+                        val currentLabel = timeframes.getOrElse(preorderStatsPagerState.currentPage) { timeframes.first() }
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp, start = 4.dp, end = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = if (showCosts) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = if (showCosts) "Hide costs" else "Show costs",
-                                tint = contrastColor,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable { showCosts = !showCosts }
-                                    .testTag("toggle_show_costs")
+                            Text(
+                                text = currentLabel,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = contrastColor,
+                                modifier = Modifier.testTag("stats_timeframe_title")
                             )
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                timeframes.indices.forEach { index ->
-                                    Box(
-                                        modifier = Modifier
-                                            .size(if (preorderStatsPagerState.currentPage == index) 7.dp else 5.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (preorderStatsPagerState.currentPage == index) contrastColor
-                                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                                            )
-                                            .clickable { coroutineScope.launch { preorderStatsPagerState.animateScrollToPage(index) } }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    HorizontalPager(
-                        state = preorderStatsPagerState,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { page ->
-                        val (startTime, endTime) = when (page) {
-                            0 -> {
-                                // 7 days is from today onwards
-                                val start = todayStart
-                                val end = Calendar.getInstance().apply {
-                                    timeInMillis = todayStart
-                                    add(Calendar.DAY_OF_YEAR, 7)
-                                    set(Calendar.HOUR_OF_DAY, 23)
-                                    set(Calendar.MINUTE, 59)
-                                    set(Calendar.SECOND, 59)
-                                    set(Calendar.MILLISECOND, 999)
-                                }.timeInMillis
-                                Pair(start, end)
-                            }
-                            1 -> {
-                                // Monthly is for current month
-                                val start = Calendar.getInstance().apply {
-                                    set(Calendar.DAY_OF_MONTH, 1)
-                                    set(Calendar.HOUR_OF_DAY, 0)
-                                    set(Calendar.MINUTE, 0)
-                                    set(Calendar.SECOND, 0)
-                                    set(Calendar.MILLISECOND, 0)
-                                }.timeInMillis
-                                val end = Calendar.getInstance().apply {
-                                    timeInMillis = start
-                                    add(Calendar.MONTH, 1)
-                                    add(Calendar.MILLISECOND, -1)
-                                }.timeInMillis
-                                Pair(start, end)
-                            }
-                            2 -> {
-                                // Next Month
-                                val start = Calendar.getInstance().apply {
-                                    set(Calendar.DAY_OF_MONTH, 1)
-                                    set(Calendar.HOUR_OF_DAY, 0)
-                                    set(Calendar.MINUTE, 0)
-                                    set(Calendar.SECOND, 0)
-                                    set(Calendar.MILLISECOND, 0)
-                                    add(Calendar.MONTH, 1)
-                                }.timeInMillis
-                                val end = Calendar.getInstance().apply {
-                                    timeInMillis = start
-                                    add(Calendar.MONTH, 1)
-                                    add(Calendar.MILLISECOND, -1)
-                                }.timeInMillis
-                                Pair(start, end)
-                            }
-                            else -> {
-                                // Yearly is for current year
-                                val start = Calendar.getInstance().apply {
-                                    set(Calendar.DAY_OF_YEAR, 1)
-                                    set(Calendar.HOUR_OF_DAY, 0)
-                                    set(Calendar.MINUTE, 0)
-                                    set(Calendar.SECOND, 0)
-                                    set(Calendar.MILLISECOND, 0)
-                                }.timeInMillis
-                                val end = Calendar.getInstance().apply {
-                                    timeInMillis = start
-                                    add(Calendar.YEAR, 1)
-                                    add(Calendar.MILLISECOND, -1)
-                                }.timeInMillis
-                                Pair(start, end)
-                            }
-                        }
-
-                        val preordersInScope = preordersList.filter {
-                            it.preorder.rangedSaleDateStart in startTime..endTime
-                        }
-
-                        val upcoming = preordersInScope.count { it.preorder.status.lowercase() == "upcoming" }
-                        val released = preordersInScope.count { it.preorder.status.lowercase() == "released" }
-                        val preordered = preordersInScope.count { it.preorder.status.lowercase() == "preordered" }
-                        val shipped = preordersInScope.count { it.preorder.status.lowercase() == "shipped" }
-
-                        val totalSpent = preordersInScope
-                            .filter { it.preorder.status.lowercase() in listOf("preordered", "shipped", "received") }
-                            .sumOf { it.preorder.price }
-                        val totalUpcoming = preordersInScope.sumOf { it.preorder.price }
-
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceAround,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Upcoming", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("$upcoming", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFD84315) else MaterialTheme.colorScheme.outline)
-                                }
-                                Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Released", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("$released", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFE65100) else Color(0xFFFF9800))
-                                }
-                                Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Preordered", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("$preordered", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1976D2) else Color(0xFF2196F3))
-                                }
-                                Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Shipped", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Text("$shipped", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1565C0) else MaterialTheme.colorScheme.primary)
-                                }
-                            }
-
-                            if (showCosts) {
-                                Divider(
+                                Icon(
+                                    imageVector = if (showCosts) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = if (showCosts) "Hide costs" else "Show costs",
+                                    tint = contrastColor,
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp),
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        .size(18.dp)
+                                        .clickable { showCosts = !showCosts }
+                                        .testTag("toggle_show_costs")
                                 )
-
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceAround,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                                        Text("Total Spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text("${currency}${String.format("%.2f", totalSpent)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contrastColor)
+                                    timeframes.indices.forEach { index ->
+                                        Box(
+                                            modifier = Modifier
+                                                .size(if (preorderStatsPagerState.currentPage == index) 7.dp else 5.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (preorderStatsPagerState.currentPage == index) contrastColor
+                                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                                )
+                                                .clickable { coroutineScope.launch { preorderStatsPagerState.animateScrollToPage(index) } }
+                                        )
                                     }
-                                    Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                                        Text("Total Upcoming", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text("${currency}${String.format("%.2f", totalUpcoming)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
+                        }
+
+                        HorizontalPager(
+                            state = preorderStatsPagerState,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { page ->
+                            val pageLabel = timeframes.getOrElse(page) { timeframes.first() }
+                            if (pageLabel == "Next Week & Month") {
+                                val thisWeekStart = Calendar.getInstance().apply {
+                                    timeInMillis = todayStart
+                                    firstDayOfWeek = Calendar.MONDAY
+                                    set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+                                    set(Calendar.HOUR_OF_DAY, 0)
+                                    set(Calendar.MINUTE, 0)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                    if (timeInMillis > todayStart) {
+                                        add(Calendar.WEEK_OF_YEAR, -1)
+                                    }
+                                }.timeInMillis
+                                val startNW = Calendar.getInstance().apply {
+                                    timeInMillis = thisWeekStart
+                                    add(Calendar.WEEK_OF_YEAR, 1)
+                                }.timeInMillis
+                                val endNW = Calendar.getInstance().apply {
+                                    timeInMillis = startNW
+                                    add(Calendar.DAY_OF_YEAR, 7)
+                                    add(Calendar.MILLISECOND, -1)
+                                }.timeInMillis
+
+                                val startNM = Calendar.getInstance().apply {
+                                    timeInMillis = todayStart
+                                    set(Calendar.DAY_OF_MONTH, 1)
+                                    set(Calendar.HOUR_OF_DAY, 0)
+                                    set(Calendar.MINUTE, 0)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                    add(Calendar.MONTH, 1)
+                                }.timeInMillis
+                                val endNM = Calendar.getInstance().apply {
+                                    timeInMillis = startNM
+                                    add(Calendar.MONTH, 1)
+                                    add(Calendar.MILLISECOND, -1)
+                                }.timeInMillis
+
+                                val preordersNW = preordersList.filter {
+                                    it.preorder.rangedSaleDateStart in startNW..endNW
+                                }
+                                val upcomingNW = preordersNW.count { it.preorder.status.lowercase() == "upcoming" }
+                                val totalUpcomingNW = preordersNW.sumOf { it.preorder.price }
+
+                                val preordersNM = preordersList.filter {
+                                    it.preorder.rangedSaleDateStart in startNM..endNM
+                                }
+                                val upcomingNM = preordersNM.count { it.preorder.status.lowercase() == "upcoming" }
+                                val totalUpcomingNM = preordersNM.sumOf { it.preorder.price }
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(IntrinsicSize.Min),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Left Side: Next Week
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(
+                                                text = "Upcoming\nNext Week",
+                                                fontSize = 9.5.sp,
+                                                lineHeight = 10.5.sp,
+                                                textAlign = TextAlign.Center,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(3.5.dp))
+                                            Text("$upcomingNW", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFD84315) else MaterialTheme.colorScheme.outline)
+                                        }
+                                        if (showCosts) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Divider(
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(
+                                                    text = "Total Upcoming\nNext Week",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    "${currency}${String.format("%.2f", totalUpcomingNW)}",
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Divider(
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .padding(vertical = 4.dp)
+                                            .width(1.dp),
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+                                    )
+
+                                    // Right Side: Next Month
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text(
+                                                text = "Upcoming\nNext Month",
+                                                fontSize = 9.5.sp,
+                                                lineHeight = 10.5.sp,
+                                                textAlign = TextAlign.Center,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.height(3.5.dp))
+                                            Text("$upcomingNM", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFD84315) else MaterialTheme.colorScheme.outline)
+                                        }
+                                        if (showCosts) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Divider(
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(
+                                                    text = "Total Upcoming\nNext Month",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    "${currency}${String.format("%.2f", totalUpcomingNM)}",
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                val (startTime, endTime) = when (pageLabel) {
+                                    "Last Week" -> {
+                                        val thisWeekStart = Calendar.getInstance().apply {
+                                            timeInMillis = todayStart
+                                            firstDayOfWeek = Calendar.MONDAY
+                                            set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                            if (timeInMillis > todayStart) {
+                                                add(Calendar.WEEK_OF_YEAR, -1)
+                                            }
+                                        }.timeInMillis
+                                        val start = Calendar.getInstance().apply {
+                                            timeInMillis = thisWeekStart
+                                            add(Calendar.WEEK_OF_YEAR, -1)
+                                        }.timeInMillis
+                                        val end = Calendar.getInstance().apply {
+                                            timeInMillis = thisWeekStart
+                                            add(Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "Last Month" -> {
+                                        val start = Calendar.getInstance().apply {
+                                            set(Calendar.DAY_OF_MONTH, 1)
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                            add(Calendar.MONTH, -1)
+                                        }.timeInMillis
+                                        val end = Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(Calendar.MONTH, 1)
+                                            add(Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "Last Year" -> {
+                                        val start = Calendar.getInstance().apply {
+                                            set(Calendar.DAY_OF_YEAR, 1)
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                            add(Calendar.YEAR, -1)
+                                        }.timeInMillis
+                                        val end = Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(Calendar.YEAR, 1)
+                                            add(Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "This Week" -> {
+                                        val start = Calendar.getInstance().apply {
+                                            timeInMillis = todayStart
+                                            firstDayOfWeek = Calendar.MONDAY
+                                            set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                            if (timeInMillis > todayStart) {
+                                                add(Calendar.WEEK_OF_YEAR, -1)
+                                            }
+                                        }.timeInMillis
+                                        val end = Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(Calendar.DAY_OF_YEAR, 7)
+                                            add(Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "This Month" -> {
+                                        val start = Calendar.getInstance().apply {
+                                            set(Calendar.DAY_OF_MONTH, 1)
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }.timeInMillis
+                                        val end = Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(Calendar.MONTH, 1)
+                                            add(Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    else -> { // "This Year"
+                                        val start = Calendar.getInstance().apply {
+                                            set(Calendar.DAY_OF_YEAR, 1)
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }.timeInMillis
+                                        val end = Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(Calendar.YEAR, 1)
+                                            add(Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                }
+
+                                val preordersInScope = preordersList.filter {
+                                    it.preorder.rangedSaleDateStart in startTime..endTime
+                                }
+
+                                val upcoming = preordersInScope.count { it.preorder.status.lowercase() == "upcoming" }
+                                val released = preordersInScope.count { it.preorder.status.lowercase() == "released" }
+                                val preordered = preordersInScope.count { it.preorder.status.lowercase() == "preordered" }
+                                val shipped = preordersInScope.count { it.preorder.status.lowercase() == "shipped" }
+                                val received = preordersInScope.count { it.preorder.status.lowercase() == "received" }
+
+                                val totalSpent = preordersInScope
+                                    .filter { it.preorder.status.lowercase() in listOf("preordered", "shipped", "received") }
+                                    .sumOf { it.preorder.price }
+                                val totalUpcoming = preordersInScope.sumOf { it.preorder.price }
+
+                                val isPastTimeframe = pageLabel in listOf("Last Week", "Last Month", "Last Year")
+
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceAround,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Upcoming", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("$upcoming", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFD84315) else MaterialTheme.colorScheme.outline)
+                                        }
+                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Released", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("$released", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFE65100) else Color(0xFFFF9800))
+                                        }
+                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Preordered", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("$preordered", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1976D2) else Color(0xFF2196F3))
+                                        }
+                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Shipped", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("$shipped", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1565C0) else MaterialTheme.colorScheme.primary)
+                                        }
+                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Received", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("$received", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF059669) else Color(0xFF10B981))
+                                        }
+                                    }
+
+                                    if (showCosts) {
+                                        Divider(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp),
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        )
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceAround,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                                                Text("Total Spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text("${currency}${String.format("%.2f", totalSpent)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contrastColor)
+                                            }
+                                            if (!isPastTimeframe) {
+                                                Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                                                    Text("Total Upcoming", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    Text("${currency}${String.format("%.2f", totalUpcoming)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Three tab controls (Upcoming, Past, All)
+                val tabContrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary
+                TabRow(
+                    selectedTabIndex = preorderListViewTab,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    contentColor = tabContrastColor,
+                    divider = {}
+                ) {
+                    Tab(
+                        selected = preorderListViewTab == 0,
+                        onClick = { preorderListViewTab = 0 },
+                        text = { Text("Upcoming", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = tabContrastColor,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Tab(
+                        selected = preorderListViewTab == 1,
+                        onClick = { preorderListViewTab = 1 },
+                        text = { Text("Past", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = tabContrastColor,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Tab(
+                        selected = preorderListViewTab == 2,
+                        onClick = { preorderListViewTab = 2 },
+                        text = { Text("All", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = tabContrastColor,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             if (isCalendarView) {
                 // CALENDAR VIEW (PREORDERS)
-                val dateFormatKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                val markerColor = MaterialTheme.colorScheme.tertiary
-                val markerMap = remember(preordersList, markerColor) {
+                val calendarLazyListState = rememberLazyListState()
+                val dateFormatKey = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+                val todayStr = remember { dateFormatKey.format(Date()) }
+
+                var focusedDateStr by remember { mutableStateOf(todayStr) }
+                val markerMap = remember(preordersList) {
                     preordersList.groupBy { dateFormatKey.format(Date(it.preorder.rangedSaleDateStart)) }
                         .mapValues { entry ->
                             entry.value.map { item ->
+                                val statusColor = when (item.preorder.status.lowercase()) {
+                                    "upcoming" -> Color(0xFF64748B)
+                                    "preordered" -> Color(0xFF2563EB)
+                                    "released" -> Color(0xFFF97316)
+                                    "shipped" -> Color(0xFF8B5CF6)
+                                    "received" -> Color(0xFF10B981)
+                                    else -> Color(0xFF2563EB)
+                                }
                                 CalendarMarker(
                                     id = item.preorder.id.toString(),
                                     title = item.preorder.bookTitle,
-                                    color = markerColor
+                                    color = statusColor,
+                                    imageUrl = item.preorder.picturePath.takeIf { !it.isNullOrEmpty() }
+                                        ?: item.bookstore?.profilePic.takeIf { !it.isNullOrEmpty() && it != "ic_launcher_foreground" }
                                 )
                             }
                         }
                 }
 
-                var focusedDayPreorders by remember { mutableStateOf<List<PreorderWithBookstore>>(emptyList()) }
-                var focusedDateStr by remember { mutableStateOf("") }
+                var focusedDayPreorders by remember(focusedDateStr, preordersList) {
+                    mutableStateOf(preordersList.filter { dateFormatKey.format(Date(it.preorder.rangedSaleDateStart)) == focusedDateStr })
+                }
 
                 MonthCalendar(
                     markerDates = markerMap,
+                    selectedDateStr = focusedDateStr,
                     onDayClick = { dateStr, markers ->
                         focusedDateStr = dateStr
                         focusedDayPreorders = preordersList.filter { dateFormatKey.format(Date(it.preorder.rangedSaleDateStart)) == dateStr }
                     },
+                    lazyListState = calendarLazyListState,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
 
-                if (focusedDateStr.isNotEmpty()) {
-                    Text(
-                        text = "Preorders releasing on $focusedDateStr:",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
+                Spacer(modifier = Modifier.height(8.dp))
 
-                    if (focusedDayPreorders.isEmpty()) {
-                        Text(
-                            "No books scheduled for release on this day.",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-                    } else {
-                        LazyColumn(modifier = Modifier.padding(horizontal = 16.dp)) {
-                            items(focusedDayPreorders) { item ->
-                                PreorderItemRow(item, viewModel, onDeleted = onDeletePreorder)
+                LazyColumn(
+                    state = calendarLazyListState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    item {
+                        val displayDateText = remember(focusedDateStr) {
+                            try {
+                                val date = dateFormatKey.parse(focusedDateStr)
+                                if (date != null) {
+                                    val targetCal = Calendar.getInstance().apply { time = date }
+                                    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                                    val targetYear = targetCal.get(Calendar.YEAR)
+                                    val pattern = if (targetYear == currentYear) "MMMM d" else "MMMM d, yyyy"
+                                    SimpleDateFormat(pattern, Locale.getDefault()).format(date)
+                                } else {
+                                    focusedDateStr
+                                }
+                            } catch (e: Exception) {
+                                focusedDateStr
                             }
                         }
+
+                        Text(
+                            text = displayDateText,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
                     }
-                } else {
-                    Text(
-                        text = "Tap a calendar date to view preorders",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        fontWeight = FontWeight.Medium
-                    )
+
+                    if (focusedDayPreorders.isEmpty()) {
+                        item {
+                            Text(
+                                "No books scheduled for release on this day.",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
+                        }
+                    } else {
+                        items(focusedDayPreorders, key = { it.preorder.id }) { item ->
+                            PreorderItemRow(
+                                item = item,
+                                viewModel = viewModel,
+                                onDeleted = onDeletePreorder,
+                                onStateChanged = onPreorderStateChanged
+                            )
+                        }
+                    }
+
+
                 }
 
             } else {
@@ -522,45 +863,10 @@ fun PreordersScreen(
                 }
 
                 val allSorted = remember(preordersList) {
-                    preordersList.sortedBy { it.preorder.rangedSaleDateStart }
+                    preordersList.sortedByDescending { it.preorder.rangedSaleDateStart }
                 }
                 val groupedAll = remember(allSorted, currentYear) {
                     allSorted.groupBy { formatPreorderGroupHeader(it.preorder.rangedSaleDateStart) }
-                }
-
-                // Three tab controls
-                val tabContrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary
-                TabRow(
-                    selectedTabIndex = preorderListViewTab,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                    contentColor = tabContrastColor,
-                    divider = {}
-                ) {
-                    Tab(
-                        selected = preorderListViewTab == 0,
-                        onClick = { preorderListViewTab = 0 },
-                        text = { Text("Upcoming", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                        selectedContentColor = tabContrastColor,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Tab(
-                        selected = preorderListViewTab == 1,
-                        onClick = { preorderListViewTab = 1 },
-                        text = { Text("Past", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                        selectedContentColor = tabContrastColor,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Tab(
-                        selected = preorderListViewTab == 2,
-                        onClick = { preorderListViewTab = 2 },
-                        text = { Text("All", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                        selectedContentColor = tabContrastColor,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
 
                 if (preorderListViewTab == 0) {
@@ -592,7 +898,12 @@ fun PreordersScreen(
                                     )
                                 }
                                 items(groupedUpcoming[dateHeader] ?: emptyList(), key = { it.preorder.id }) { item ->
-                                    PreorderItemRow(item, viewModel, onDeleted = onDeletePreorder)
+                                    PreorderItemRow(
+                                        item = item,
+                                        viewModel = viewModel,
+                                        onDeleted = onDeletePreorder,
+                                        onStateChanged = onPreorderStateChanged
+                                    )
                                 }
                             }
                         }
@@ -626,7 +937,12 @@ fun PreordersScreen(
                                     )
                                 }
                                 items(groupedPast[monthHeader] ?: emptyList(), key = { it.preorder.id }) { item ->
-                                    PreorderItemRow(item, viewModel, onDeleted = onDeletePreorder)
+                                    PreorderItemRow(
+                                        item = item,
+                                        viewModel = viewModel,
+                                        onDeleted = onDeletePreorder,
+                                        onStateChanged = onPreorderStateChanged
+                                    )
                                 }
                             }
                         }
@@ -660,7 +976,12 @@ fun PreordersScreen(
                                     )
                                 }
                                 items(groupedAll[dateHeader] ?: emptyList(), key = { it.preorder.id }) { item ->
-                                    PreorderItemRow(item, viewModel, onDeleted = onDeletePreorder)
+                                    PreorderItemRow(
+                                        item = item,
+                                        viewModel = viewModel,
+                                        onDeleted = onDeletePreorder,
+                                        onStateChanged = onPreorderStateChanged
+                                    )
                                 }
                             }
                         }
@@ -694,7 +1015,8 @@ fun PreordersScreen(
 fun PreorderItemRow(
     item: PreorderWithBookstore,
     viewModel: BookishViewModel,
-    onDeleted: (Preorder) -> Unit
+    onDeleted: (Preorder) -> Unit,
+    onStateChanged: ((oldPreorder: Preorder, newPreorder: Preorder, message: String) -> Unit)? = null
 ) {
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
@@ -703,6 +1025,16 @@ fun PreorderItemRow(
 
     val isDark = isSystemInDarkTheme()
     var showEditDialog by remember { mutableStateOf(false) }
+    var showViewerDialog by remember { mutableStateOf(false) }
+
+    val activeImageModel = item.preorder.picturePath.takeIf { !it.isNullOrEmpty() }
+
+    if (showViewerDialog && activeImageModel != null) {
+        ImageViewerDialog(
+            imageUrl = activeImageModel,
+            onDismiss = { showViewerDialog = false }
+        )
+    }
 
     val accentColor = when (item.preorder.status.lowercase()) {
         "upcoming" -> Color(0xFF64748B) // Grey
@@ -714,24 +1046,70 @@ fun PreorderItemRow(
     }
 
     val currentStatus = item.preorder.status.lowercase()
-    val canSwipeRight = currentStatus in listOf("released", "preordered", "shipped")
+    val canSwipeRight = currentStatus in listOf("upcoming", "released", "preordered", "shipped")
     val canSwipeLeft = true
+    val density = LocalDensity.current
+    val thresholdPx = remember(density) { with(density) { 48.dp.toPx() } }
 
     key(item.preorder.id, item.preorder.status) {
         val dismissState = rememberSwipeToDismissBoxState(
+            positionalThreshold = { totalDistance -> thresholdPx.coerceAtMost(totalDistance * 0.35f) },
             confirmValueChange = { dismissValue ->
                 if (dismissValue == SwipeToDismissBoxValue.StartToEnd && canSwipeRight) {
                     val nextStatus = when (currentStatus) {
-                        "released" -> "Preordered"
+                        "upcoming", "released" -> "Preordered"
                         "preordered" -> "Shipped"
                         "shipped" -> "Received"
                         else -> item.preorder.status
                     }
-                    viewModel.updatePreorder(item.preorder.copy(status = nextStatus))
+                    if (nextStatus != item.preorder.status) {
+                        val newPreorder = item.preorder.copy(status = nextStatus)
+                        val msg = "${item.preorder.bookTitle}: Status changed to $nextStatus"
+                        if (onStateChanged != null) {
+                            onStateChanged(item.preorder, newPreorder, msg)
+                        } else {
+                            viewModel.updatePreorder(newPreorder)
+                        }
+                    }
                     false
                 } else if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                    onDeleted(item.preorder)
-                    true
+                    when (currentStatus) {
+                        "received" -> {
+                            val newPreorder = item.preorder.copy(status = "Shipped")
+                            val msg = "${item.preorder.bookTitle}: Status changed to Shipped"
+                            if (onStateChanged != null) {
+                                onStateChanged(item.preorder, newPreorder, msg)
+                            } else {
+                                viewModel.updatePreorder(newPreorder)
+                            }
+                            false
+                        }
+                        "shipped" -> {
+                            val newPreorder = item.preorder.copy(status = "Preordered")
+                            val msg = "${item.preorder.bookTitle}: Status changed to Preordered"
+                            if (onStateChanged != null) {
+                                onStateChanged(item.preorder, newPreorder, msg)
+                            } else {
+                                viewModel.updatePreorder(newPreorder)
+                            }
+                            false
+                        }
+                        "preordered" -> {
+                            val prevStatus = if (System.currentTimeMillis() >= item.preorder.rangedSaleDateEnd) "Released" else "Upcoming"
+                            val newPreorder = item.preorder.copy(status = prevStatus)
+                            val msg = "${item.preorder.bookTitle}: Status changed to $prevStatus"
+                            if (onStateChanged != null) {
+                                onStateChanged(item.preorder, newPreorder, msg)
+                            } else {
+                                viewModel.updatePreorder(newPreorder)
+                            }
+                            false
+                        }
+                        else -> {
+                            onDeleted(item.preorder)
+                            true
+                        }
+                    }
                 } else {
                     false
                 }
@@ -758,13 +1136,20 @@ fun PreorderItemRow(
                 val color = when {
                     isStartToEnd -> {
                         when (currentStatus) {
-                            "released" -> Color(0xFF3B82F6).copy(alpha = 0.15f) // Blue
+                            "upcoming", "released" -> Color(0xFF3B82F6).copy(alpha = 0.15f) // Blue
                             "preordered" -> Color(0xFF8B5CF6).copy(alpha = 0.15f) // Purple
-                            "shipped" -> Color(0xFF10B981).copy(alpha = 0.15f) // Green for status change to Received
+                            "shipped" -> Color(0xFF10B981).copy(alpha = 0.15f) // Green
                             else -> Color.Transparent
                         }
                     }
-                    isEndToStart -> Color(0xFFEF4444).copy(alpha = 0.15f) // Red for delete
+                    isEndToStart -> {
+                        when (currentStatus) {
+                            "received" -> Color(0xFF8B5CF6).copy(alpha = 0.15f)
+                            "shipped" -> Color(0xFF3B82F6).copy(alpha = 0.15f)
+                            "preordered" -> Color(0xFFF97316).copy(alpha = 0.15f)
+                            else -> Color(0xFFEF4444).copy(alpha = 0.15f) // Red for delete
+                        }
+                    }
                     else -> Color.Transparent
                 }
                 val alignment = when {
@@ -775,25 +1160,39 @@ fun PreorderItemRow(
                 val icon = when {
                     isStartToEnd -> {
                         when (currentStatus) {
-                            "released" -> ImageVector.vectorResource(R.drawable.ic_shopping_bag_speed)
+                            "upcoming", "released" -> ImageVector.vectorResource(R.drawable.ic_shopping_bag_speed)
                             "preordered" -> Icons.Default.LocalShipping
                             "shipped" -> Icons.Default.CheckCircle
                             else -> null
                         }
                     }
-                    isEndToStart -> Icons.Default.Delete
+                    isEndToStart -> {
+                        when (currentStatus) {
+                            "received" -> Icons.Default.LocalShipping
+                            "shipped" -> ImageVector.vectorResource(R.drawable.ic_shopping_bag_speed)
+                            "preordered" -> Icons.AutoMirrored.Filled.Undo
+                            else -> Icons.Default.Delete
+                        }
+                    }
                     else -> null
                 }
                 val iconTint = when {
                     isStartToEnd -> {
                         when (currentStatus) {
-                            "released" -> Color(0xFF3B82F6)
+                            "upcoming", "released" -> Color(0xFF3B82F6)
                             "preordered" -> Color(0xFF8B5CF6)
-                            "shipped" -> Color(0xFF10B981) // Green for status change to Received
+                            "shipped" -> Color(0xFF10B981)
                             else -> Color.Transparent
                         }
                     }
-                    isEndToStart -> Color(0xFFEF4444)
+                    isEndToStart -> {
+                        when (currentStatus) {
+                            "received" -> Color(0xFF8B5CF6)
+                            "shipped" -> Color(0xFF3B82F6)
+                            "preordered" -> Color(0xFFF97316)
+                            else -> Color(0xFFEF4444)
+                        }
+                    }
                     else -> Color.Transparent
                 }
 
@@ -861,7 +1260,14 @@ fun PreorderItemRow(
                         modifier = Modifier
                             .size(80.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(accentColor.copy(alpha = 0.12f)),
+                            .background(accentColor.copy(alpha = 0.12f))
+                            .then(
+                                if (activeImageModel != null) {
+                                    Modifier.clickable { showViewerDialog = true }
+                                } else {
+                                    Modifier
+                                }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         val imageModel = item.preorder.picturePath.takeIf { !it.isNullOrEmpty() }
@@ -874,7 +1280,7 @@ fun PreorderItemRow(
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
-                            val storeName = item.bookstore?.name ?: item.preorder.bookTitle
+                            val storeName = item.bookstore?.name?.takeIf { it.isNotBlank() } ?: item.preorder.bookTitle
                             val initial = (storeName.firstOrNull { it.isLetterOrDigit() } ?: 'P').uppercaseChar().toString()
                             Box(
                                 modifier = Modifier
@@ -968,6 +1374,7 @@ fun PreorderItemRow(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier
+                                    .testTag("preorder_status_tag_${item.preorder.id}")
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(statusContainerColor)
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1011,6 +1418,16 @@ fun PreorderItemRow(
                     val monthStr = dateFormatMonth.format(eventDate).uppercase()
                     val dayStr = dateFormatDay.format(eventDate)
 
+                    val startCal = remember(item.preorder.rangedSaleDateStart) {
+                        Calendar.getInstance().apply { timeInMillis = item.preorder.rangedSaleDateStart }
+                    }
+                    val formattedTime = String.format(
+                        Locale.getDefault(),
+                        "%02d:%02d",
+                        startCal.get(Calendar.HOUR_OF_DAY),
+                        startCal.get(Calendar.MINUTE)
+                    )
+
                     Card(
                         colors = CardDefaults.cardColors(
                             containerColor = accentColor.copy(alpha = 0.08f)
@@ -1019,7 +1436,7 @@ fun PreorderItemRow(
                         border = BorderStroke(1.dp, accentColor.copy(alpha = 0.2f)),
                         modifier = Modifier
                             .fillMaxHeight()
-                            .width(52.dp)
+                            .width(56.dp)
                     ) {
                         Column(
                             modifier = Modifier
@@ -1041,6 +1458,12 @@ fun PreorderItemRow(
                                 fontWeight = FontWeight.Black,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 lineHeight = 15.sp
+                            )
+                            Text(
+                                text = formattedTime,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor
                             )
                         }
                     }
@@ -1069,6 +1492,16 @@ fun AddPreorderDialog(
     val context = LocalContext.current
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val forwardingServices by viewModel.forwardingServicesState.collectAsState()
+    var selectedShippingAddressId by remember { mutableStateOf<Int?>(null) }
+    var selectedCurrency by remember { mutableStateOf(userState?.currency ?: "$") }
+    var basePriceStr by remember { mutableStateOf("") }
+    var shippingPriceStr by remember { mutableStateOf("") }
+    var taxPriceStr by remember { mutableStateOf("") }
+    var forwardShippingPriceStr by remember { mutableStateOf("") }
+    var forwardTaxPriceStr by remember { mutableStateOf("") }
+
     var selectedBookstoreId by remember { mutableStateOf(bookstores.firstOrNull()?.id ?: 0) }
     var bookTitle by remember { mutableStateOf("") }
     var bookAuthor by remember { mutableStateOf("") }
@@ -1138,6 +1571,13 @@ fun AddPreorderDialog(
                             selectedContentColor = MaterialTheme.colorScheme.primary,
                             unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Tab(
+                            selected = selectedTab == 2,
+                            onClick = { selectedTab = 2 },
+                            text = { Text("Other", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                            selectedContentColor = MaterialTheme.colorScheme.primary,
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
@@ -1177,7 +1617,7 @@ fun AddPreorderDialog(
                         OutlinedTextField(
                             value = bookTitle,
                             onValueChange = { bookTitle = it },
-                            label = { Text("Book Title") },
+                            label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.fillMaxWidth().testTag("add_preorder_title")
                         )
                     }
@@ -1186,7 +1626,7 @@ fun AddPreorderDialog(
                         OutlinedTextField(
                             value = bookAuthor,
                             onValueChange = { bookAuthor = it },
-                            label = { Text("Book Author") },
+                            label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.fillMaxWidth().testTag("add_preorder_author")
                         )
                     }
@@ -1224,7 +1664,7 @@ fun AddPreorderDialog(
                             OutlinedTextField(
                                 value = priceStr,
                                 onValueChange = { priceStr = it },
-                                label = { Text("Price ($currency)") },
+                                label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f).testTag("add_preorder_price")
@@ -1266,138 +1706,23 @@ fun AddPreorderDialog(
 
                             if (reminderEnabled) {
                                 Spacer(modifier = Modifier.height(12.dp))
-                                // Trigger Row/Box
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
-                                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                        .clickable { showTimePicker = true }
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.Notifications,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
-                                        val ddayLabel = if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
-                                        Text(
-                                            text = "Alert on $ddayLabel at $timeLabel",
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                    Text(
-                                        text = "Edit Time",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-
-                                if (showTimePicker) {
-                                    var tempHour by remember { mutableStateOf(reminderHour) }
-                                    var tempMinute by remember { mutableStateOf(reminderMinute) }
-                                    var tempDDayOffset by remember { mutableStateOf(reminderDDayOffset) }
-
-                                    AlertDialog(
-                                        onDismissRequest = { showTimePicker = false },
-                                        title = { Text("Set Reminder", fontWeight = FontWeight.Bold) },
-                                        text = {
-                                            Column(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalAlignment = Alignment.CenterHorizontally
-                                            ) {
-                                                Text(
-                                                    "Choose when to be notified of preorder alerts.",
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                                Spacer(modifier = Modifier.height(16.dp))
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    // D-Day Offset Picker
-                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text("Alert Day", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        Spacer(modifier = Modifier.height(4.dp))
-                                                        RevolverWheelPicker(
-                                                            items = (0..7).toList(),
-                                                            selectedItem = tempDDayOffset,
-                                                            onItemSelected = { dday -> tempDDayOffset = dday },
-                                                            modifier = Modifier.width(90.dp),
-                                                            label = { dday -> if (dday == 0) "D-Day" else "$dday days before" }
-                                                        )
-                                                    }
-
-                                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                                    // Hour Picker (Scrolling revolver)
-                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text("Hour", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        Spacer(modifier = Modifier.height(4.dp))
-                                                        RevolverWheelPicker(
-                                                            items = (0..23).toList(),
-                                                            selectedItem = tempHour,
-                                                            onItemSelected = { hr -> tempHour = hr },
-                                                            modifier = Modifier.width(55.dp),
-                                                            label = { hr -> String.format("%02d", hr) }
-                                                        )
-                                                    }
-
-                                                    Text(":", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-
-                                                    // Minute Picker (Scrolling revolver)
-                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text("Min", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        Spacer(modifier = Modifier.height(4.dp))
-                                                        RevolverWheelPicker(
-                                                            items = (0..59).toList(),
-                                                            selectedItem = tempMinute,
-                                                            onItemSelected = { mn -> tempMinute = mn },
-                                                            modifier = Modifier.width(55.dp),
-                                                            label = { mn -> String.format("%02d", mn) }
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        confirmButton = {
-                                            Button(
-                                                onClick = {
-                                                    reminderDDayOffset = tempDDayOffset
-                                                    reminderHour = tempHour
-                                                    reminderMinute = tempMinute
-                                                    showTimePicker = false
-                                                }
-                                            ) {
-                                                Text("Set")
-                                            }
-                                        },
-                                        dismissButton = {
-                                            TextButton(onClick = { showTimePicker = false }) {
-                                                Text("Cancel")
-                                            }
-                                        }
-                                    )
-                                }
+                                InlineReminderSelector(
+                                    reminderDDayOffset = reminderDDayOffset,
+                                    onDDayOffsetChange = { reminderDDayOffset = it },
+                                    reminderHour = reminderHour,
+                                    onHourChange = { reminderHour = it },
+                                    reminderMinute = reminderMinute,
+                                    onMinuteChange = { reminderMinute = it }
+                                )
                             }
                         }
                     }
-                } else {
+                } else if (selectedTab == 1) {
                     item {
                         OutlinedTextField(
                             value = description,
                             onValueChange = { description = it },
-                            label = { Text("Description") },
+                            label = { Text("Description", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1411,13 +1736,43 @@ fun AddPreorderDialog(
                             )
                         }
                     }
+                } else {
+                    item {
+                        OtherFormTabContent(
+                            userAddresses = userAddresses,
+                            forwardingServices = forwardingServices,
+                            selectedShippingAddressId = selectedShippingAddressId,
+                            onShippingAddressChange = { selectedShippingAddressId = it },
+                            selectedCurrency = selectedCurrency,
+                            onCurrencyChange = { selectedCurrency = it },
+                            basePriceStr = basePriceStr,
+                            onBasePriceChange = {
+                                basePriceStr = it
+                                if (priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+                                    priceStr = it
+                                }
+                            },
+                            shippingPriceStr = shippingPriceStr,
+                            onShippingPriceChange = { shippingPriceStr = it },
+                            taxPriceStr = taxPriceStr,
+                            onTaxPriceChange = { taxPriceStr = it },
+                            forwardShippingPriceStr = forwardShippingPriceStr,
+                            onForwardShippingPriceChange = { forwardShippingPriceStr = it },
+                            forwardTaxPriceStr = forwardTaxPriceStr,
+                            onForwardTaxPriceChange = { forwardTaxPriceStr = it }
+                        )
+                    }
                 }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    val parsedPrice = priceStr.toDoubleOrNull() ?: 0.0
+                    val parsedBase = basePriceStr.toDoubleOrNull()
+                    val parsedPrice = priceStr.toDoubleOrNull() ?: (parsedBase ?: 0.0)
+                    val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
+                    val hasForwarding = selectedAddr?.forwardingServiceId != null
+
                     if (bookTitle.isNotEmpty() && selectedBookstoreId > 0) {
                         viewModel.addPreorder(
                             bookstoreId = selectedBookstoreId,
@@ -1433,7 +1788,14 @@ fun AddPreorderDialog(
                             reminderDDayOffset = reminderDDayOffset,
                             reminderHour = reminderHour,
                             reminderMinute = reminderMinute,
-                            rating = rating
+                            rating = rating,
+                            shippingAddressId = selectedShippingAddressId,
+                            currency = selectedCurrency,
+                            basePrice = parsedBase,
+                            shippingPrice = shippingPriceStr.toDoubleOrNull(),
+                            taxPrice = taxPriceStr.toDoubleOrNull(),
+                            forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
+                            forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null
                         )
                         onDismiss()
                     }
@@ -1461,6 +1823,15 @@ fun EditPreorderDialog(
     val context = LocalContext.current
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val forwardingServices by viewModel.forwardingServicesState.collectAsState()
+    var selectedShippingAddressId by remember { mutableStateOf<Int?>(pr.shippingAddressId) }
+    var selectedCurrency by remember { mutableStateOf(pr.currency ?: (userState?.currency ?: "$")) }
+    var basePriceStr by remember { mutableStateOf(pr.basePrice?.toString() ?: "") }
+    var shippingPriceStr by remember { mutableStateOf(pr.shippingPrice?.toString() ?: "") }
+    var taxPriceStr by remember { mutableStateOf(pr.taxPrice?.toString() ?: "") }
+    var forwardShippingPriceStr by remember { mutableStateOf(pr.forwardShippingPrice?.toString() ?: "") }
+    var forwardTaxPriceStr by remember { mutableStateOf(pr.forwardTaxPrice?.toString() ?: "") }
 
     var selectedBookstoreId by remember { mutableStateOf(pr.bookstoreId) }
     var bookTitle by remember { mutableStateOf(pr.bookTitle) }
@@ -1523,6 +1894,13 @@ fun EditPreorderDialog(
                             selectedContentColor = MaterialTheme.colorScheme.primary,
                             unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Tab(
+                            selected = selectedTab == 2,
+                            onClick = { selectedTab = 2 },
+                            text = { Text("Other", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                            selectedContentColor = MaterialTheme.colorScheme.primary,
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
@@ -1558,7 +1936,7 @@ fun EditPreorderDialog(
                         OutlinedTextField(
                             value = bookTitle,
                             onValueChange = { bookTitle = it },
-                            label = { Text("Book Title") },
+                            label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1567,7 +1945,7 @@ fun EditPreorderDialog(
                         OutlinedTextField(
                             value = bookAuthor,
                             onValueChange = { bookAuthor = it },
-                            label = { Text("Book Author") },
+                            label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1605,7 +1983,7 @@ fun EditPreorderDialog(
                             OutlinedTextField(
                                 value = priceStr,
                                 onValueChange = { priceStr = it },
-                                label = { Text("Price ($currency)") },
+                                label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
@@ -1647,138 +2025,23 @@ fun EditPreorderDialog(
 
                             if (reminderEnabled) {
                                 Spacer(modifier = Modifier.height(12.dp))
-                                // Trigger Row/Box
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
-                                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                        .clickable { showTimePicker = true }
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.Notifications,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
-                                        val ddayLabel = if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
-                                        Text(
-                                            text = "Alert on $ddayLabel at $timeLabel",
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                    Text(
-                                        text = "Edit Time",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-
-                                if (showTimePicker) {
-                                    var tempHour by remember { mutableStateOf(reminderHour) }
-                                    var tempMinute by remember { mutableStateOf(reminderMinute) }
-                                    var tempDDayOffset by remember { mutableStateOf(reminderDDayOffset) }
-
-                                    AlertDialog(
-                                        onDismissRequest = { showTimePicker = false },
-                                        title = { Text("Set Reminder", fontWeight = FontWeight.Bold) },
-                                        text = {
-                                            Column(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalAlignment = Alignment.CenterHorizontally
-                                            ) {
-                                                Text(
-                                                    "Choose when to be notified of preorder alerts.",
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                                Spacer(modifier = Modifier.height(16.dp))
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                                    horizontalArrangement = Arrangement.SpaceEvenly,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    // D-Day Offset Picker
-                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text("Alert Day", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        Spacer(modifier = Modifier.height(4.dp))
-                                                        RevolverWheelPicker(
-                                                            items = (0..7).toList(),
-                                                            selectedItem = tempDDayOffset,
-                                                            onItemSelected = { dday -> tempDDayOffset = dday },
-                                                            modifier = Modifier.width(90.dp),
-                                                            label = { dday -> if (dday == 0) "D-Day" else "$dday days before" }
-                                                        )
-                                                    }
-
-                                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                                    // Hour Picker (Scrolling revolver)
-                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text("Hour", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        Spacer(modifier = Modifier.height(4.dp))
-                                                        RevolverWheelPicker(
-                                                            items = (0..23).toList(),
-                                                            selectedItem = tempHour,
-                                                            onItemSelected = { hr -> tempHour = hr },
-                                                            modifier = Modifier.width(55.dp),
-                                                            label = { hr -> String.format("%02d", hr) }
-                                                        )
-                                                    }
-
-                                                    Text(":", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-
-                                                    // Minute Picker (Scrolling revolver)
-                                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                        Text("Min", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                        Spacer(modifier = Modifier.height(4.dp))
-                                                        RevolverWheelPicker(
-                                                            items = (0..59).toList(),
-                                                            selectedItem = tempMinute,
-                                                            onItemSelected = { mn -> tempMinute = mn },
-                                                            modifier = Modifier.width(55.dp),
-                                                            label = { mn -> String.format("%02d", mn) }
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        confirmButton = {
-                                            Button(
-                                                onClick = {
-                                                    reminderDDayOffset = tempDDayOffset
-                                                    reminderHour = tempHour
-                                                    reminderMinute = tempMinute
-                                                    showTimePicker = false
-                                                }
-                                            ) {
-                                                Text("Set")
-                                            }
-                                        },
-                                        dismissButton = {
-                                            TextButton(onClick = { showTimePicker = false }) {
-                                                Text("Cancel")
-                                            }
-                                        }
-                                    )
-                                }
+                                InlineReminderSelector(
+                                    reminderDDayOffset = reminderDDayOffset,
+                                    onDDayOffsetChange = { reminderDDayOffset = it },
+                                    reminderHour = reminderHour,
+                                    onHourChange = { reminderHour = it },
+                                    reminderMinute = reminderMinute,
+                                    onMinuteChange = { reminderMinute = it }
+                                )
                             }
                         }
                     }
-                } else {
+                } else if (selectedTab == 1) {
                     item {
                         OutlinedTextField(
                             value = description,
                             onValueChange = { description = it },
-                            label = { Text("Description") },
+                            label = { Text("Description", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -1791,6 +2054,32 @@ fun EditPreorderDialog(
                                 onRatingChanged = { rating = it }
                             )
                         }
+                    }
+                } else {
+                    item {
+                        OtherFormTabContent(
+                            userAddresses = userAddresses,
+                            forwardingServices = forwardingServices,
+                            selectedShippingAddressId = selectedShippingAddressId,
+                            onShippingAddressChange = { selectedShippingAddressId = it },
+                            selectedCurrency = selectedCurrency,
+                            onCurrencyChange = { selectedCurrency = it },
+                            basePriceStr = basePriceStr,
+                            onBasePriceChange = {
+                                basePriceStr = it
+                                if (priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+                                    priceStr = it
+                                }
+                            },
+                            shippingPriceStr = shippingPriceStr,
+                            onShippingPriceChange = { shippingPriceStr = it },
+                            taxPriceStr = taxPriceStr,
+                            onTaxPriceChange = { taxPriceStr = it },
+                            forwardShippingPriceStr = forwardShippingPriceStr,
+                            onForwardShippingPriceChange = { forwardShippingPriceStr = it },
+                            forwardTaxPriceStr = forwardTaxPriceStr,
+                            onForwardTaxPriceChange = { forwardTaxPriceStr = it }
+                        )
                     }
                 }
             }
@@ -1809,7 +2098,11 @@ fun EditPreorderDialog(
 
                 Button(
                     onClick = {
-                        val parsedPrice = priceStr.toDoubleOrNull() ?: 0.0
+                        val parsedBase = basePriceStr.toDoubleOrNull()
+                        val parsedPrice = priceStr.toDoubleOrNull() ?: (parsedBase ?: pr.price)
+                        val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
+                        val hasForwarding = selectedAddr?.forwardingServiceId != null
+
                         if (bookTitle.isNotEmpty()) {
                             viewModel.updatePreorder(
                                 pr.copy(
@@ -1826,7 +2119,14 @@ fun EditPreorderDialog(
                                     reminderDDayOffset = reminderDDayOffset,
                                     reminderHour = reminderHour,
                                     reminderMinute = reminderMinute,
-                                    rating = rating
+                                    rating = rating,
+                                    shippingAddressId = selectedShippingAddressId,
+                                    currency = selectedCurrency,
+                                    basePrice = parsedBase,
+                                    shippingPrice = shippingPriceStr.toDoubleOrNull(),
+                                    taxPrice = taxPriceStr.toDoubleOrNull(),
+                                    forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
+                                    forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null
                                 )
                             )
                             onDismiss()
@@ -1927,7 +2227,7 @@ fun PreorderFilterDialog(
                         authorText = it
                         viewModel.preorderFilterAuthor.value = if (it.isBlank()) null else it
                     },
-                    label = { Text("Filter by Author Name") },
+                    label = { Text("Filter by Author Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -1937,7 +2237,7 @@ fun PreorderFilterDialog(
                         bookText = it
                         viewModel.preorderFilterBook.value = if (it.isBlank()) null else it
                     },
-                    label = { Text("Filter by Book Title") },
+                    label = { Text("Filter by Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -1969,70 +2269,13 @@ fun PreorderImagePicker(
     onImageSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            onImageSelected(uri.toString())
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(110.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                .border(
-                    width = 2.dp,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                    shape = CircleShape
-                )
-                .clickable { photoPickerLauncher.launch("image/*") },
-            contentAlignment = Alignment.Center
-        ) {
-            if (imageUrl.isNotEmpty()) {
-                AsyncImage(
-                    model = imageUrl,
-                    contentDescription = "Selected Preorder Image",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.Bookmark,
-                    contentDescription = "Default Preorder Icon",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-        }
-
-        // Pencil Edit Button on the bottom-right corner of the circle
-        Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .offset(x = 35.dp, y = 35.dp)
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
-                .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
-                .clickable { photoPickerLauncher.launch("image/*") },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Edit,
-                contentDescription = "Edit Image",
-                tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.size(16.dp)
-            )
-        }
-    }
+    InteractiveImagePicker(
+        imageUrl = imageUrl,
+        onImageSelected = onImageSelected,
+        modifier = modifier,
+        defaultIcon = Icons.Default.Bookmark,
+        contentDescription = "Preorder Image"
+    )
 }
 
 @Composable
@@ -2063,6 +2306,10 @@ private fun <T> RevolverWheelPicker(
     val listState = androidx.compose.foundation.lazy.rememberLazyListState(
         initialFirstVisibleItemIndex = initialListIndex
     )
+    val flingBehavior = rememberSnapFlingBehavior(
+        lazyListState = listState,
+        snapPosition = SnapPosition.Center
+    )
 
     // Sync state when selectedItem changes externally
     LaunchedEffect(selectedItem) {
@@ -2090,7 +2337,6 @@ private fun <T> RevolverWheelPicker(
                 if (closestItem != null) {
                     val actualIndex = closestItem.index % items.size
                     onItemSelected(items[actualIndex])
-                    listState.animateScrollToItem(closestItem.index)
                 }
             }
         }
@@ -2123,6 +2369,7 @@ private fun <T> RevolverWheelPicker(
 
         androidx.compose.foundation.lazy.LazyColumn(
             state = listState,
+            flingBehavior = flingBehavior,
             contentPadding = PaddingValues(vertical = itemHeight),
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally

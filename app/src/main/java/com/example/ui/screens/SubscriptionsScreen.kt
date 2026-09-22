@@ -1,13 +1,19 @@
 package com.example.ui.screens
+
+import com.example.ui.components.InlineReminderSelector
+import com.example.ui.components.OtherFormTabContent
  
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.rememberDatePickerState
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import com.example.utils.saveImageToInternalStorage
 import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -20,10 +26,14 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -39,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -47,6 +58,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.ui.components.InteractiveImagePicker
+import com.example.ui.components.ImageOptionsDialog
+import com.example.ui.components.ImageViewerDialog
 import com.example.data.*
 import com.example.ui.components.CalendarMarker
 import com.example.ui.components.MonthCalendar
@@ -60,21 +74,53 @@ fun SubscriptionsScreen(
     viewModel: BookishViewModel,
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Overview, 1 = Subscriptions
+    val selectedTab by viewModel.subSelectedTab.collectAsState() // 0 = Overview (Renewals), 1 = Subscriptions
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val isDark = isSystemInDarkTheme()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val onScheduledStateChanged: (ScheduledSubscription, ScheduledSubscription, String) -> Unit = { oldScheduled, newScheduled, message ->
+        viewModel.updateScheduledSubscription(newScheduled)
+        val oldStatus = oldScheduled.status.lowercase().trim()
+        val newStatus = newScheduled.status.lowercase().trim()
+        val wasSkipped = oldStatus == "skipped" || oldScheduled.isSkipped
+        val isNowSkipped = newStatus == "skipped" || newScheduled.isSkipped
+        val wasUpcoming = oldStatus == "upcoming" && !oldScheduled.isSkipped
+        val isNowUpcoming = newStatus == "upcoming" && !newScheduled.isSkipped
+
+        val isUpcomingToSkipped = wasUpcoming && isNowSkipped
+        val isSkippedToUpcoming = wasSkipped && isNowUpcoming
+
+        if (!isUpcomingToSkipped && !isSkippedToUpcoming) {
+            coroutineScope.launch {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                val result = snackbarHostState.showSnackbar(
+                    message = message,
+                    actionLabel = "Undo",
+                    duration = SnackbarDuration.Short
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    viewModel.updateScheduledSubscription(oldScheduled)
+                }
+            }
+        }
+    }
 
     // Observe flows
     val userState by viewModel.userState.collectAsState()
     val scheduledList by viewModel.filteredScheduledState.collectAsState()
     val subscriptionsList by viewModel.filteredSubscriptionsState.collectAsState()
+    val rawSubscriptions by viewModel.rawSubscriptionsState.collectAsState()
     val bookstores by viewModel.bookstoresState.collectAsState()
+    val allSkipMethods by viewModel.allSubscriptionSkipMethodsState.collectAsState()
+    val rawScheduled by viewModel.rawScheduledState.collectAsState()
 
     // Dialog trigger states
     var showAddSubscriptionDialog by remember { mutableStateOf(false) }
     var showAddScheduledDialog by remember { mutableStateOf(false) }
     var showFilterDialog by remember { mutableStateOf(false) }
+    var itemToPromptSkip by remember { mutableStateOf<ScheduledWithDetails?>(null) }
 
     // Search bar state
     val searchOverviewQuery by viewModel.subOverviewSearch.collectAsState()
@@ -115,6 +161,12 @@ fun SubscriptionsScreen(
     }
 
     Scaffold(
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.testTag("subs_snackbar_host")
+            )
+        },
         topBar = {
             Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                 TopAppBar(
@@ -126,25 +178,31 @@ fun SubscriptionsScreen(
                         )
                     },
                     actions = {
-                        // Action 1: Toggle View (Calendar / List)
-                        IconButton(
-                            onClick = {
-                                if (selectedTab == 0) {
+                        // Action 1: Toggle View (Calendar / List) for Overview, or Refresh for Subscriptions
+                        if (selectedTab == 0) {
+                            IconButton(
+                                onClick = {
                                     viewModel.subOverviewIsCalendarView.value = !isOverviewCalendar
-                                } else {
-                                    viewModel.subIsCalendarView.value = !isSubCalendar
-                                }
-                            },
-                            modifier = Modifier.testTag("sub_toggle_view")
-                        ) {
-                            Icon(
-                                imageVector = if (selectedTab == 0) {
-                                    if (isOverviewCalendar) Icons.Default.List else Icons.Default.CalendarMonth
-                                } else {
-                                    if (isSubCalendar) Icons.Default.List else Icons.Default.CalendarMonth
                                 },
-                                contentDescription = "Toggle View"
-                            )
+                                modifier = Modifier.testTag("sub_toggle_view")
+                            ) {
+                                Icon(
+                                    imageVector = if (isOverviewCalendar) Icons.Default.List else Icons.Default.CalendarMonth,
+                                    contentDescription = "Toggle View"
+                                )
+                            }
+                        } else {
+                            IconButton(
+                                onClick = {
+                                    viewModel.recalculateSubscriptionSkips()
+                                },
+                                modifier = Modifier.testTag("sub_refresh_skips")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Recalculate Skips"
+                                )
+                            }
                         }
 
                         // Action 2: Toggle Search Bar
@@ -194,7 +252,7 @@ fun SubscriptionsScreen(
                 ) {
                     Tab(
                         selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
+                        onClick = { viewModel.subSelectedTab.value = 0 },
                         text = { 
                             Text(
                                 text = "Renewals",
@@ -206,7 +264,7 @@ fun SubscriptionsScreen(
                     )
                     Tab(
                         selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
+                        onClick = { viewModel.subSelectedTab.value = 1 },
                         text = { 
                             Text(
                                 text = "Subscriptions",
@@ -269,8 +327,24 @@ fun SubscriptionsScreen(
         ) {
             if (selectedTab == 0) {
                 // TAB 1: OVERVIEW SCREEN
-                val timeframes = listOf("7 Days", "This Month", "Next Month", "Yearly")
-                val subOverviewPagerState = rememberPagerState(initialPage = 0, pageCount = { timeframes.size })
+                val timeframes = remember(subListViewTab) {
+                    when (subListViewTab) {
+                        1 -> listOf("Last Week", "Last Month", "Last Year")
+                        2 -> listOf("Last Year", "Last Month", "Last Week", "This Week", "This Month", "Next Week & Month", "This Year")
+                        else -> listOf("This Week", "This Month", "Next Week & Month", "This Year")
+                    }
+                }
+                val subOverviewPagerState = rememberPagerState(
+                    initialPage = if (subListViewTab == 2) 3 else 0,
+                    pageCount = { timeframes.size }
+                )
+
+                LaunchedEffect(subListViewTab) {
+                    val targetPage = if (subListViewTab == 2) 3 else 0
+                    if (subOverviewPagerState.currentPage != targetPage) {
+                        subOverviewPagerState.scrollToPage(targetPage)
+                    }
+                }
                 var showCosts by remember(userState?.displayAmounts) { mutableStateOf(userState?.displayAmounts ?: false) }
                 val cardContrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary
                 val cardContrastBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
@@ -278,10 +352,11 @@ fun SubscriptionsScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                if (!isOverviewCalendar) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = cardContrastBg
@@ -293,7 +368,7 @@ fun SubscriptionsScreen(
                             .fillMaxWidth()
                             .padding(12.dp)
                     ) {
-                        val currentLabel = timeframes[subOverviewPagerState.currentPage]
+                        val currentLabel = timeframes.getOrElse(subOverviewPagerState.currentPage) { timeframes.first() }
 
                         Row(
                             modifier = Modifier
@@ -346,182 +421,500 @@ fun SubscriptionsScreen(
                             state = subOverviewPagerState,
                             modifier = Modifier.fillMaxWidth()
                         ) { page ->
-                            val (startTime, endTime) = when (page) {
-                                0 -> {
-                                    val start = todayStart
-                                    val end = java.util.Calendar.getInstance().apply {
-                                        timeInMillis = todayStart
-                                        add(java.util.Calendar.DAY_OF_YEAR, 7)
-                                        set(java.util.Calendar.HOUR_OF_DAY, 23)
-                                        set(java.util.Calendar.MINUTE, 59)
-                                        set(java.util.Calendar.SECOND, 59)
-                                        set(java.util.Calendar.MILLISECOND, 999)
-                                    }.timeInMillis
-                                    Pair(start, end)
-                                }
-                                1 -> {
-                                    val start = java.util.Calendar.getInstance().apply {
-                                        set(java.util.Calendar.DAY_OF_MONTH, 1)
-                                        set(java.util.Calendar.HOUR_OF_DAY, 0)
-                                        set(java.util.Calendar.MINUTE, 0)
-                                        set(java.util.Calendar.SECOND, 0)
-                                        set(java.util.Calendar.MILLISECOND, 0)
-                                    }.timeInMillis
-                                    val end = java.util.Calendar.getInstance().apply {
-                                        timeInMillis = start
-                                        add(java.util.Calendar.MONTH, 1)
-                                        add(java.util.Calendar.MILLISECOND, -1)
-                                    }.timeInMillis
-                                    Pair(start, end)
-                                }
-                                2 -> {
-                                    val start = java.util.Calendar.getInstance().apply {
-                                        set(java.util.Calendar.DAY_OF_MONTH, 1)
-                                        set(java.util.Calendar.HOUR_OF_DAY, 0)
-                                        set(java.util.Calendar.MINUTE, 0)
-                                        set(java.util.Calendar.SECOND, 0)
-                                        set(java.util.Calendar.MILLISECOND, 0)
-                                        add(java.util.Calendar.MONTH, 1)
-                                    }.timeInMillis
-                                    val end = java.util.Calendar.getInstance().apply {
-                                        timeInMillis = start
-                                        add(java.util.Calendar.MONTH, 1)
-                                        add(java.util.Calendar.MILLISECOND, -1)
-                                    }.timeInMillis
-                                    Pair(start, end)
-                                }
-                                else -> {
-                                    val start = java.util.Calendar.getInstance().apply {
-                                        set(java.util.Calendar.DAY_OF_YEAR, 1)
-                                        set(java.util.Calendar.HOUR_OF_DAY, 0)
-                                        set(java.util.Calendar.MINUTE, 0)
-                                        set(java.util.Calendar.SECOND, 0)
-                                        set(java.util.Calendar.MILLISECOND, 0)
-                                    }.timeInMillis
-                                    val end = java.util.Calendar.getInstance().apply {
-                                        timeInMillis = start
-                                        add(java.util.Calendar.YEAR, 1)
-                                        add(java.util.Calendar.MILLISECOND, -1)
-                                    }.timeInMillis
-                                    Pair(start, end)
-                                }
-                            }
-
-                            val upcomingScheduled = scheduledList.filter {
-                                it.scheduled.status.equals("Upcoming", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
-                            }
-                            val skippedScheduled = scheduledList.filter {
-                                it.scheduled.status.equals("Skipped", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
-                            }
-                            val renewedScheduled = scheduledList.filter {
-                                (it.scheduled.status.equals("Renewed", ignoreCase = true) || it.scheduled.status.equals("Paid", ignoreCase = true)) && it.scheduled.dueDate in startTime..endTime
-                            }
-                            val shippedScheduled = scheduledList.filter {
-                                (it.scheduled.status.equals("Shipped", ignoreCase = true) || it.scheduled.status.equals("Received", ignoreCase = true)) && it.scheduled.dueDate in startTime..endTime
-                            }
-
-                            val dueCost = upcomingScheduled.sumOf { it.subscriptionType?.price ?: 0.0 }
-                            val totalSpentScheduled = scheduledList.filter {
-                                it.scheduled.dueDate in startTime..endTime &&
-                                !it.scheduled.status.equals("Upcoming", ignoreCase = true) &&
-                                !it.scheduled.status.equals("Skipped", ignoreCase = true)
-                            }
-                            val totalSpent = totalSpentScheduled.sumOf { it.subscriptionType?.price ?: 0.0 }
+                            val pageLabel = timeframes.getOrElse(page) { timeframes.first() }
                             val currency = userState?.currency ?: "$"
 
-                            Column(modifier = Modifier.fillMaxWidth()) {
+                            if (pageLabel == "Next Week & Month") {
+                                val thisWeekStart = java.util.Calendar.getInstance().apply {
+                                    timeInMillis = todayStart
+                                    firstDayOfWeek = java.util.Calendar.MONDAY
+                                    set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY)
+                                    set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                    set(java.util.Calendar.MINUTE, 0)
+                                    set(java.util.Calendar.SECOND, 0)
+                                    set(java.util.Calendar.MILLISECOND, 0)
+                                    if (timeInMillis > todayStart) {
+                                        add(java.util.Calendar.WEEK_OF_YEAR, -1)
+                                    }
+                                }.timeInMillis
+                                val startNW = java.util.Calendar.getInstance().apply {
+                                    timeInMillis = thisWeekStart
+                                    add(java.util.Calendar.WEEK_OF_YEAR, 1)
+                                }.timeInMillis
+                                val endNW = java.util.Calendar.getInstance().apply {
+                                    timeInMillis = startNW
+                                    add(java.util.Calendar.DAY_OF_YEAR, 7)
+                                    add(java.util.Calendar.MILLISECOND, -1)
+                                }.timeInMillis
+
+                                val startNM = java.util.Calendar.getInstance().apply {
+                                    timeInMillis = todayStart
+                                    set(java.util.Calendar.DAY_OF_MONTH, 1)
+                                    set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                    set(java.util.Calendar.MINUTE, 0)
+                                    set(java.util.Calendar.SECOND, 0)
+                                    set(java.util.Calendar.MILLISECOND, 0)
+                                    add(java.util.Calendar.MONTH, 1)
+                                }.timeInMillis
+                                val endNM = java.util.Calendar.getInstance().apply {
+                                    timeInMillis = startNM
+                                    add(java.util.Calendar.MONTH, 1)
+                                    add(java.util.Calendar.MILLISECOND, -1)
+                                }.timeInMillis
+
+                                val upcomingNW = scheduledList.filter {
+                                    it.scheduled.status.equals("Upcoming", ignoreCase = true) && it.scheduled.dueDate in startNW..endNW
+                                }
+                                val skippedNW = scheduledList.filter {
+                                    it.scheduled.status.equals("Skipped", ignoreCase = true) && it.scheduled.dueDate in startNW..endNW
+                                }
+                                val dueCostNW = upcomingNW.sumOf { it.subscriptionType?.price ?: 0.0 }
+
+                                val upcomingNM = scheduledList.filter {
+                                    it.scheduled.status.equals("Upcoming", ignoreCase = true) && it.scheduled.dueDate in startNM..endNM
+                                }
+                                val skippedNM = scheduledList.filter {
+                                    it.scheduled.status.equals("Skipped", ignoreCase = true) && it.scheduled.dueDate in startNM..endNM
+                                }
+                                val dueCostNM = upcomingNM.sumOf { it.subscriptionType?.price ?: 0.0 }
+
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceAround,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(IntrinsicSize.Min),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("Upcoming", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(
-                                            "${upcomingScheduled.size}",
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF64748B)
-                                        )
+                                    // Left Side: Next Week
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(IntrinsicSize.Min),
+                                            horizontalArrangement = Arrangement.SpaceAround,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text(
+                                                    text = "Upcoming\nNext Week",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    text = "${upcomingNW.size}",
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF64748B)
+                                                )
+                                            }
+                                            Divider(
+                                                modifier = Modifier
+                                                    .fillMaxHeight()
+                                                    .padding(vertical = 2.dp)
+                                                    .width(1.dp),
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                            )
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text(
+                                                    text = "Skipped\nNext Week",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    text = "${skippedNW.size}",
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFFEF4444)
+                                                )
+                                            }
+                                        }
+                                        if (showCosts) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Divider(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp),
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(
+                                                    text = "Due Cost\nNext Week",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    text = "${currency}${String.format("%.2f", dueCostNW)}",
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (!isDark) Color(0xFFE64A19) else MaterialTheme.colorScheme.secondary
+                                                )
+                                            }
+                                        }
                                     }
+
                                     Divider(
                                         modifier = Modifier
-                                            .height(32.dp)
+                                            .fillMaxHeight()
+                                            .padding(vertical = 4.dp)
                                             .width(1.dp),
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
                                     )
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("Skipped", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(
-                                            "${skippedScheduled.size}",
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFEF4444)
-                                        )
-                                    }
-                                    Divider(
+
+                                    // Right Side: Next Month
+                                    Column(
                                         modifier = Modifier
-                                            .height(32.dp)
-                                            .width(1.dp),
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
-                                    )
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("Renewed", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(
-                                            "${renewedScheduled.size}",
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF2563EB)
-                                        )
+                                            .weight(1f)
+                                            .fillMaxHeight(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(IntrinsicSize.Min),
+                                            horizontalArrangement = Arrangement.SpaceAround,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text(
+                                                    text = "Upcoming\nNext Month",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    text = "${upcomingNM.size}",
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF64748B)
+                                                )
+                                            }
+                                            Divider(
+                                                modifier = Modifier
+                                                    .fillMaxHeight()
+                                                    .padding(vertical = 2.dp)
+                                                    .width(1.dp),
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                                            )
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text(
+                                                    text = "Skipped\nNext Month",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    text = "${skippedNM.size}",
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFFEF4444)
+                                                )
+                                            }
+                                        }
+                                        if (showCosts) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Divider(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 8.dp),
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(
+                                                    text = "Due Cost\nNext Month",
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 10.5.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(3.5.dp))
+                                                Text(
+                                                    text = "${currency}${String.format("%.2f", dueCostNM)}",
+                                                    fontSize = 15.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (!isDark) Color(0xFFE64A19) else MaterialTheme.colorScheme.secondary
+                                                )
+                                            }
+                                        }
                                     }
-                                    Divider(
-                                        modifier = Modifier
-                                            .height(32.dp)
-                                            .width(1.dp),
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
-                                    )
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("Shipped", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(
-                                            "${shippedScheduled.size}",
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF8B5CF6)
-                                        )
+                                }
+                            } else {
+                                val (startTime, endTime) = when (pageLabel) {
+                                    "Last Week" -> {
+                                        val thisWeekStart = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = todayStart
+                                            firstDayOfWeek = java.util.Calendar.MONDAY
+                                            set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY)
+                                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                            set(java.util.Calendar.MILLISECOND, 0)
+                                            if (timeInMillis > todayStart) {
+                                                add(java.util.Calendar.WEEK_OF_YEAR, -1)
+                                            }
+                                        }.timeInMillis
+                                        val start = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = thisWeekStart
+                                            add(java.util.Calendar.WEEK_OF_YEAR, -1)
+                                        }.timeInMillis
+                                        val end = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = thisWeekStart
+                                            add(java.util.Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "Last Month" -> {
+                                        val start = java.util.Calendar.getInstance().apply {
+                                            set(java.util.Calendar.DAY_OF_MONTH, 1)
+                                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                            set(java.util.Calendar.MILLISECOND, 0)
+                                            add(java.util.Calendar.MONTH, -1)
+                                        }.timeInMillis
+                                        val end = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(java.util.Calendar.MONTH, 1)
+                                            add(java.util.Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "Last Year" -> {
+                                        val start = java.util.Calendar.getInstance().apply {
+                                            set(java.util.Calendar.DAY_OF_YEAR, 1)
+                                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                            set(java.util.Calendar.MILLISECOND, 0)
+                                            add(java.util.Calendar.YEAR, -1)
+                                        }.timeInMillis
+                                        val end = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(java.util.Calendar.YEAR, 1)
+                                            add(java.util.Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "This Week" -> {
+                                        val start = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = todayStart
+                                            firstDayOfWeek = java.util.Calendar.MONDAY
+                                            set(java.util.Calendar.DAY_OF_WEEK, java.util.Calendar.MONDAY)
+                                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                            set(java.util.Calendar.MILLISECOND, 0)
+                                            if (timeInMillis > todayStart) {
+                                                add(java.util.Calendar.WEEK_OF_YEAR, -1)
+                                            }
+                                        }.timeInMillis
+                                        val end = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(java.util.Calendar.DAY_OF_YEAR, 7)
+                                            add(java.util.Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    "This Month" -> {
+                                        val start = java.util.Calendar.getInstance().apply {
+                                            set(java.util.Calendar.DAY_OF_MONTH, 1)
+                                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                            set(java.util.Calendar.MILLISECOND, 0)
+                                        }.timeInMillis
+                                        val end = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(java.util.Calendar.MONTH, 1)
+                                            add(java.util.Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
+                                    }
+                                    else -> { // "This Year"
+                                        val start = java.util.Calendar.getInstance().apply {
+                                            set(java.util.Calendar.DAY_OF_YEAR, 1)
+                                            set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                            set(java.util.Calendar.MINUTE, 0)
+                                            set(java.util.Calendar.SECOND, 0)
+                                            set(java.util.Calendar.MILLISECOND, 0)
+                                        }.timeInMillis
+                                        val end = java.util.Calendar.getInstance().apply {
+                                            timeInMillis = start
+                                            add(java.util.Calendar.YEAR, 1)
+                                            add(java.util.Calendar.MILLISECOND, -1)
+                                        }.timeInMillis
+                                        Pair(start, end)
                                     }
                                 }
 
-                                if (showCosts) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Divider(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 8.dp),
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                val upcomingScheduled = scheduledList.filter {
+                                    it.scheduled.status.equals("Upcoming", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                }
+                                val skippedScheduled = scheduledList.filter {
+                                    it.scheduled.status.equals("Skipped", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                }
+                                val renewedScheduled = scheduledList.filter {
+                                    (it.scheduled.status.equals("Renewed", ignoreCase = true) || it.scheduled.status.equals("Paid", ignoreCase = true)) && it.scheduled.dueDate in startTime..endTime
+                                }
+                                val shippedScheduled = scheduledList.filter {
+                                    it.scheduled.status.equals("Shipped", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                }
+                                val receivedScheduled = scheduledList.filter {
+                                    it.scheduled.status.equals("Received", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                }
 
+                                val dueCost = upcomingScheduled.sumOf { it.subscriptionType?.price ?: 0.0 }
+                                val totalSpentScheduled = scheduledList.filter {
+                                    it.scheduled.dueDate in startTime..endTime &&
+                                    !it.scheduled.status.equals("Upcoming", ignoreCase = true) &&
+                                    !it.scheduled.status.equals("Skipped", ignoreCase = true)
+                                }
+                                val totalSpent = totalSpentScheduled.sumOf { it.subscriptionType?.price ?: 0.0 }
+
+                                val isPastTimeframe = pageLabel in listOf("Last Week", "Last Month", "Last Year")
+
+                                Column(modifier = Modifier.fillMaxWidth()) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceAround,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Due Cost", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Upcoming", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
-                                                "${currency}${String.format("%.2f", dueCost)}",
-                                                fontSize = 17.sp,
+                                                "${upcomingScheduled.size}",
+                                                fontSize = 18.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = if (!isDark) Color(0xFFE64A19) else MaterialTheme.colorScheme.secondary
+                                                color = Color(0xFF64748B)
                                             )
                                         }
-                                        if (page == 1 || page == 3) {
-                                            Divider(
-                                                modifier = Modifier
-                                                    .height(28.dp)
-                                                    .width(1.dp),
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        Divider(
+                                            modifier = Modifier
+                                                .height(32.dp)
+                                                .width(1.dp),
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        )
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Skipped", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "${skippedScheduled.size}",
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFEF4444)
                                             )
+                                        }
+                                        Divider(
+                                            modifier = Modifier
+                                                .height(32.dp)
+                                                .width(1.dp),
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        )
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Renewed", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "${renewedScheduled.size}",
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF2563EB)
+                                            )
+                                        }
+                                        Divider(
+                                            modifier = Modifier
+                                                .height(32.dp)
+                                                .width(1.dp),
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        )
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Shipped", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "${shippedScheduled.size}",
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF8B5CF6)
+                                            )
+                                        }
+                                        Divider(
+                                            modifier = Modifier
+                                                .height(32.dp)
+                                                .width(1.dp),
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                        )
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Received", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "${receivedScheduled.size}",
+                                                fontSize = 18.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF10B981)
+                                            )
+                                        }
+                                    }
+
+                                    if (showCosts) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Divider(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp),
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceAround,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (!isPastTimeframe) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Text("Due Cost", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    Text(
+                                                        "${currency}${String.format("%.2f", dueCost)}",
+                                                        fontSize = 17.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (!isDark) Color(0xFFE64A19) else MaterialTheme.colorScheme.secondary
+                                                    )
+                                                }
+                                                Divider(
+                                                    modifier = Modifier
+                                                        .height(28.dp)
+                                                        .width(1.dp),
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                                )
+                                            }
                                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                                 Text("Total Spent", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                 Text(
@@ -541,77 +934,143 @@ fun SubscriptionsScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                if (isOverviewCalendar) {
-                    // CALENDAR VIEW (TAB 1)
-                    val dateFormatKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                    val markerMap = remember(scheduledList) {
-                        scheduledList.groupBy { dateFormatKey.format(Date(it.scheduled.dueDate)) }
-                            .mapValues { entry ->
-                                entry.value.map { item ->
-                                    CalendarMarker(
-                                        id = item.scheduled.id.toString(),
-                                        title = item.scheduled.bookTitle,
-                                        color = when (item.scheduled.status.lowercase()) {
-                                            "skipped" -> Color(0xFFEF4444)
-                                            "upcoming" -> Color(0xFF64748B)
-                                            "renewed", "paid" -> Color(0xFF2563EB)
-                                            "shipped" -> Color(0xFF8B5CF6)
-                                            "received" -> Color(0xFF10B981)
-                                            else -> Color(0xFF2563EB)
-                                        }
-                                    )
-                                }
-                            }
-                    }
-
-                    var focusedDayItems by remember { mutableStateOf<List<ScheduledWithDetails>>(emptyList()) }
-                    var focusedDateStr by remember { mutableStateOf("") }
-
-                    MonthCalendar(
-                        markerDates = markerMap,
-                        onDayClick = { dateStr, markers ->
-                            focusedDateStr = dateStr
-                            focusedDayItems = scheduledList.filter { dateFormatKey.format(Date(it.scheduled.dueDate)) == dateStr }
-                        },
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                // Three tab controls (Upcoming, Past, All)
+                val listTabContrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary
+                TabRow(
+                    selectedTabIndex = subListViewTab,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    contentColor = listTabContrastColor,
+                    divider = {}
+                ) {
+                    Tab(
+                        selected = subListViewTab == 0,
+                        onClick = { subListViewTab = 0 },
+                        text = { Text("Upcoming", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = listTabContrastColor,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Tab(
+                        selected = subListViewTab == 1,
+                        onClick = { subListViewTab = 1 },
+                        text = { Text("Past", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = listTabContrastColor,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Tab(
+                        selected = subListViewTab == 2,
+                        onClick = { subListViewTab = 2 },
+                        text = { Text("All", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = listTabContrastColor,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
-                    if (focusedDateStr.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            if (isOverviewCalendar) {
+                // CALENDAR VIEW (TAB 1)
+                val overviewCalendarLazyListState = rememberLazyListState()
+                val dateFormatKey = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+                val todayStr = remember { dateFormatKey.format(Date()) }
+
+                var focusedDateStr by remember { mutableStateOf(todayStr) }
+                val markerMap = remember(scheduledList) {
+                    scheduledList.groupBy { dateFormatKey.format(Date(it.scheduled.dueDate)) }
+                        .mapValues { entry ->
+                            entry.value.map { item ->
+                                CalendarMarker(
+                                    id = item.scheduled.id.toString(),
+                                    title = item.scheduled.bookTitle,
+                                    color = when (item.scheduled.status.lowercase()) {
+                                        "skipped" -> Color(0xFFEF4444)
+                                        "upcoming" -> Color(0xFF64748B)
+                                        "renewed", "paid" -> Color(0xFF2563EB)
+                                        "shipped" -> Color(0xFF8B5CF6)
+                                        "received" -> Color(0xFF10B981)
+                                        else -> Color(0xFF2563EB)
+                                    },
+                                    imageUrl = item.scheduled.picturePath
+                                )
+                            }
+                        }
+                }
+
+                var focusedDayItems by remember(focusedDateStr, scheduledList) {
+                    mutableStateOf(scheduledList.filter { dateFormatKey.format(Date(it.scheduled.dueDate)) == focusedDateStr })
+                }
+
+                MonthCalendar(
+                    markerDates = markerMap,
+                    selectedDateStr = focusedDateStr,
+                    onDayClick = { dateStr, markers ->
+                        focusedDateStr = dateStr
+                        focusedDayItems = scheduledList.filter { dateFormatKey.format(Date(it.scheduled.dueDate)) == dateStr }
+                    },
+                    lazyListState = overviewCalendarLazyListState,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(
+                    state = overviewCalendarLazyListState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    item {
+                        val displayDateText = remember(focusedDateStr) {
+                            try {
+                                val date = dateFormatKey.parse(focusedDateStr)
+                                if (date != null) {
+                                    val targetCal = Calendar.getInstance().apply { time = date }
+                                    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+                                    val targetYear = targetCal.get(Calendar.YEAR)
+                                    val pattern = if (targetYear == currentYear) "MMMM d" else "MMMM d, yyyy"
+                                    SimpleDateFormat(pattern, Locale.getDefault()).format(date)
+                                } else {
+                                    focusedDateStr
+                                }
+                            } catch (e: Exception) {
+                                focusedDateStr
+                            }
+                        }
+
                         Text(
-                            text = "Deliveries on $focusedDateStr:",
+                            text = displayDateText,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            modifier = Modifier.padding(vertical = 8.dp)
                         )
+                    }
 
-                        if (focusedDayItems.isEmpty()) {
+                    if (focusedDayItems.isEmpty()) {
+                        item {
                             Text(
                                 "No deliveries scheduled for this day.",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                                modifier = Modifier.padding(bottom = 12.dp)
                             )
-                        } else {
-                            LazyColumn(modifier = Modifier.padding(horizontal = 16.dp)) {
-                                items(
-                                    items = focusedDayItems,
-                                    key = { it.scheduled.id }
-                                ) { item ->
-                                    ScheduledItemRow(item, viewModel)
-                                }
-                            }
                         }
                     } else {
-                        Text(
-                            text = "Tap a calendar date to view day deliveries",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            fontWeight = FontWeight.Medium
-                        )
+                        items(focusedDayItems, key = { it.scheduled.id }) { item ->
+                            ScheduledItemRow(
+                                item = item,
+                                viewModel = viewModel,
+                                onPromptSkip = { itemToPromptSkip = it },
+                                onStateChanged = onScheduledStateChanged
+                            )
+                        }
                     }
+
+
+                }
 
                 } else {
                     // LIST VIEW Tabbed (Upcoming, Past, All)
@@ -645,45 +1104,10 @@ fun SubscriptionsScreen(
                     }
 
                     val allSorted = remember(scheduledList) {
-                        scheduledList.sortedBy { it.scheduled.dueDate }
+                        scheduledList.sortedByDescending { it.scheduled.dueDate }
                     }
                     val groupedAll = remember(allSorted, currentYear) {
                         allSorted.groupBy { formatSubGroupHeader(it.scheduled.dueDate) }
-                    }
-
-                    // Three tab controls
-                    val listTabContrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary
-                    TabRow(
-                        selectedTabIndex = subListViewTab,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                            .clip(RoundedCornerShape(12.dp)),
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        contentColor = listTabContrastColor,
-                        divider = {}
-                    ) {
-                        Tab(
-                            selected = subListViewTab == 0,
-                            onClick = { subListViewTab = 0 },
-                            text = { Text("Upcoming", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                            selectedContentColor = listTabContrastColor,
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Tab(
-                            selected = subListViewTab == 1,
-                            onClick = { subListViewTab = 1 },
-                            text = { Text("Past", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                            selectedContentColor = listTabContrastColor,
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Tab(
-                            selected = subListViewTab == 2,
-                            onClick = { subListViewTab = 2 },
-                            text = { Text("All", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
-                            selectedContentColor = listTabContrastColor,
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
 
                     if (subListViewTab == 0) {
@@ -718,7 +1142,12 @@ fun SubscriptionsScreen(
                                         items = groupedUpcoming[dateHeader] ?: emptyList(),
                                         key = { it.scheduled.id }
                                     ) { item ->
-                                        ScheduledItemRow(item, viewModel)
+                                        ScheduledItemRow(
+                                            item = item,
+                                            viewModel = viewModel,
+                                            onPromptSkip = { itemToPromptSkip = it },
+                                            onStateChanged = onScheduledStateChanged
+                                        )
                                     }
                                 }
                             }
@@ -755,7 +1184,12 @@ fun SubscriptionsScreen(
                                         items = groupedPast[monthHeader] ?: emptyList(),
                                         key = { it.scheduled.id }
                                     ) { item ->
-                                        ScheduledItemRow(item, viewModel)
+                                        ScheduledItemRow(
+                                            item = item,
+                                            viewModel = viewModel,
+                                            onPromptSkip = { itemToPromptSkip = it },
+                                            onStateChanged = onScheduledStateChanged
+                                        )
                                     }
                                 }
                             }
@@ -792,7 +1226,12 @@ fun SubscriptionsScreen(
                                         items = groupedAll[dateHeader] ?: emptyList(),
                                         key = { it.scheduled.id }
                                     ) { item ->
-                                        ScheduledItemRow(item, viewModel)
+                                        ScheduledItemRow(
+                                            item = item,
+                                            viewModel = viewModel,
+                                            onPromptSkip = { itemToPromptSkip = it },
+                                            onStateChanged = onScheduledStateChanged
+                                        )
                                     }
                                 }
                             }
@@ -878,93 +1317,70 @@ fun SubscriptionsScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                if (isSubCalendar) {
-                    // CALENDAR VIEW (TAB 2)
-                    val dateFormatKey = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                    val markerColor = MaterialTheme.colorScheme.secondary
-                    val markerMap = remember(subscriptionsList, markerColor) {
-                        subscriptionsList.groupBy { dateFormatKey.format(Date(it.subscription.dueDate)) }
-                            .mapValues { entry ->
-                                entry.value.map { item ->
-                                    CalendarMarker(
-                                        id = item.subscription.id.toString(),
-                                        title = item.subscription.title,
-                                        color = markerColor
-                                    )
-                                }
-                            }
+                // LIST VIEW (TAB 2)
+                if (subscriptionsList.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No active subscriptions matching search/filters.")
                     }
-
-                    var focusedDaySubs by remember { mutableStateOf<List<SubscriptionWithBookstore>>(emptyList()) }
-                    var focusedDateStr by remember { mutableStateOf("") }
-
-                    MonthCalendar(
-                        markerDates = markerMap,
-                        onDayClick = { dateStr, markers ->
-                            focusedDateStr = dateStr
-                            focusedDaySubs = subscriptionsList.filter { dateFormatKey.format(Date(it.subscription.dueDate)) == dateStr }
-                        },
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
-
-                    if (focusedDateStr.isNotEmpty()) {
-                        Text(
-                            text = "Sub Renewals on $focusedDateStr:",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
-
-                        if (focusedDaySubs.isEmpty()) {
-                            Text(
-                                "No subscriptions renew on this day.",
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
-                        } else {
-                            LazyColumn(modifier = Modifier.padding(horizontal = 16.dp)) {
-                                items(focusedDaySubs) { item ->
-                                    SubscriptionItemRow(item, viewModel)
-                                }
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = "Tap a calendar date to view renewals",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
                 } else {
-                    // LIST VIEW (TAB 2)
-                    if (subscriptionsList.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("No active subscriptions matching search/filters.")
-                        }
-                    } else {
-                        val sortedSubs = remember(subscriptionsList) {
-                            subscriptionsList.sortedBy { it.subscription.dueDate }
-                        }
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .padding(horizontal = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                    val groupedSubsByStore = remember(subscriptionsList) {
+                        subscriptionsList
+                            .sortedWith(
+                                compareBy<SubscriptionWithBookstore> { it.bookstore?.name?.lowercase() ?: "zzzz" }
+                                    .thenBy { it.subscription.startDate }
+                            )
+                            .groupBy { it.bookstore?.name?.takeIf { name -> name.isNotBlank() } ?: "Other" }
+                    }
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        groupedSubsByStore.forEach { (storeName, storeSubs) ->
+                            item(key = "header_$storeName") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 10.dp, bottom = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Storefront,
+                                        contentDescription = null,
+                                        tint = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = storeName,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = (if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary).copy(alpha = 0.12f)
+                                    ) {
+                                        Text(
+                                            text = "${storeSubs.size}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                            }
                             items(
-                                items = sortedSubs,
+                                items = storeSubs,
                                 key = { it.subscription.id }
                             ) { item ->
                                 SubscriptionItemRow(item, viewModel)
@@ -998,8 +1414,20 @@ fun SubscriptionsScreen(
             SubscriptionFilterDialog(
                 viewModel = viewModel,
                 bookstores = bookstores,
+                subscriptionTypes = rawSubscriptions.map { it.subscription },
                 selectedTab = selectedTab,
                 onDismiss = { showFilterDialog = false }
+            )
+        }
+
+        // Hoisted Skip Action Prompt Dialog
+        itemToPromptSkip?.let { scheduledItem ->
+            SkipActionPromptDialog(
+                scheduledWithDetails = scheduledItem,
+                allSkipMethods = allSkipMethods,
+                allScheduled = rawScheduled,
+                viewModel = viewModel,
+                onDismiss = { itemToPromptSkip = null }
             )
         }
     }
@@ -1007,7 +1435,12 @@ fun SubscriptionsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
+fun ScheduledItemRow(
+    item: ScheduledWithDetails,
+    viewModel: BookishViewModel,
+    onPromptSkip: ((ScheduledWithDetails) -> Unit)? = null,
+    onStateChanged: ((oldScheduled: ScheduledSubscription, newScheduled: ScheduledSubscription, message: String) -> Unit)? = null
+) {
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
     val userDateFormatPattern = userState?.dateFormat ?: "yyyy-MM-dd"
@@ -1019,7 +1452,18 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
     }
 
     val isDark = isSystemInDarkTheme()
+    val context = LocalContext.current
     var showEditDialog by remember { mutableStateOf(false) }
+    var showViewerDialog by remember { mutableStateOf(false) }
+
+    val activeImageModel = item.scheduled.picturePath.takeIf { !it.isNullOrEmpty() }
+
+    if (showViewerDialog && activeImageModel != null) {
+        ImageViewerDialog(
+            imageUrl = activeImageModel,
+            onDismiss = { showViewerDialog = false }
+        )
+    }
 
     val accentColor = when (item.scheduled.status.lowercase()) {
         "upcoming" -> Color(0xFF64748B) // Grey
@@ -1033,17 +1477,22 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
     val isUpcoming = item.scheduled.status.equals("Upcoming", ignoreCase = true)
     val isSkippedStatus = item.scheduled.status.equals("Skipped", ignoreCase = true)
     val isDueDateToCome = item.scheduled.dueDate >= (System.currentTimeMillis() - 86400000L)
-    val canSwipeToSkipOrUnskip = isUpcoming || (isSkippedStatus && isDueDateToCome)
     val isRenewed = item.scheduled.status.equals("Renewed", ignoreCase = true) || item.scheduled.status.equals("Paid", ignoreCase = true)
     val isShipped = item.scheduled.status.equals("Shipped", ignoreCase = true)
-    val canSwipeToStatusChange = isUpcoming || isRenewed || isShipped || isSkippedStatus
+    val isReceived = item.scheduled.status.equals("Received", ignoreCase = true)
 
-    key(item.scheduled.id, item.scheduled.status) {
+    val canSwipeRight = isSkippedStatus || isUpcoming || isRenewed || isShipped
+    val canSwipeLeft = isReceived || isShipped || isRenewed || isUpcoming || (isSkippedStatus && isDueDateToCome)
+    val density = LocalDensity.current
+    val thresholdPx = remember(density) { with(density) { 48.dp.toPx() } }
+
+    key(item.scheduled.id, item.scheduled.status, item.scheduled.isSkipped) {
         val dismissState = rememberSwipeToDismissBoxState(
+            positionalThreshold = { totalDistance -> thresholdPx.coerceAtMost(totalDistance * 0.35f) },
             confirmValueChange = { dismissValue ->
                 when (dismissValue) {
                     SwipeToDismissBoxValue.StartToEnd -> {
-                        if (canSwipeToStatusChange) {
+                        if (canSwipeRight) {
                             val newStatus = when {
                                 isSkippedStatus -> "Upcoming"
                                 isUpcoming -> "Renewed"
@@ -1052,15 +1501,71 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
                                 else -> item.scheduled.status
                             }
                             val isSkippedNew = if (isSkippedStatus) false else item.scheduled.isSkipped
-                            viewModel.updateScheduledSubscription(
-                                item.scheduled.copy(status = newStatus, isSkipped = isSkippedNew)
-                            )
+                            if (newStatus != item.scheduled.status || isSkippedNew != item.scheduled.isSkipped) {
+                                val newScheduled = item.scheduled.copy(status = newStatus, isSkipped = isSkippedNew)
+                                val msg = when {
+                                    isSkippedStatus -> "$displayTitle: Unskipped"
+                                    else -> "$displayTitle: Status changed to $newStatus"
+                                }
+                                if (onStateChanged != null) {
+                                    onStateChanged(item.scheduled, newScheduled, msg)
+                                } else {
+                                    viewModel.updateScheduledSubscription(newScheduled)
+                                }
+                            }
                         }
                         false
                     }
                     SwipeToDismissBoxValue.EndToStart -> {
-                        if (canSwipeToSkipOrUnskip) {
-                            viewModel.toggleSkipScheduledSubscription(item.scheduled)
+                        if (canSwipeLeft) {
+                            when {
+                                isReceived -> {
+                                    val newScheduled = item.scheduled.copy(status = "Shipped")
+                                    val msg = "$displayTitle: Status changed to Shipped"
+                                    if (onStateChanged != null) {
+                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    } else {
+                                        viewModel.updateScheduledSubscription(newScheduled)
+                                    }
+                                }
+                                isShipped -> {
+                                    val newScheduled = item.scheduled.copy(status = "Renewed")
+                                    val msg = "$displayTitle: Status changed to Renewed"
+                                    if (onStateChanged != null) {
+                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    } else {
+                                        viewModel.updateScheduledSubscription(newScheduled)
+                                    }
+                                }
+                                isRenewed -> {
+                                    val newScheduled = item.scheduled.copy(status = "Upcoming")
+                                    val msg = "$displayTitle: Status changed to Upcoming"
+                                    if (onStateChanged != null) {
+                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    } else {
+                                        viewModel.updateScheduledSubscription(newScheduled)
+                                    }
+                                }
+                                isUpcoming -> {
+                                    val newScheduled = item.scheduled.copy(status = "Skipped", isSkipped = true)
+                                    val msg = "$displayTitle: Skipped"
+                                    onPromptSkip?.invoke(item)
+                                    if (onStateChanged != null) {
+                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    } else {
+                                        viewModel.updateScheduledSubscription(newScheduled)
+                                    }
+                                }
+                                isSkippedStatus -> {
+                                    val newScheduled = item.scheduled.copy(status = "Upcoming", isSkipped = false)
+                                    val msg = "$displayTitle: Unskipped"
+                                    if (onStateChanged != null) {
+                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    } else {
+                                        viewModel.updateScheduledSubscription(newScheduled)
+                                    }
+                                }
+                            }
                         }
                         false
                     }
@@ -1071,8 +1576,8 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
 
         SwipeToDismissBox(
             state = dismissState,
-            enableDismissFromEndToStart = canSwipeToSkipOrUnskip,
-            enableDismissFromStartToEnd = canSwipeToStatusChange,
+            enableDismissFromEndToStart = canSwipeLeft,
+            enableDismissFromStartToEnd = canSwipeRight,
             backgroundContent = {
                 val direction = dismissState.dismissDirection
                 val target = dismissState.targetValue
@@ -1092,10 +1597,20 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
                             isSkippedStatus -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             isUpcoming -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
                             isRenewed -> Color(0xFF8B5CF6).copy(alpha = 0.15f)
-                            else -> Color(0xFF10B981).copy(alpha = 0.15f)
+                            isShipped -> Color(0xFF10B981).copy(alpha = 0.15f)
+                            else -> Color.Transparent
                         }
                     }
-                    isEndToStart -> Color.Gray.copy(alpha = 0.15f)
+                    isEndToStart -> {
+                        when {
+                            isReceived -> Color(0xFF8B5CF6).copy(alpha = 0.15f)
+                            isShipped -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
+                            isRenewed -> Color(0xFF64748B).copy(alpha = 0.15f)
+                            isUpcoming -> Color(0xFFEF4444).copy(alpha = 0.15f)
+                            isSkippedStatus -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            else -> Color.Transparent
+                        }
+                    }
                     else -> Color.Transparent
                 }
                 val alignment = when {
@@ -1109,10 +1624,20 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
                             isSkippedStatus -> Icons.AutoMirrored.Filled.Undo
                             isUpcoming -> Icons.Default.Autorenew
                             isRenewed -> Icons.Default.LocalShipping
-                            else -> Icons.Default.CheckCircle
+                            isShipped -> Icons.Default.CheckCircle
+                            else -> null
                         }
                     }
-                    isEndToStart -> Icons.AutoMirrored.Filled.Undo
+                    isEndToStart -> {
+                        when {
+                            isReceived -> Icons.Default.LocalShipping
+                            isShipped -> Icons.Default.Autorenew
+                            isRenewed -> Icons.Default.Schedule
+                            isUpcoming -> Icons.Default.Block
+                            isSkippedStatus -> Icons.AutoMirrored.Filled.Undo
+                            else -> null
+                        }
+                    }
                     else -> null
                 }
                 val iconTint = when {
@@ -1121,10 +1646,20 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
                             isSkippedStatus -> MaterialTheme.colorScheme.primary
                             isUpcoming -> MaterialTheme.colorScheme.tertiary
                             isRenewed -> Color(0xFF8B5CF6)
-                            else -> Color(0xFF10B981)
+                            isShipped -> Color(0xFF10B981)
+                            else -> Color.Transparent
                         }
                     }
-                    isEndToStart -> Color.Gray
+                    isEndToStart -> {
+                        when {
+                            isReceived -> Color(0xFF8B5CF6)
+                            isShipped -> MaterialTheme.colorScheme.tertiary
+                            isRenewed -> Color(0xFF64748B)
+                            isUpcoming -> Color(0xFFEF4444)
+                            isSkippedStatus -> MaterialTheme.colorScheme.primary
+                            else -> Color.Transparent
+                        }
+                    }
                     else -> Color.Transparent
                 }
 
@@ -1192,10 +1727,18 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
                         modifier = Modifier
                             .size(80.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(accentColor.copy(alpha = 0.12f)),
+                            .background(accentColor.copy(alpha = 0.12f))
+                            .then(
+                                if (activeImageModel != null) {
+                                    Modifier.clickable { showViewerDialog = true }
+                                } else {
+                                    Modifier
+                                }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         val imageModel = item.scheduled.picturePath.takeIf { !it.isNullOrEmpty() }
+                            ?: item.subscriptionType?.picturePath.takeIf { !it.isNullOrEmpty() }
                             ?: item.bookstore?.profilePic.takeIf { !it.isNullOrEmpty() && it != "ic_launcher_foreground" }
                         if (imageModel != null) {
                             AsyncImage(
@@ -1205,7 +1748,7 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
-                            val storeName = item.bookstore?.name ?: displayTitle
+                            val storeName = item.bookstore?.name?.takeIf { it.isNotBlank() } ?: displayTitle
                             val initial = (storeName.firstOrNull { it.isLetterOrDigit() } ?: 'B').uppercaseChar().toString()
                             Box(
                                 modifier = Modifier
@@ -1309,6 +1852,7 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier
+                                    .testTag("sub_status_tag_${item.scheduled.id}")
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(statusContainerColor)
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -1396,9 +1940,231 @@ fun ScheduledItemRow(item: ScheduledWithDetails, viewModel: BookishViewModel) {
         EditScheduledSubscriptionDialog(
             scheduledWithDetails = item,
             viewModel = viewModel,
-            onDismiss = { showEditDialog = false }
+            onDismiss = { showEditDialog = false },
+            onPromptSkip = onPromptSkip
         )
     }
+}
+
+@Composable
+fun SkipActionPromptDialog(
+    scheduledWithDetails: ScheduledWithDetails,
+    allSkipMethods: List<SubscriptionSkipMethod> = emptyList(),
+    allScheduled: List<ScheduledWithDetails> = emptyList(),
+    viewModel: BookishViewModel? = null,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val bookstoreName = scheduledWithDetails.bookstore?.name?.takeIf { it.isNotBlank() }
+        ?: scheduledWithDetails.subscriptionType?.title?.takeIf { it.isNotBlank() }
+        ?: "bookstore"
+    val subType = scheduledWithDetails.subscriptionType
+    val subTypeId = scheduledWithDetails.scheduled.subscriptionTypeId
+
+    val vmSkipMethods = viewModel?.allSubscriptionSkipMethodsState?.collectAsState()?.value ?: emptyList()
+    val sourceSkipMethods = if (allSkipMethods.isNotEmpty()) allSkipMethods else vmSkipMethods
+
+    var directMethods by remember(subTypeId) { mutableStateOf<List<SubscriptionSkipMethod>?>(null) }
+    var isCheckingDb by remember(subTypeId) { mutableStateOf(viewModel != null) }
+
+    LaunchedEffect(subTypeId) {
+        if (viewModel != null) {
+            val fromDb = viewModel.repository.getSkipMethodsForSubscriptionTypeDirect(subTypeId)
+            directMethods = fromDb
+        }
+        isCheckingDb = false
+    }
+
+    val typeSkipMethods = remember(sourceSkipMethods, directMethods, subTypeId) {
+        val filtered = sourceSkipMethods.filter { it.subscriptionTypeId == subTypeId }
+        if (filtered.isNotEmpty()) {
+            filtered.sortedBy { it.skipMethodOrder }
+        } else {
+            directMethods?.sortedBy { it.skipMethodOrder } ?: emptyList()
+        }
+    }
+
+    val vmScheduled = viewModel?.rawScheduledState?.collectAsState()?.value ?: emptyList()
+    val sourceScheduled = if (allScheduled.isNotEmpty()) allScheduled else vmScheduled
+
+    val priorScheduledForType = remember(sourceScheduled, scheduledWithDetails) {
+        sourceScheduled
+            .filter { it.scheduled.subscriptionTypeId == subTypeId }
+            .map { it.scheduled }
+            .filter { sched ->
+                sched.dueDate < scheduledWithDetails.scheduled.dueDate ||
+                        (sched.dueDate == scheduledWithDetails.scheduled.dueDate && sched.id < scheduledWithDetails.scheduled.id)
+            }
+            .sortedBy { it.dueDate }
+    }
+
+    // Skip number: how many scheduled subscriptions were skipped immediately before skipping the current one
+    val skipNumber = remember(priorScheduledForType) {
+        var count = 0
+        for (item in priorScheduledForType.reversed()) {
+            if (item.isSkipped || item.status.equals("Skipped", ignoreCase = true)) {
+                count++
+            } else {
+                break
+            }
+        }
+        count
+    }
+
+    // Filter skip methods by consecutiveSkips <= skipNumber,
+    // order by consecutiveSkips descending, default check (order == 1) descending, skipMethodOrder ascending,
+    // and grab the first register
+    val selectedMethod = remember(typeSkipMethods, skipNumber) {
+        val eligible = typeSkipMethods.filter { it.consecutiveSkips <= skipNumber }
+        eligible.sortedWith(
+            compareByDescending<SubscriptionSkipMethod> { it.consecutiveSkips }
+                .thenByDescending { it.skipMethodOrder == 1 }
+                .thenBy { it.skipMethodOrder }
+        ).firstOrNull() ?: typeSkipMethods.firstOrNull()
+    }
+
+    val methodType: String
+    val methodValue: String
+    val methodText: String
+
+    if (selectedMethod != null) {
+        methodType = selectedMethod.skipMethodType.trim()
+        methodValue = selectedMethod.skipMethodValue.trim()
+        methodText = selectedMethod.skipMethodText.trim()
+    } else {
+        // Fallback to legacy fields if no SkipMethod records exist
+        methodType = subType?.skipMethod?.trim() ?: ""
+        methodValue = subType?.skipLink?.trim() ?: ""
+        methodText = subType?.skipText?.trim() ?: ""
+    }
+
+    val isEmail = methodType.equals("Email", ignoreCase = true)
+    val isWebsite = methodType.equals("Website", ignoreCase = true)
+    val isPhone = methodType.equals("Phone", ignoreCase = true)
+    val isCustom = !isEmail && !isWebsite && !isPhone && methodType.isNotBlank()
+
+    val hasValidMethod = methodValue.isNotBlank() && (isEmail || isWebsite || isPhone || isCustom)
+
+    if (!hasValidMethod) {
+        if (!isCheckingDb) {
+            LaunchedEffect(Unit) {
+                onDismiss()
+            }
+        }
+        return
+    }
+
+    val dialogMessage = when {
+        isEmail -> "Would you like to email $bookstoreName to skip?"
+        isWebsite -> "Would you like to open $bookstoreName website to skip?"
+        isPhone -> "Would you like to call $bookstoreName to skip?"
+        else -> "Would you like to skip subscription for $bookstoreName via $methodType?"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Skip Subscription",
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = dialogMessage,
+                    fontSize = 15.sp
+                )
+                if (isCustom && methodValue.isNotBlank()) {
+                    Text(
+                        text = "Contact: $methodValue",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onDismiss()
+                    try {
+                        when {
+                            isEmail -> {
+                                val emailAddress = methodValue.removePrefix("mailto:").trim()
+                                val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                                    data = Uri.parse("mailto:")
+                                    putExtra(Intent.EXTRA_EMAIL, arrayOf(emailAddress))
+                                    putExtra(Intent.EXTRA_SUBJECT, "Skip Subscription - ${subType?.title ?: ""}")
+                                    if (methodText.isNotBlank()) {
+                                        putExtra(Intent.EXTRA_TEXT, methodText)
+                                    }
+                                }
+                                context.startActivity(emailIntent)
+                            }
+                            isWebsite -> {
+                                val fullUrl = if (!methodValue.startsWith("http://") && !methodValue.startsWith("https://")) {
+                                    "https://$methodValue"
+                                } else {
+                                    methodValue
+                                }
+                                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fullUrl))
+                                context.startActivity(webIntent)
+                            }
+                            isPhone -> {
+                                val cleanPhone = methodValue.removePrefix("tel:").trim()
+                                val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$cleanPhone"))
+                                context.startActivity(dialIntent)
+                            }
+                            else -> {
+                                // Custom method: check format
+                                val cleanVal = methodValue.trim()
+                                when {
+                                    cleanVal.startsWith("http://") || cleanVal.startsWith("https://") || cleanVal.startsWith("www.") -> {
+                                        val fullUrl = if (cleanVal.startsWith("www.")) "https://$cleanVal" else cleanVal
+                                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fullUrl))
+                                        context.startActivity(webIntent)
+                                    }
+                                    cleanVal.contains("@") && !cleanVal.contains(" ") -> {
+                                        val emailAddress = cleanVal.removePrefix("mailto:").trim()
+                                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                                            data = Uri.parse("mailto:")
+                                            putExtra(Intent.EXTRA_EMAIL, arrayOf(emailAddress))
+                                            putExtra(Intent.EXTRA_SUBJECT, "Skip Subscription - ${subType?.title ?: ""}")
+                                            if (methodText.isNotBlank()) {
+                                                putExtra(Intent.EXTRA_TEXT, methodText)
+                                            }
+                                        }
+                                        context.startActivity(emailIntent)
+                                    }
+                                    cleanVal.all { it.isDigit() || it == '+' || it == '-' || it == '(' || it == ')' || it == ' ' } && cleanVal.length >= 5 -> {
+                                        val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$cleanVal"))
+                                        context.startActivity(dialIntent)
+                                    }
+                                    else -> {
+                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, if (methodText.isNotBlank()) "$cleanVal\n\n$methodText" else cleanVal)
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "Skip Subscription"))
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            ) {
+                Text("Yes")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("No")
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1409,6 +2175,16 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
     var showEditDialog by remember { mutableStateOf(false) }
     var isExpanded by remember { mutableStateOf(false) }
     var totalDragX by remember { mutableFloatStateOf(0f) }
+    var showViewerDialog by remember { mutableStateOf(false) }
+
+    val activeSubPic = item.subscription.picturePath.takeIf { !it.isNullOrEmpty() }
+
+    if (showViewerDialog && activeSubPic != null) {
+        ImageViewerDialog(
+            imageUrl = activeSubPic,
+            onDismiss = { showViewerDialog = false }
+        )
+    }
 
     val isDark = isSystemInDarkTheme()
     val allSkips by viewModel.allSubscriptionSkipsState.collectAsState()
@@ -1510,16 +2286,31 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                // Bookstore Profile Picture Box
+                // Subscription Picture Box
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(accentColor.copy(alpha = 0.12f)),
+                        .background(accentColor.copy(alpha = 0.12f))
+                        .then(
+                            if (activeSubPic != null) {
+                                Modifier.clickable { showViewerDialog = true }
+                            } else {
+                                Modifier
+                            }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (item.bookstore != null && !item.bookstore.profilePic.isNullOrEmpty() && item.bookstore.profilePic != "ic_launcher_foreground") {
+                    val subPic = item.subscription.picturePath
+                    if (!subPic.isNullOrEmpty()) {
+                        AsyncImage(
+                            model = subPic,
+                            contentDescription = "${item.subscription.title} Image",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else if (item.bookstore != null && !item.bookstore.profilePic.isNullOrEmpty() && item.bookstore.profilePic != "ic_launcher_foreground") {
                         AsyncImage(
                             model = item.bookstore.profilePic,
                             contentDescription = "${item.bookstore.name} Logo",
@@ -1527,7 +2318,7 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
-                        val storeName = item.bookstore?.name ?: item.subscription.title
+                        val storeName = item.bookstore?.name?.takeIf { it.isNotBlank() } ?: item.subscription.title
                         val initial = (storeName.firstOrNull { it.isLetterOrDigit() } ?: 'B').uppercaseChar().toString()
                         Box(
                             modifier = Modifier
@@ -1873,6 +2664,613 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
     }
 }
 
+@Composable
+fun SubscriptionSkipMethodsSection(
+    skipMethods: List<SubscriptionSkipMethod>,
+    bookstoreContacts: List<BookstoreContact>,
+    subTitle: String,
+    userName: String,
+    onSkipMethodsChanged: (List<SubscriptionSkipMethod>) -> Unit
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    var editingMethodIndex by remember { mutableStateOf<Int?>(null) }
+    var addingMethodType by remember { mutableStateOf<String?>(null) } // "Website", "Email", "Phone", "Custom"
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Skip Methods",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp
+            )
+
+            Box {
+                FilledTonalButton(
+                    onClick = { showMenu = true },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.testTag("add_skip_method_menu_button")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Add Method", fontSize = 13.sp)
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Add website") },
+                        leadingIcon = { Icon(Icons.Default.Language, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            addingMethodType = "Website"
+                        },
+                        modifier = Modifier.testTag("add_website_option")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add email") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            addingMethodType = "Email"
+                        },
+                        modifier = Modifier.testTag("add_email_option")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add phone") },
+                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            addingMethodType = "Phone"
+                        },
+                        modifier = Modifier.testTag("add_phone_option")
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Add custom field") },
+                        leadingIcon = { Icon(Icons.Default.AddCircle, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            addingMethodType = "Custom"
+                        },
+                        modifier = Modifier.testTag("add_custom_option")
+                    )
+                }
+            }
+        }
+
+        if (skipMethods.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "No skip methods configured. Use the + button above to add Website, Email, Phone, or Custom skip methods.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                skipMethods.forEachIndexed { index, method ->
+                    SkipMethodItemRow(
+                        index = index,
+                        totalCount = skipMethods.size,
+                        method = method,
+                        onEdit = {
+                            editingMethodIndex = index
+                        },
+                        onDelete = {
+                            val updated = skipMethods.toMutableList().apply { removeAt(index) }
+                            onSkipMethodsChanged(updated.mapIndexed { idx, m -> m.copy(skipMethodOrder = idx + 1) })
+                        },
+                        onMoveUp = {
+                            if (index > 0) {
+                                val updated = skipMethods.toMutableList()
+                                val temp = updated[index]
+                                updated[index] = updated[index - 1]
+                                updated[index - 1] = temp
+                                onSkipMethodsChanged(updated.mapIndexed { idx, m -> m.copy(skipMethodOrder = idx + 1) })
+                            }
+                        },
+                        onMoveDown = {
+                            if (index < skipMethods.size - 1) {
+                                val updated = skipMethods.toMutableList()
+                                val temp = updated[index]
+                                updated[index] = updated[index + 1]
+                                updated[index + 1] = temp
+                                onSkipMethodsChanged(updated.mapIndexed { idx, m -> m.copy(skipMethodOrder = idx + 1) })
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    // Popup Editor Dialog for Add
+    addingMethodType?.let { type ->
+        SkipMethodEditorDialog(
+            initialMethod = null,
+            initialType = type,
+            bookstoreContacts = bookstoreContacts,
+            defaultSubTitle = subTitle,
+            defaultUserName = userName,
+            onSave = { newMethod ->
+                val newOrder = skipMethods.size + 1
+                val updated = skipMethods + newMethod.copy(skipMethodOrder = newOrder)
+                onSkipMethodsChanged(updated)
+                addingMethodType = null
+            },
+            onDismiss = { addingMethodType = null }
+        )
+    }
+
+    // Popup Editor Dialog for Edit
+    editingMethodIndex?.let { index ->
+        if (index in skipMethods.indices) {
+            val methodToEdit = skipMethods[index]
+            SkipMethodEditorDialog(
+                initialMethod = methodToEdit,
+                initialType = methodToEdit.skipMethodType,
+                bookstoreContacts = bookstoreContacts,
+                defaultSubTitle = subTitle,
+                defaultUserName = userName,
+                onSave = { updatedMethod ->
+                    val updated = skipMethods.toMutableList()
+                    updated[index] = updatedMethod.copy(skipMethodOrder = index + 1)
+                    onSkipMethodsChanged(updated)
+                    editingMethodIndex = null
+                },
+                onDismiss = { editingMethodIndex = null }
+            )
+        } else {
+            editingMethodIndex = null
+        }
+    }
+}
+
+@Composable
+fun SkipMethodItemRow(
+    index: Int,
+    totalCount: Int,
+    method: SubscriptionSkipMethod,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
+) {
+    val isDefault = index == 0
+    Card(
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDefault) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        ),
+        modifier = Modifier.fillMaxWidth().testTag("skip_method_item_$index")
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Reorder controls
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    IconButton(
+                        onClick = onMoveUp,
+                        enabled = index > 0,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Move Up",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(
+                        onClick = onMoveDown,
+                        enabled = index < totalCount - 1,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Move Down",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                val typeIcon = when (method.skipMethodType.lowercase()) {
+                    "website" -> Icons.Default.Language
+                    "email" -> Icons.Default.Email
+                    "phone" -> Icons.Default.Phone
+                    else -> Icons.Default.BookmarkBorder
+                }
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isDefault) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        typeIcon,
+                        contentDescription = null,
+                        tint = if (isDefault) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = method.skipMethodType,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        if (isDefault) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 2.dp)
+                            ) {
+                                Text(
+                                    "Default",
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = method.skipMethodValue,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                IconButton(onClick = onEdit, modifier = Modifier.size(32.dp).testTag("edit_skip_method_btn_$index")) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "Edit skip method",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp).testTag("delete_skip_method_btn_$index")) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Delete skip method",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SkipMethodEditorDialog(
+    initialMethod: SubscriptionSkipMethod?,
+    initialType: String,
+    bookstoreContacts: List<BookstoreContact>,
+    defaultSubTitle: String,
+    defaultUserName: String,
+    onSave: (SubscriptionSkipMethod) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val isCustomType = initialType == "Custom" || (initialMethod != null && initialMethod.skipMethodType !in listOf("Website", "Email", "Phone"))
+    var customLabel by remember {
+        mutableStateOf(
+            if (isCustomType) {
+                if (initialMethod != null && initialMethod.skipMethodType != "Custom") initialMethod.skipMethodType else ""
+            } else ""
+        )
+    }
+
+    val methodType = if (isCustomType) {
+        customLabel.ifBlank { "Custom" }
+    } else {
+        initialMethod?.skipMethodType ?: initialType
+    }
+
+    var value by remember { mutableStateOf(initialMethod?.skipMethodValue ?: "") }
+    var text by remember {
+        mutableStateOf(
+            initialMethod?.skipMethodText ?: if ((initialType == "Email" || methodType == "Email") && initialMethod == null) {
+                "Hi there,\nI would like to skip my upcoming ${defaultSubTitle.ifBlank { "Subscription" }} related to this account.\nThank you so much!\n${defaultUserName.ifBlank { "User" }}"
+            } else ""
+        )
+    }
+
+    var consecutiveSkips by remember { mutableIntStateOf(initialMethod?.consecutiveSkips ?: 0) }
+    var consecutiveSkipsInputStr by remember { mutableStateOf(if ((initialMethod?.consecutiveSkips ?: 0) > 0) (initialMethod?.consecutiveSkips ?: 0).toString() else "") }
+    var isEditingConsecutiveSkips by remember { mutableStateOf((initialMethod?.consecutiveSkips ?: 0) > 0) }
+
+    val matchingContacts = remember(bookstoreContacts, initialType, customLabel) {
+        when {
+            initialType == "Website" || methodType.equals("Website", true) ->
+                bookstoreContacts.filter { it.contactType.equals("Website", true) }
+            initialType == "Email" || methodType.equals("Email", true) ->
+                bookstoreContacts.filter { it.contactType.equals("Email", true) }
+            initialType == "Phone" || methodType.equals("Phone", true) ->
+                bookstoreContacts.filter { it.contactType.equals("Phone", true) }
+            else -> {
+                val matchingCustom = if (customLabel.isNotBlank()) {
+                    bookstoreContacts.filter { it.contactType.equals(customLabel, true) }
+                } else emptyList()
+                matchingCustom.ifEmpty {
+                    bookstoreContacts.filter { it.contactType !in listOf("Website", "Email", "Phone") }
+                }
+            }
+        }
+    }
+
+    val showTextField = isCustomType || methodType.equals("Email", true) || methodType.equals("Phone", true)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = if (initialMethod != null) "Edit Skip Method" else "Add Skip Method",
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // If Custom field, show Label field on top of value
+                if (isCustomType) {
+                    OutlinedTextField(
+                        value = customLabel,
+                        onValueChange = { customLabel = it },
+                        label = { Text("Custom Field Label", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        placeholder = { Text("e.g. Chat Support, WhatsApp") },
+                        modifier = Modifier.fillMaxWidth().testTag("skip_method_custom_label")
+                    )
+                }
+
+                // Helper bookstore contacts suggestions
+                if (matchingContacts.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Suggestions from Bookstore Contacts:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            matchingContacts.forEach { contact ->
+                                AssistChip(
+                                    onClick = { value = contact.contactValue },
+                                    label = { Text(contact.contactValue, maxLines = 1) },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.ContactPage,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val valueLabel = when {
+                    methodType.equals("Website", true) -> "Website URL"
+                    methodType.equals("Email", true) -> "Email Address"
+                    methodType.equals("Phone", true) -> "Phone Number"
+                    else -> "Value"
+                }
+                val placeholderText = when {
+                    methodType.equals("Website", true) -> "https://example.com/skip"
+                    methodType.equals("Email", true) -> "support@example.com"
+                    methodType.equals("Phone", true) -> "+1 555-0199"
+                    else -> "Enter skip method value"
+                }
+
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    label = { Text(valueLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    placeholder = { Text(placeholderText) },
+                    keyboardOptions = if (methodType.equals("Phone", true)) KeyboardOptions(keyboardType = KeyboardType.Phone)
+                                      else if (methodType.equals("Email", true)) KeyboardOptions(keyboardType = KeyboardType.Email)
+                                      else if (methodType.equals("Website", true)) KeyboardOptions(keyboardType = KeyboardType.Uri)
+                                      else KeyboardOptions.Default,
+                    modifier = Modifier.fillMaxWidth().testTag("skip_method_value")
+                )
+
+                if (showTextField) {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        label = { Text("Skip Method Text", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        placeholder = {
+                            if (methodType.equals("Email", true)) Text("Email body template")
+                            else if (methodType.equals("Phone", true)) Text("Calling script or notes")
+                            else Text("Message or instructions")
+                        },
+                        minLines = 3,
+                        maxLines = 6,
+                        modifier = Modifier.fillMaxWidth().testTag("skip_method_text")
+                    )
+                }
+
+                // Consecutive Skips Button / Input
+                if (!isEditingConsecutiveSkips) {
+                    TextButton(
+                        onClick = { isEditingConsecutiveSkips = true },
+                        modifier = Modifier.testTag("toggle_consecutive_skips_btn")
+                    ) {
+                        if (consecutiveSkips == 0) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add consecutive skips")
+                        } else {
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Used after $consecutiveSkips consecutive skips")
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Consecutive Skips",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            TextButton(
+                                onClick = {
+                                    consecutiveSkips = 0
+                                    consecutiveSkipsInputStr = ""
+                                    isEditingConsecutiveSkips = false
+                                }
+                            ) {
+                                Text("Remove", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = consecutiveSkipsInputStr,
+                            onValueChange = { input ->
+                                val cleanDigits = input.filter { it.isDigit() }
+                                consecutiveSkipsInputStr = cleanDigits
+                                consecutiveSkips = (cleanDigits.toIntOrNull() ?: 0).coerceAtLeast(0)
+                            },
+                            label = { Text("Used after (skips)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("0") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            trailingIcon = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(end = 4.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = {
+                                            val current = consecutiveSkipsInputStr.toIntOrNull() ?: consecutiveSkips
+                                            if (current > 0) {
+                                                val next = current - 1
+                                                consecutiveSkips = next
+                                                consecutiveSkipsInputStr = next.toString()
+                                            }
+                                        },
+                                        enabled = (consecutiveSkipsInputStr.toIntOrNull() ?: consecutiveSkips) > 0,
+                                        modifier = Modifier.size(32.dp).testTag("consecutive_skips_decrement")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.KeyboardArrowDown,
+                                            contentDescription = "Decrease skips",
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            val current = consecutiveSkipsInputStr.toIntOrNull() ?: consecutiveSkips
+                                            val next = (current + 1).coerceAtLeast(1)
+                                            consecutiveSkips = next
+                                            consecutiveSkipsInputStr = next.toString()
+                                        },
+                                        modifier = Modifier.size(32.dp).testTag("consecutive_skips_increment")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.KeyboardArrowUp,
+                                            contentDescription = "Increase skips",
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("consecutive_skips_input")
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (value.isNotBlank()) {
+                        val finalConsecutive = consecutiveSkipsInputStr.toIntOrNull() ?: consecutiveSkips
+                        onSave(
+                            SubscriptionSkipMethod(
+                                id = initialMethod?.id ?: 0,
+                                subscriptionTypeId = initialMethod?.subscriptionTypeId ?: 0,
+                                skipMethodOrder = initialMethod?.skipMethodOrder ?: 1,
+                                skipMethodType = methodType,
+                                skipMethodValue = value.trim(),
+                                skipMethodText = text.trim(),
+                                consecutiveSkips = finalConsecutive
+                            )
+                        )
+                    }
+                },
+                enabled = value.isNotBlank() && (!isCustomType || customLabel.isNotBlank()),
+                modifier = Modifier.testTag("save_skip_method_btn")
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddSubscriptionTypeDialog(
@@ -1883,6 +3281,16 @@ fun AddSubscriptionTypeDialog(
     val context = LocalContext.current
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val forwardingServices by viewModel.forwardingServicesState.collectAsState()
+    var selectedShippingAddressId by remember { mutableStateOf<Int?>(null) }
+    var selectedCurrency by remember { mutableStateOf(userState?.currency ?: "$") }
+    var basePriceStr by remember { mutableStateOf("") }
+    var shippingPriceStr by remember { mutableStateOf("") }
+    var taxPriceStr by remember { mutableStateOf("") }
+    var forwardShippingPriceStr by remember { mutableStateOf("") }
+    var forwardTaxPriceStr by remember { mutableStateOf("") }
+
     var selectedBookstoreId by remember { mutableStateOf(bookstores.firstOrNull()?.id ?: 0) }
     var title by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Active") }
@@ -1895,13 +3303,20 @@ fun AddSubscriptionTypeDialog(
     var skipType by remember { mutableStateOf("None") }
     var numberOfSkipsStr by remember { mutableStateOf("") }
     var numberOfMonthsStr by remember { mutableStateOf("") }
-    var showTimePicker by remember { mutableStateOf(false) }
+    var skipMethodsList by remember { mutableStateOf<List<SubscriptionSkipMethod>>(emptyList()) }
+    var imageUrl by remember { mutableStateOf("") }
     var showDueDatePicker by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableIntStateOf(0) }
 
     val calendar = Calendar.getInstance()
     var dueDate by remember { mutableStateOf(calendar.timeInMillis) }
     var startDate by remember { mutableStateOf(calendar.timeInMillis) }
     var finishDate by remember { mutableStateOf(0L) }
+
+    val bookstoreContacts = viewModel.bookstoreContactsState.collectAsState().value
+    val contactsForStore = remember(bookstoreContacts, selectedBookstoreId) {
+        bookstoreContacts.filter { it.bookstoreId == selectedBookstoreId }
+    }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
@@ -1910,365 +3325,420 @@ fun AddSubscriptionTypeDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Subscription", fontWeight = FontWeight.Bold) },
         text = {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item {
-                    // Bookstore select
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Bookstore", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        if (bookstores.isEmpty()) {
-                            Text("No bookstores registered! Add one first.", color = Color.Red, fontSize = 12.sp)
-                        } else {
-                            var expandedStore by remember { mutableStateOf(false) }
-                            val currentStore = bookstores.find { it.id == selectedBookstoreId } ?: bookstores.first()
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedButton(
-                                    onClick = { expandedStore = true },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(currentStore.name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                                }
-                                DropdownMenu(expanded = expandedStore, onDismissRequest = { expandedStore = false }) {
-                                    bookstores.forEach { store ->
-                                        DropdownMenuItem(
-                                            text = { Text(store.name) },
-                                            onClick = {
-                                                selectedBookstoreId = store.id
-                                                expandedStore = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                ScheduledSubscriptionImagePicker(
+                    imageUrl = imageUrl,
+                    onImageSelected = { imageUrl = it }
+                )
 
-                item {
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        label = { Text("Subscription Title") },
-                        modifier = Modifier.fillMaxWidth().testTag("add_sub_title")
+                Spacer(modifier = Modifier.height(12.dp))
+
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    divider = {}
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("Details", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("add_sub_tab_details")
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = { Text("Skips", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("add_sub_tab_skips")
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = { Text("Other", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("add_sub_tab_other")
                     )
                 }
 
-                item {
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Skip Type", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        var expandedSkipType by remember { mutableStateOf(false) }
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = { expandedSkipType = true },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(skipType)
-                            }
-                            DropdownMenu(expanded = expandedSkipType, onDismissRequest = { expandedSkipType = false }) {
-                                listOf("None", "Each calendar year", "Every certain months", "Unlimited").forEach { st ->
-                                    DropdownMenuItem(
-                                        text = { Text(st) },
-                                        onClick = {
-                                            skipType = st
-                                            expandedSkipType = false
+                if (selectedTab == 0) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            // Bookstore select
+                            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Bookstore", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                if (bookstores.isEmpty()) {
+                                    Text("No bookstores registered! Add one first.", color = Color.Red, fontSize = 12.sp)
+                                } else {
+                                    var expandedStore by remember { mutableStateOf(false) }
+                                    val currentStore = bookstores.find { it.id == selectedBookstoreId } ?: bookstores.first()
+                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                        OutlinedButton(
+                                            onClick = { expandedStore = true },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(currentStore.name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                         }
-                                    )
-                                }
-                            }
-                        }
-                        if (skipType == "Each calendar year" || skipType == "Every certain months") {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            if (skipType == "Every certain months") {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = numberOfMonthsStr,
-                                        onValueChange = { numberOfMonthsStr = it },
-                                        label = { Text("Months") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f).testTag("add_sub_number_of_months")
-                                    )
-                                    OutlinedTextField(
-                                        value = numberOfSkipsStr,
-                                        onValueChange = { numberOfSkipsStr = it },
-                                        label = { Text("Number of Skips") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f).testTag("add_sub_number_of_skips")
-                                    )
-                                }
-                            } else {
-                                OutlinedTextField(
-                                    value = numberOfSkipsStr,
-                                    onValueChange = { numberOfSkipsStr = it },
-                                    label = { Text("Number of Skips") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.fillMaxWidth().testTag("add_sub_number_of_skips")
-                                )
-                            }
-                        }
-                    }
-                }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        // Status select
-                        var expandedStatus by remember { mutableStateOf(false) }
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Status", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedButton(
-                                    onClick = { expandedStatus = true },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(status)
-                                }
-                                DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                                    listOf("Active", "Waitlist", "Paused", "Canceled", "Wishlist").forEach { st ->
-                                        DropdownMenuItem(
-                                            text = { Text(st) },
-                                            onClick = {
-                                                status = st
-                                                expandedStatus = false
+                                        DropdownMenu(expanded = expandedStore, onDismissRequest = { expandedStore = false }) {
+                                            bookstores.forEach { store ->
+                                                DropdownMenuItem(
+                                                    text = { Text(store.name) },
+                                                    onClick = {
+                                                        selectedBookstoreId = store.id
+                                                        expandedStore = false
+                                                    }
+                                                )
                                             }
-                                        )
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        OutlinedTextField(
-                            value = priceStr,
-                            onValueChange = { priceStr = it },
-                            label = { Text("Price ($currency)") },
-                            leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f).testTag("add_sub_price")
-                        )
-                    }
-                }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        val showDueDateField = !status.equals("Wishlist", ignoreCase = true)
-                        // Frequency select
-                        var expandedFreq by remember { mutableStateOf(false) }
-                        Column(modifier = if (showDueDateField) Modifier.weight(1f) else Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Frequency", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedButton(
-                                    onClick = { expandedFreq = true },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(frequency)
-                                }
-                                DropdownMenu(expanded = expandedFreq, onDismissRequest = { expandedFreq = false }) {
-                                    listOf("Weekly", "Monthly", "Bi-Monthly", "Quarterly", "Yearly").forEach { f ->
-                                        DropdownMenuItem(
-                                            text = { Text(f) },
-                                            onClick = {
-                                                frequency = f
-                                                expandedFreq = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        if (showDueDateField) {
-                            // Due Date select
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(modifier = Modifier.fillMaxWidth().clickable { showDueDatePicker = true }) {
-                                    OutlinedTextField(
-                                        value = dateFormat.format(Date(dueDate)),
-                                        onValueChange = {},
-                                        readOnly = true,
-                                        label = { Text("Due Date") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        enabled = false,
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                                            disabledBorderColor = MaterialTheme.colorScheme.outline,
-                                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            disabledTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (!status.equals("Wishlist", ignoreCase = true)) {
-                    item {
-                        GoogleCalendarStyleSubscriptionPeriodPicker(
-                            initialStartDate = startDate,
-                            initialEndDate = finishDate,
-                            onPeriodChanged = { start, end ->
-                                startDate = start
-                                finishDate = end
-                            }
-                        )
-                    }
-                }
-
-                item {
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text("Reminder Notification", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                }
-                            }
-                            Switch(
-                                checked = reminderEnabled,
-                                onCheckedChange = { reminderEnabled = it }
+                        item {
+                            OutlinedTextField(
+                                value = title,
+                                onValueChange = { title = it },
+                                label = { Text("Subscription Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                modifier = Modifier.fillMaxWidth().testTag("add_sub_title")
                             )
                         }
 
-                        if (reminderEnabled) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            // Trigger Row/Box
+                        item {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
-                                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                    .clickable { showTimePicker = true }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Bottom
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Notifications,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
-                                    val ddayLabel = if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
-                                    Text(
-                                        text = "Alert on $ddayLabel at $timeLabel",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
+                                // Status select
+                                var expandedStatus by remember { mutableStateOf(false) }
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Status", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                        OutlinedButton(
+                                            onClick = { expandedStatus = true },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(status)
+                                        }
+                                        DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
+                                            listOf("Active", "Waitlist", "Paused", "Canceled", "Wishlist").forEach { st ->
+                                                DropdownMenuItem(
+                                                    text = { Text(st) },
+                                                    onClick = {
+                                                        status = st
+                                                        expandedStatus = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                                Text(
-                                    text = "Edit Time",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.primary
+
+                                OutlinedTextField(
+                                    value = priceStr,
+                                    onValueChange = { priceStr = it },
+                                    label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.weight(1f).testTag("add_sub_price")
                                 )
                             }
+                        }
 
-                            if (showTimePicker) {
-                                var tempHour by remember { mutableStateOf(reminderHour) }
-                                var tempMinute by remember { mutableStateOf(reminderMinute) }
-                                var tempDDayOffset by remember { mutableStateOf(reminderDDayOffset) }
-
-                                AlertDialog(
-                                    onDismissRequest = { showTimePicker = false },
-                                    title = { Text("Set Reminder", fontWeight = FontWeight.Bold) },
-                                    text = {
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalAlignment = Alignment.CenterHorizontally
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                val showDueDateField = !status.equals("Wishlist", ignoreCase = true)
+                                // Frequency select
+                                var expandedFreq by remember { mutableStateOf(false) }
+                                Column(modifier = if (showDueDateField) Modifier.weight(1f) else Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Frequency", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                        OutlinedButton(
+                                            onClick = { expandedFreq = true },
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Text(
-                                                "Choose when to be notified of renewal alerts.",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            Text(frequency)
+                                        }
+                                        DropdownMenu(expanded = expandedFreq, onDismissRequest = { expandedFreq = false }) {
+                                            listOf("Weekly", "Monthly", "Bi-Monthly", "Quarterly", "Yearly").forEach { f ->
+                                                DropdownMenuItem(
+                                                    text = { Text(f) },
+                                                    onClick = {
+                                                        frequency = f
+                                                        expandedFreq = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (showDueDateField) {
+                                    // Due Date select
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Box(modifier = Modifier.fillMaxWidth().clickable { showDueDatePicker = true }) {
+                                            OutlinedTextField(
+                                                value = formatMonthDay(dueDate),
+                                                onValueChange = {},
+                                                readOnly = true,
+                                                label = { Text("Due Date", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                enabled = false,
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                    disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                    disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    disabledTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             )
-                                            Spacer(modifier = Modifier.height(16.dp))
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                // D-Day Offset Picker
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("Alert Day", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    Spacer(modifier = Modifier.height(4.dp))
-                                                    RevolverWheelPicker(
-                                                        items = (0..7).toList(),
-                                                        selectedItem = tempDDayOffset,
-                                                        onItemSelected = { dday -> tempDDayOffset = dday },
-                                                        modifier = Modifier.width(90.dp),
-                                                        label = { dday -> if (dday == 0) "D-Day" else "$dday days before" }
-                                                    )
-                                                }
-
-                                                Spacer(modifier = Modifier.width(8.dp))
-
-                                                // Hour Picker (Scrolling revolver)
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("Hour", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    Spacer(modifier = Modifier.height(4.dp))
-                                                    RevolverWheelPicker(
-                                                        items = (0..23).toList(),
-                                                        selectedItem = tempHour,
-                                                        onItemSelected = { hr -> tempHour = hr },
-                                                        modifier = Modifier.width(55.dp),
-                                                        label = { hr -> String.format("%02d", hr) }
-                                                    )
-                                                }
-
-                                                Text(":", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-
-                                                // Minute Picker (Scrolling revolver)
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("Min", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    Spacer(modifier = Modifier.height(4.dp))
-                                                    RevolverWheelPicker(
-                                                        items = (0..59).toList(),
-                                                        selectedItem = tempMinute,
-                                                        onItemSelected = { mn -> tempMinute = mn },
-                                                        modifier = Modifier.width(55.dp),
-                                                        label = { mn -> String.format("%02d", mn) }
-                                                    )
-                                                }
-                                            }
                                         }
-                                    },
-                                    confirmButton = {
-                                        Button(
-                                            onClick = {
-                                                reminderDDayOffset = tempDDayOffset
-                                                reminderHour = tempHour
-                                                reminderMinute = tempMinute
-                                                showTimePicker = false
-                                            }
-                                        ) {
-                                            Text("Set")
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showTimePicker = false }) {
-                                            Text("Cancel")
-                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!status.equals("Wishlist", ignoreCase = true)) {
+                            item {
+                                GoogleCalendarStyleSubscriptionPeriodPicker(
+                                    initialStartDate = startDate,
+                                    initialEndDate = finishDate,
+                                    onPeriodChanged = { start, end ->
+                                        startDate = start
+                                        finishDate = end
                                     }
                                 )
                             }
+                        }
+
+                        item {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("Reminder Notification", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        }
+                                    }
+                                    Switch(
+                                        checked = reminderEnabled,
+                                        onCheckedChange = { reminderEnabled = it }
+                                    )
+                                }
+
+                                if (reminderEnabled) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InlineReminderSelector(
+                                        reminderDDayOffset = reminderDDayOffset,
+                                        onDDayOffsetChange = { reminderDDayOffset = it },
+                                        reminderHour = reminderHour,
+                                        onHourChange = { reminderHour = it },
+                                        reminderMinute = reminderMinute,
+                                        onMinuteChange = { reminderMinute = it }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if (selectedTab == 1) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Skip Type", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                var expandedSkipType by remember { mutableStateOf(false) }
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(
+                                        onClick = { expandedSkipType = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(skipType)
+                                    }
+                                    DropdownMenu(expanded = expandedSkipType, onDismissRequest = { expandedSkipType = false }) {
+                                        listOf("None", "Each calendar year", "Every certain months", "Unlimited").forEach { st ->
+                                            DropdownMenuItem(
+                                                text = { Text(st) },
+                                                onClick = {
+                                                    skipType = st
+                                                    expandedSkipType = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                if (skipType == "Each calendar year" || skipType == "Every certain months") {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    if (skipType == "Every certain months") {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedTextField(
+                                                value = numberOfMonthsStr,
+                                                onValueChange = { numberOfMonthsStr = it.filter { ch -> ch.isDigit() } },
+                                                label = { Text("Months", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("add_sub_number_of_months")
+                                            )
+                                            OutlinedTextField(
+                                                value = numberOfSkipsStr,
+                                                onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
+                                                label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                                placeholder = { Text("0") },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                trailingIcon = {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(end = 4.dp)
+                                                    ) {
+                                                        IconButton(
+                                                            onClick = {
+                                                                val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                                if (current > 0) {
+                                                                    numberOfSkipsStr = (current - 1).toString()
+                                                                }
+                                                            },
+                                                            enabled = (numberOfSkipsStr.toIntOrNull() ?: 0) > 0,
+                                                            modifier = Modifier.size(32.dp).testTag("add_sub_skips_decrement")
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.KeyboardArrowDown,
+                                                                contentDescription = "Decrease skips",
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                        IconButton(
+                                                            onClick = {
+                                                                val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                                numberOfSkipsStr = (current + 1).toString()
+                                                            },
+                                                            modifier = Modifier.size(32.dp).testTag("add_sub_skips_increment")
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.KeyboardArrowUp,
+                                                                contentDescription = "Increase skips",
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("add_sub_number_of_skips")
+                                            )
+                                        }
+                                    } else {
+                                        OutlinedTextField(
+                                            value = numberOfSkipsStr,
+                                            onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
+                                            label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                            placeholder = { Text("0") },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true,
+                                            trailingIcon = {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(end = 4.dp)
+                                                ) {
+                                                    IconButton(
+                                                        onClick = {
+                                                            val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                            if (current > 0) {
+                                                                numberOfSkipsStr = (current - 1).toString()
+                                                            }
+                                                        },
+                                                        enabled = (numberOfSkipsStr.toIntOrNull() ?: 0) > 0,
+                                                        modifier = Modifier.size(32.dp).testTag("add_sub_skips_decrement")
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.KeyboardArrowDown,
+                                                            contentDescription = "Decrease skips",
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                    IconButton(
+                                                        onClick = {
+                                                            val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                            numberOfSkipsStr = (current + 1).toString()
+                                                        },
+                                                        modifier = Modifier.size(32.dp).testTag("add_sub_skips_increment")
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.KeyboardArrowUp,
+                                                            contentDescription = "Increase skips",
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth().height(64.dp).testTag("add_sub_number_of_skips")
+                                        )
+                                    }
+                                }
+
+                                if (skipType != "None") {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    SubscriptionSkipMethodsSection(
+                                        skipMethods = skipMethodsList,
+                                        bookstoreContacts = contactsForStore,
+                                        subTitle = title,
+                                        userName = userState?.username ?: "User",
+                                        onSkipMethodsChanged = { skipMethodsList = it }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            OtherFormTabContent(
+                                userAddresses = userAddresses,
+                                forwardingServices = forwardingServices,
+                                selectedShippingAddressId = selectedShippingAddressId,
+                                onShippingAddressChange = { selectedShippingAddressId = it },
+                                selectedCurrency = selectedCurrency,
+                                onCurrencyChange = { selectedCurrency = it },
+                                basePriceStr = basePriceStr,
+                                onBasePriceChange = {
+                                    basePriceStr = it
+                                    if (priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+                                        priceStr = it
+                                    }
+                                },
+                                shippingPriceStr = shippingPriceStr,
+                                onShippingPriceChange = { shippingPriceStr = it },
+                                taxPriceStr = taxPriceStr,
+                                onTaxPriceChange = { taxPriceStr = it },
+                                forwardShippingPriceStr = forwardShippingPriceStr,
+                                onForwardShippingPriceChange = { forwardShippingPriceStr = it },
+                                forwardTaxPriceStr = forwardTaxPriceStr,
+                                onForwardTaxPriceChange = { forwardTaxPriceStr = it }
+                            )
                         }
                     }
                 }
@@ -2277,7 +3747,11 @@ fun AddSubscriptionTypeDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val parsedPrice = priceStr.toDoubleOrNull() ?: 0.0
+                    val parsedBase = basePriceStr.toDoubleOrNull()
+                    val parsedPrice = priceStr.toDoubleOrNull() ?: (parsedBase ?: 0.0)
+                    val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
+                    val hasForwarding = selectedAddr?.forwardingServiceId != null
+
                     if (title.isNotEmpty() && selectedBookstoreId > 0) {
                         viewModel.addSubscriptionType(
                             bookstoreId = selectedBookstoreId,
@@ -2295,7 +3769,16 @@ fun AddSubscriptionTypeDialog(
                             reminderMinute = reminderMinute,
                             skipType = skipType,
                             numberOfSkips = numberOfSkipsStr.toIntOrNull(),
-                            numberOfMonths = numberOfMonthsStr.toIntOrNull()
+                            numberOfMonths = numberOfMonthsStr.toIntOrNull(),
+                            picturePath = imageUrl.ifEmpty { null },
+                            skipMethods = if (skipType != "None") skipMethodsList else emptyList(),
+                            shippingAddressId = selectedShippingAddressId,
+                            currency = selectedCurrency,
+                            basePrice = parsedBase,
+                            shippingPrice = shippingPriceStr.toDoubleOrNull(),
+                            taxPrice = taxPriceStr.toDoubleOrNull(),
+                            forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
+                            forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null
                         )
                         onDismiss()
                     }
@@ -2311,7 +3794,7 @@ fun AddSubscriptionTypeDialog(
     )
 
     if (showDueDatePicker) {
-        ComposeDatePickerDialog(
+        MonthDayPickerDialog(
             initialDateMillis = dueDate,
             onDateSelected = { dueDate = it },
             onDismiss = { showDueDatePicker = false }
@@ -2331,6 +3814,15 @@ fun EditSubscriptionTypeDialog(
     val context = LocalContext.current
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val forwardingServices by viewModel.forwardingServicesState.collectAsState()
+    var selectedShippingAddressId by remember { mutableStateOf<Int?>(sub.shippingAddressId) }
+    var selectedCurrency by remember { mutableStateOf(sub.currency ?: (userState?.currency ?: "$")) }
+    var basePriceStr by remember { mutableStateOf(sub.basePrice?.toString() ?: "") }
+    var shippingPriceStr by remember { mutableStateOf(sub.shippingPrice?.toString() ?: "") }
+    var taxPriceStr by remember { mutableStateOf(sub.taxPrice?.toString() ?: "") }
+    var forwardShippingPriceStr by remember { mutableStateOf(sub.forwardShippingPrice?.toString() ?: "") }
+    var forwardTaxPriceStr by remember { mutableStateOf(sub.forwardTaxPrice?.toString() ?: "") }
 
     var selectedBookstoreId by remember { mutableStateOf(sub.bookstoreId) }
     var title by remember { mutableStateOf(sub.title) }
@@ -2344,12 +3836,42 @@ fun EditSubscriptionTypeDialog(
     var skipType by remember { mutableStateOf(sub.skipType ?: "None") }
     var numberOfSkipsStr by remember { mutableStateOf(sub.numberOfSkips?.toString() ?: "") }
     var numberOfMonthsStr by remember { mutableStateOf(sub.numberOfMonths?.toString() ?: "") }
-    var showTimePicker by remember { mutableStateOf(false) }
+
+    val allSkipMethods = viewModel.allSubscriptionSkipMethodsState.collectAsState().value
+    var skipMethodsList by remember(sub.id) {
+        val existing = allSkipMethods.filter { it.subscriptionTypeId == sub.id }.sortedBy { it.skipMethodOrder }
+        if (existing.isNotEmpty()) {
+            mutableStateOf(existing)
+        } else if (!sub.skipMethod.isNullOrBlank() && !sub.skipLink.isNullOrBlank()) {
+            mutableStateOf(
+                listOf(
+                    SubscriptionSkipMethod(
+                        subscriptionTypeId = sub.id,
+                        skipMethodOrder = 1,
+                        skipMethodType = sub.skipMethod ?: "Website",
+                        skipMethodValue = sub.skipLink ?: "",
+                        skipMethodText = sub.skipText ?: "",
+                        consecutiveSkips = 0
+                    )
+                )
+            )
+        } else {
+            mutableStateOf(emptyList<SubscriptionSkipMethod>())
+        }
+    }
+
+    var imageUrl by remember { mutableStateOf(sub.picturePath ?: "") }
     var showDueDatePicker by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableIntStateOf(0) }
 
     var dueDate by remember { mutableStateOf(sub.dueDate) }
     var startDate by remember { mutableStateOf(sub.startDate) }
     var finishDate by remember { mutableStateOf(sub.finishDate) }
+
+    val bookstoreContacts = viewModel.bookstoreContactsState.collectAsState().value
+    val contactsForStore = remember(bookstoreContacts, selectedBookstoreId) {
+        bookstoreContacts.filter { it.bookstoreId == selectedBookstoreId }
+    }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
@@ -2358,361 +3880,416 @@ fun EditSubscriptionTypeDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit Subscription", fontWeight = FontWeight.Bold) },
         text = {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item {
-                    // Bookstore select
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Bookstore", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        var expandedStore by remember { mutableStateOf(false) }
-                        val currentStore = bookstores.find { it.id == selectedBookstoreId } ?: bookstores.firstOrNull()
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = { expandedStore = true },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(currentStore?.name ?: "Direct")
-                            }
-                            DropdownMenu(expanded = expandedStore, onDismissRequest = { expandedStore = false }) {
-                                bookstores.forEach { store ->
-                                    DropdownMenuItem(
-                                        text = { Text(store.name) },
-                                        onClick = {
-                                            selectedBookstoreId = store.id
-                                            expandedStore = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                ScheduledSubscriptionImagePicker(
+                    imageUrl = imageUrl,
+                    onImageSelected = { imageUrl = it }
+                )
 
-                item {
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        label = { Text("Subscription Title") },
-                        modifier = Modifier.fillMaxWidth()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    divider = {}
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("Details", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("edit_sub_tab_details")
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = { Text("Skips", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("edit_sub_tab_skips")
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        text = { Text("Other", fontWeight = FontWeight.Bold, fontSize = 13.sp) },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("edit_sub_tab_other")
                     )
                 }
 
-                item {
-                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Skip Type", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        var expandedSkipType by remember { mutableStateOf(false) }
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = { expandedSkipType = true },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(skipType)
-                            }
-                            DropdownMenu(expanded = expandedSkipType, onDismissRequest = { expandedSkipType = false }) {
-                                listOf("None", "Each calendar year", "Every certain months", "Unlimited").forEach { st ->
-                                    DropdownMenuItem(
-                                        text = { Text(st) },
-                                        onClick = {
-                                            skipType = st
-                                            expandedSkipType = false
+                if (selectedTab == 0) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            // Bookstore select
+                            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Bookstore", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                var expandedStore by remember { mutableStateOf(false) }
+                                val currentStore = bookstores.find { it.id == selectedBookstoreId } ?: bookstores.firstOrNull()
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(
+                                        onClick = { expandedStore = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(currentStore?.name ?: "Direct")
+                                    }
+                                    DropdownMenu(expanded = expandedStore, onDismissRequest = { expandedStore = false }) {
+                                        bookstores.forEach { store ->
+                                            DropdownMenuItem(
+                                                text = { Text(store.name) },
+                                                onClick = {
+                                                    selectedBookstoreId = store.id
+                                                    expandedStore = false
+                                                }
+                                            )
                                         }
-                                    )
-                                }
-                            }
-                        }
-                        if (skipType == "Each calendar year" || skipType == "Every certain months") {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            if (skipType == "Every certain months") {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = numberOfMonthsStr,
-                                        onValueChange = { numberOfMonthsStr = it },
-                                        label = { Text("Months") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    OutlinedTextField(
-                                        value = numberOfSkipsStr,
-                                        onValueChange = { numberOfSkipsStr = it },
-                                        label = { Text("Number of Skips") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            } else {
-                                OutlinedTextField(
-                                    value = numberOfSkipsStr,
-                                    onValueChange = { numberOfSkipsStr = it },
-                                    label = { Text("Number of Skips") },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                    }
-                }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        // Status select
-                        var expandedStatus by remember { mutableStateOf(false) }
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Status", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedButton(
-                                    onClick = { expandedStatus = true },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(status)
-                                }
-                                DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                                    listOf("Waitlist", "Active", "Paused", "Canceled", "Wishlist").forEach { st ->
-                                        DropdownMenuItem(
-                                            text = { Text(st) },
-                                            onClick = {
-                                                status = st
-                                                expandedStatus = false
-                                            }
-                                        )
                                     }
                                 }
                             }
                         }
 
-                        OutlinedTextField(
-                            value = priceStr,
-                            onValueChange = { priceStr = it },
-                            label = { Text("Price ($currency)") },
-                            leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        val showDueDateField = !status.equals("Wishlist", ignoreCase = true)
-                        // Frequency select
-                        var expandedFreq by remember { mutableStateOf(false) }
-                        Column(modifier = if (showDueDateField) Modifier.weight(1f) else Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Frequency", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedButton(
-                                    onClick = { expandedFreq = true },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(frequency)
-                                }
-                                DropdownMenu(expanded = expandedFreq, onDismissRequest = { expandedFreq = false }) {
-                                    listOf("Weekly", "Monthly", "Bi-Monthly", "Quarterly", "Yearly").forEach { f ->
-                                        DropdownMenuItem(
-                                            text = { Text(f) },
-                                            onClick = {
-                                                frequency = f
-                                                expandedFreq = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        if (showDueDateField) {
-                            // Due Date select
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(modifier = Modifier.fillMaxWidth().clickable { showDueDatePicker = true }) {
-                                    OutlinedTextField(
-                                        value = dateFormat.format(Date(dueDate)),
-                                        onValueChange = {},
-                                        readOnly = true,
-                                        label = { Text("Due Date") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        enabled = false,
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                                            disabledBorderColor = MaterialTheme.colorScheme.outline,
-                                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            disabledTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (!status.equals("Wishlist", ignoreCase = true)) {
-                    item {
-                        GoogleCalendarStyleSubscriptionPeriodPicker(
-                            initialStartDate = startDate,
-                            initialEndDate = finishDate,
-                            onPeriodChanged = { start, end ->
-                                startDate = start
-                                finishDate = end
-                            }
-                        )
-                    }
-                }
-
-                item {
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text("Reminder Notification", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                }
-                            }
-                            Switch(
-                                checked = reminderEnabled,
-                                onCheckedChange = { reminderEnabled = it }
+                        item {
+                            OutlinedTextField(
+                                value = title,
+                                onValueChange = { title = it },
+                                label = { Text("Subscription Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                modifier = Modifier.fillMaxWidth().testTag("edit_sub_title")
                             )
                         }
 
-                        if (reminderEnabled) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            // Trigger Row/Box
+                        item {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
-                                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                    .clickable { showTimePicker = true }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Bottom
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Notifications,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
-                                    val ddayLabel = if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
-                                    Text(
-                                        text = "Alert on $ddayLabel at $timeLabel",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
+                                // Status select
+                                var expandedStatus by remember { mutableStateOf(false) }
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Status", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                        OutlinedButton(
+                                            onClick = { expandedStatus = true },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text(status)
+                                        }
+                                        DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
+                                            listOf("Waitlist", "Active", "Paused", "Canceled", "Wishlist").forEach { st ->
+                                                DropdownMenuItem(
+                                                    text = { Text(st) },
+                                                    onClick = {
+                                                        status = st
+                                                        expandedStatus = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                                Text(
-                                    text = "Edit Time",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.primary
+
+                                OutlinedTextField(
+                                    value = priceStr,
+                                    onValueChange = { priceStr = it },
+                                    label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.weight(1f).testTag("edit_sub_price")
                                 )
                             }
+                        }
 
-                            if (showTimePicker) {
-                                var tempHour by remember { mutableStateOf(reminderHour) }
-                                var tempMinute by remember { mutableStateOf(reminderMinute) }
-                                var tempDDayOffset by remember { mutableStateOf(reminderDDayOffset) }
-
-                                AlertDialog(
-                                    onDismissRequest = { showTimePicker = false },
-                                    title = { Text("Set Reminder", fontWeight = FontWeight.Bold) },
-                                    text = {
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalAlignment = Alignment.CenterHorizontally
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                val showDueDateField = !status.equals("Wishlist", ignoreCase = true)
+                                // Frequency select
+                                var expandedFreq by remember { mutableStateOf(false) }
+                                Column(modifier = if (showDueDateField) Modifier.weight(1f) else Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Frequency", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                        OutlinedButton(
+                                            onClick = { expandedFreq = true },
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Text(
-                                                "Choose when to be notified of renewal alerts.",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            Text(frequency)
+                                        }
+                                        DropdownMenu(expanded = expandedFreq, onDismissRequest = { expandedFreq = false }) {
+                                            listOf("Weekly", "Monthly", "Bi-Monthly", "Quarterly", "Yearly").forEach { f ->
+                                                DropdownMenuItem(
+                                                    text = { Text(f) },
+                                                    onClick = {
+                                                        frequency = f
+                                                        expandedFreq = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (showDueDateField) {
+                                    // Due Date select
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Box(modifier = Modifier.fillMaxWidth().clickable { showDueDatePicker = true }) {
+                                            OutlinedTextField(
+                                                value = formatMonthDay(dueDate),
+                                                onValueChange = {},
+                                                readOnly = true,
+                                                label = { Text("Due Date", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                enabled = false,
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                    disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                    disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    disabledTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             )
-                                            Spacer(modifier = Modifier.height(16.dp))
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                // D-Day Offset Picker
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("Alert Day", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    Spacer(modifier = Modifier.height(4.dp))
-                                                    RevolverWheelPicker(
-                                                        items = (0..7).toList(),
-                                                        selectedItem = tempDDayOffset,
-                                                        onItemSelected = { dday -> tempDDayOffset = dday },
-                                                        modifier = Modifier.width(90.dp),
-                                                        label = { dday -> if (dday == 0) "D-Day" else "$dday days before" }
-                                                    )
-                                                }
-
-                                                Spacer(modifier = Modifier.width(8.dp))
-
-                                                // Hour Picker (Scrolling revolver)
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("Hour", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    Spacer(modifier = Modifier.height(4.dp))
-                                                    RevolverWheelPicker(
-                                                        items = (0..23).toList(),
-                                                        selectedItem = tempHour,
-                                                        onItemSelected = { hr -> tempHour = hr },
-                                                        modifier = Modifier.width(55.dp),
-                                                        label = { hr -> String.format("%02d", hr) }
-                                                    )
-                                                }
-
-                                                Text(":", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-
-                                                // Minute Picker (Scrolling revolver)
-                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                    Text("Min", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    Spacer(modifier = Modifier.height(4.dp))
-                                                    RevolverWheelPicker(
-                                                        items = (0..59).toList(),
-                                                        selectedItem = tempMinute,
-                                                        onItemSelected = { mn -> tempMinute = mn },
-                                                        modifier = Modifier.width(55.dp),
-                                                        label = { mn -> String.format("%02d", mn) }
-                                                    )
-                                                }
-                                            }
                                         }
-                                    },
-                                    confirmButton = {
-                                        Button(
-                                            onClick = {
-                                                reminderDDayOffset = tempDDayOffset
-                                                reminderHour = tempHour
-                                                reminderMinute = tempMinute
-                                                showTimePicker = false
-                                            }
-                                        ) {
-                                            Text("Set")
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showTimePicker = false }) {
-                                            Text("Cancel")
-                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!status.equals("Wishlist", ignoreCase = true)) {
+                            item {
+                                GoogleCalendarStyleSubscriptionPeriodPicker(
+                                    initialStartDate = startDate,
+                                    initialEndDate = finishDate,
+                                    onPeriodChanged = { start, end ->
+                                        startDate = start
+                                        finishDate = end
                                     }
                                 )
                             }
+                        }
+
+                        item {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("Reminder Notification", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        }
+                                    }
+                                    Switch(
+                                        checked = reminderEnabled,
+                                        onCheckedChange = { reminderEnabled = it }
+                                    )
+                                }
+
+                                if (reminderEnabled) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    InlineReminderSelector(
+                                        reminderDDayOffset = reminderDDayOffset,
+                                        onDDayOffsetChange = { reminderDDayOffset = it },
+                                        reminderHour = reminderHour,
+                                        onHourChange = { reminderHour = it },
+                                        reminderMinute = reminderMinute,
+                                        onMinuteChange = { reminderMinute = it }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else if (selectedTab == 1) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Skip Type", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                var expandedSkipType by remember { mutableStateOf(false) }
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(
+                                        onClick = { expandedSkipType = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(skipType)
+                                    }
+                                    DropdownMenu(expanded = expandedSkipType, onDismissRequest = { expandedSkipType = false }) {
+                                        listOf("None", "Each calendar year", "Every certain months", "Unlimited").forEach { st ->
+                                            DropdownMenuItem(
+                                                text = { Text(st) },
+                                                onClick = {
+                                                    skipType = st
+                                                    expandedSkipType = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                if (skipType == "Each calendar year" || skipType == "Every certain months") {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    if (skipType == "Every certain months") {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedTextField(
+                                                value = numberOfMonthsStr,
+                                                onValueChange = { numberOfMonthsStr = it.filter { ch -> ch.isDigit() } },
+                                                label = { Text("Months", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("edit_sub_number_of_months")
+                                            )
+                                            OutlinedTextField(
+                                                value = numberOfSkipsStr,
+                                                onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
+                                                label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                                placeholder = { Text("0") },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                trailingIcon = {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(end = 4.dp)
+                                                    ) {
+                                                        IconButton(
+                                                            onClick = {
+                                                                val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                                if (current > 0) {
+                                                                    numberOfSkipsStr = (current - 1).toString()
+                                                                }
+                                                            },
+                                                            enabled = (numberOfSkipsStr.toIntOrNull() ?: 0) > 0,
+                                                            modifier = Modifier.size(32.dp).testTag("edit_sub_skips_decrement")
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.KeyboardArrowDown,
+                                                                contentDescription = "Decrease skips",
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                        IconButton(
+                                                            onClick = {
+                                                                val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                                numberOfSkipsStr = (current + 1).toString()
+                                                            },
+                                                            modifier = Modifier.size(32.dp).testTag("edit_sub_skips_increment")
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Default.KeyboardArrowUp,
+                                                                contentDescription = "Increase skips",
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("edit_sub_number_of_skips")
+                                            )
+                                        }
+                                    } else {
+                                        OutlinedTextField(
+                                            value = numberOfSkipsStr,
+                                            onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
+                                            label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                                            placeholder = { Text("0") },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true,
+                                            trailingIcon = {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(end = 4.dp)
+                                                ) {
+                                                    IconButton(
+                                                        onClick = {
+                                                            val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                            if (current > 0) {
+                                                                numberOfSkipsStr = (current - 1).toString()
+                                                            }
+                                                        },
+                                                        enabled = (numberOfSkipsStr.toIntOrNull() ?: 0) > 0,
+                                                        modifier = Modifier.size(32.dp).testTag("edit_sub_skips_decrement")
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.KeyboardArrowDown,
+                                                            contentDescription = "Decrease skips",
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                    IconButton(
+                                                        onClick = {
+                                                            val current = numberOfSkipsStr.toIntOrNull() ?: 0
+                                                            numberOfSkipsStr = (current + 1).toString()
+                                                        },
+                                                        modifier = Modifier.size(32.dp).testTag("edit_sub_skips_increment")
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.KeyboardArrowUp,
+                                                            contentDescription = "Increase skips",
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth().height(64.dp).testTag("edit_sub_number_of_skips")
+                                        )
+                                    }
+                                }
+
+                                if (skipType != "None") {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    SubscriptionSkipMethodsSection(
+                                        skipMethods = skipMethodsList,
+                                        bookstoreContacts = contactsForStore,
+                                        subTitle = title,
+                                        userName = userState?.username ?: "User",
+                                        onSkipMethodsChanged = { skipMethodsList = it }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            OtherFormTabContent(
+                                userAddresses = userAddresses,
+                                forwardingServices = forwardingServices,
+                                selectedShippingAddressId = selectedShippingAddressId,
+                                onShippingAddressChange = { selectedShippingAddressId = it },
+                                selectedCurrency = selectedCurrency,
+                                onCurrencyChange = { selectedCurrency = it },
+                                basePriceStr = basePriceStr,
+                                onBasePriceChange = {
+                                    basePriceStr = it
+                                    if (priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+                                        priceStr = it
+                                    }
+                                },
+                                shippingPriceStr = shippingPriceStr,
+                                onShippingPriceChange = { shippingPriceStr = it },
+                                taxPriceStr = taxPriceStr,
+                                onTaxPriceChange = { taxPriceStr = it },
+                                forwardShippingPriceStr = forwardShippingPriceStr,
+                                onForwardShippingPriceChange = { forwardShippingPriceStr = it },
+                                forwardTaxPriceStr = forwardTaxPriceStr,
+                                onForwardTaxPriceChange = { forwardTaxPriceStr = it }
+                            )
                         }
                     }
                 }
@@ -2732,7 +4309,11 @@ fun EditSubscriptionTypeDialog(
 
                 Button(
                     onClick = {
-                        val parsedPrice = priceStr.toDoubleOrNull() ?: 0.0
+                        val parsedBase = basePriceStr.toDoubleOrNull()
+                        val parsedPrice = priceStr.toDoubleOrNull() ?: (parsedBase ?: sub.price)
+                        val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
+                        val hasForwarding = selectedAddr?.forwardingServiceId != null
+
                         if (title.isNotEmpty()) {
                             viewModel.updateSubscriptionType(
                                 sub.copy(
@@ -2751,8 +4332,17 @@ fun EditSubscriptionTypeDialog(
                                     reminderMinute = reminderMinute,
                                     skipType = skipType,
                                     numberOfSkips = numberOfSkipsStr.toIntOrNull(),
-                                    numberOfMonths = numberOfMonthsStr.toIntOrNull()
-                                )
+                                    numberOfMonths = numberOfMonthsStr.toIntOrNull(),
+                                    picturePath = imageUrl.ifEmpty { null },
+                                    shippingAddressId = selectedShippingAddressId,
+                                    currency = selectedCurrency,
+                                    basePrice = parsedBase,
+                                    shippingPrice = shippingPriceStr.toDoubleOrNull(),
+                                    taxPrice = taxPriceStr.toDoubleOrNull(),
+                                    forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
+                                    forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null
+                                ),
+                                skipMethods = if (skipType != "None") skipMethodsList else emptyList()
                             )
                             onDismiss()
                         }
@@ -2768,7 +4358,7 @@ fun EditSubscriptionTypeDialog(
     )
 
     if (showDueDatePicker) {
-        ComposeDatePickerDialog(
+        MonthDayPickerDialog(
             initialDateMillis = dueDate,
             onDateSelected = { dueDate = it },
             onDismiss = { showDueDatePicker = false }
@@ -2844,7 +4434,7 @@ fun AddScheduledSubscriptionDialog(
                     OutlinedTextField(
                         value = bookTitle,
                         onValueChange = { bookTitle = it },
-                        label = { Text("Book Title") },
+                        label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -2853,7 +4443,7 @@ fun AddScheduledSubscriptionDialog(
                     OutlinedTextField(
                         value = bookAuthor,
                         onValueChange = { bookAuthor = it },
-                        label = { Text("Book Author") },
+                        label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -2862,7 +4452,7 @@ fun AddScheduledSubscriptionDialog(
                     OutlinedTextField(
                         value = description,
                         onValueChange = { description = it },
-                        label = { Text("Description / Notes") },
+                        label = { Text("Description / Notes", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -2902,10 +4492,10 @@ fun AddScheduledSubscriptionDialog(
                     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box(modifier = Modifier.fillMaxWidth().clickable { showDueDatePicker = true }) {
                             OutlinedTextField(
-                                value = dateFormat.format(Date(dueDate)),
+                                value = formatMonthDay(dueDate),
                                 onValueChange = {},
                                 readOnly = true,
-                                label = { Text("Due Date") },
+                                label = { Text("Due Date", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 modifier = Modifier.fillMaxWidth(),
                                 enabled = false,
                                 colors = OutlinedTextFieldDefaults.colors(
@@ -2947,7 +4537,7 @@ fun AddScheduledSubscriptionDialog(
     )
 
     if (showDueDatePicker) {
-        ComposeDatePickerDialog(
+        MonthDayPickerDialog(
             initialDateMillis = dueDate,
             onDateSelected = { dueDate = it },
             onDismiss = { showDueDatePicker = false }
@@ -2960,7 +4550,8 @@ fun AddScheduledSubscriptionDialog(
 fun EditScheduledSubscriptionDialog(
     scheduledWithDetails: ScheduledWithDetails,
     viewModel: BookishViewModel,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onPromptSkip: ((ScheduledWithDetails) -> Unit)? = null
 ) {
     val sc = scheduledWithDetails.scheduled
     val subType = scheduledWithDetails.subscriptionType
@@ -2976,9 +4567,7 @@ fun EditScheduledSubscriptionDialog(
     var dueDate by remember { mutableStateOf(sc.dueDate) }
     var showDueDatePicker by remember { mutableStateOf(false) }
 
-    var reminderHour by remember { mutableStateOf(subType?.reminderHour ?: 8) }
-    var reminderMinute by remember { mutableStateOf(subType?.reminderMinute ?: 0) }
-    var showTimePicker by remember { mutableStateOf(false) }
+
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
@@ -3005,7 +4594,7 @@ fun EditScheduledSubscriptionDialog(
                         onValueChange = {},
                         readOnly = true,
                         enabled = false,
-                        label = { Text("Subscription Type") },
+                        label = { Text("Subscription Type", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth().testTag("edit_scheduled_sub_type"),
                         colors = OutlinedTextFieldDefaults.colors(
                             disabledTextColor = MaterialTheme.colorScheme.onSurface,
@@ -3050,10 +4639,10 @@ fun EditScheduledSubscriptionDialog(
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Box(modifier = Modifier.fillMaxWidth().clickable { showDueDatePicker = true }) {
                                 OutlinedTextField(
-                                    value = dateFormat.format(Date(dueDate)),
+                                    value = formatMonthDay(dueDate),
                                     onValueChange = {},
                                     readOnly = true,
-                                    label = { Text("Due Date") },
+                                    label = { Text("Due Date", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     modifier = Modifier.fillMaxWidth(),
                                     enabled = false,
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -3068,48 +4657,13 @@ fun EditScheduledSubscriptionDialog(
                     }
                 }
 
-                if (subType != null) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
-                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                .clickable { showTimePicker = true }
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Notifications,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
-                                Text(
-                                    text = "Delivery Time: $timeLabel",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Text(
-                                text = "Edit Time",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
+
 
                 item {
                     OutlinedTextField(
                         value = bookTitle,
                         onValueChange = { bookTitle = it },
-                        label = { Text("Book Title") },
+                        label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -3118,7 +4672,7 @@ fun EditScheduledSubscriptionDialog(
                     OutlinedTextField(
                         value = bookAuthor,
                         onValueChange = { bookAuthor = it },
-                        label = { Text("Book Author") },
+                        label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -3127,7 +4681,7 @@ fun EditScheduledSubscriptionDialog(
                     OutlinedTextField(
                         value = description,
                         onValueChange = { description = it },
-                        label = { Text("Description") },
+                        label = { Text("Description", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -3157,28 +4711,26 @@ fun EditScheduledSubscriptionDialog(
 
                 Button(
                     onClick = {
-                        subType?.let { st ->
-                            if (st.reminderHour != reminderHour || st.reminderMinute != reminderMinute) {
-                                viewModel.updateSubscriptionType(
-                                    st.copy(
-                                        reminderHour = reminderHour,
-                                        reminderMinute = reminderMinute
-                                    )
-                                )
-                            }
-                        }
-                        viewModel.updateScheduledSubscription(
-                            sc.copy(
-                                bookTitle = bookTitle,
-                                bookAuthor = bookAuthor,
-                                description = description,
-                                status = status,
-                                isSkipped = status.equals("Skipped", ignoreCase = true),
-                                dueDate = dueDate,
-                                picturePath = imageUrl.ifEmpty { null },
-                                rating = rating
-                            )
+                        val wasSkipped = sc.status.equals("Skipped", ignoreCase = true) || sc.isSkipped
+                        val isNowSkipped = status.equals("Skipped", ignoreCase = true)
+                        val updatedScheduled = sc.copy(
+                            bookTitle = bookTitle,
+                            bookAuthor = bookAuthor,
+                            description = description,
+                            status = status,
+                            isSkipped = isNowSkipped,
+                            dueDate = dueDate,
+                            picturePath = imageUrl.ifEmpty { null },
+                            rating = rating
                         )
+
+                        viewModel.updateScheduledSubscription(updatedScheduled)
+
+                        if (!wasSkipped && isNowSkipped) {
+                            onPromptSkip?.invoke(
+                                scheduledWithDetails.copy(scheduled = updatedScheduled)
+                            )
+                        }
                         onDismiss()
                     }
                 ) {
@@ -3192,82 +4744,10 @@ fun EditScheduledSubscriptionDialog(
     )
 
     if (showDueDatePicker) {
-        ComposeDatePickerDialog(
+        MonthDayPickerDialog(
             initialDateMillis = dueDate,
             onDateSelected = { dueDate = it },
             onDismiss = { showDueDatePicker = false }
-        )
-    }
-
-    if (showTimePicker) {
-        var tempHour by remember { mutableStateOf(reminderHour) }
-        var tempMinute by remember { mutableStateOf(reminderMinute) }
-
-        AlertDialog(
-            onDismissRequest = { showTimePicker = false },
-            title = { Text("Set Delivery Time", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        "Set the time for scheduled subscription events.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Hour", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            RevolverWheelPicker(
-                                items = (0..23).toList(),
-                                selectedItem = tempHour,
-                                onItemSelected = { hr -> tempHour = hr },
-                                modifier = Modifier.width(55.dp),
-                                label = { hr -> String.format("%02d", hr) }
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(":", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Min", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            RevolverWheelPicker(
-                                items = (0..59).toList(),
-                                selectedItem = tempMinute,
-                                onItemSelected = { mn -> tempMinute = mn },
-                                modifier = Modifier.width(55.dp),
-                                label = { mn -> String.format("%02d", mn) }
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        reminderHour = tempHour
-                        reminderMinute = tempMinute
-                        showTimePicker = false
-                    }
-                ) {
-                    Text("Set")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTimePicker = false }) {
-                    Text("Cancel")
-                }
-            }
         )
     }
 }
@@ -3276,6 +4756,7 @@ fun EditScheduledSubscriptionDialog(
 fun SubscriptionFilterDialog(
     viewModel: BookishViewModel,
     bookstores: List<Bookstore>,
+    subscriptionTypes: List<SubscriptionType>,
     selectedTab: Int,
     onDismiss: () -> Unit
 ) {
@@ -3314,6 +4795,36 @@ fun SubscriptionFilterDialog(
                                         onClick = {
                                             viewModel.subOverviewFilterBookstore.value = store.id
                                             expandedStore = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Subscription Type Filter
+                    val currentOverviewSubTypeId by viewModel.subOverviewFilterSubTypeId.collectAsState()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Subscription Type: ", modifier = Modifier.weight(1f))
+                        var expandedSubType by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedButton(onClick = { expandedSubType = true }) {
+                                Text(subscriptionTypes.find { it.id == currentOverviewSubTypeId }?.title ?: "All")
+                            }
+                            DropdownMenu(expanded = expandedSubType, onDismissRequest = { expandedSubType = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("All") },
+                                    onClick = {
+                                        viewModel.subOverviewFilterSubTypeId.value = null
+                                        expandedSubType = false
+                                    }
+                                )
+                                subscriptionTypes.forEach { subType ->
+                                    DropdownMenuItem(
+                                        text = { Text(subType.title) },
+                                        onClick = {
+                                            viewModel.subOverviewFilterSubTypeId.value = subType.id
+                                            expandedSubType = false
                                         }
                                     )
                                 }
@@ -3361,7 +4872,7 @@ fun SubscriptionFilterDialog(
                             authorText = it
                             viewModel.subOverviewFilterAuthor.value = if (it.isBlank()) null else it
                         },
-                        label = { Text("Filter by Author Name") },
+                        label = { Text("Filter by Author Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -3371,7 +4882,7 @@ fun SubscriptionFilterDialog(
                             bookText = it
                             viewModel.subOverviewFilterBook.value = if (it.isBlank()) null else it
                         },
-                        label = { Text("Filter by Book Title") },
+                        label = { Text("Filter by Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -3439,6 +4950,36 @@ fun SubscriptionFilterDialog(
                         }
                     }
 
+                    // Subscription Type Filter
+                    val currentMainSubTypeId by viewModel.subFilterSubTypeId.collectAsState()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Subscription Type: ", modifier = Modifier.weight(1f))
+                        var expandedSubType by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedButton(onClick = { expandedSubType = true }) {
+                                Text(subscriptionTypes.find { it.id == currentMainSubTypeId }?.title ?: "All")
+                            }
+                            DropdownMenu(expanded = expandedSubType, onDismissRequest = { expandedSubType = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("All") },
+                                    onClick = {
+                                        viewModel.subFilterSubTypeId.value = null
+                                        expandedSubType = false
+                                    }
+                                )
+                                subscriptionTypes.forEach { subType ->
+                                    DropdownMenuItem(
+                                        text = { Text(subType.title) },
+                                        onClick = {
+                                            viewModel.subFilterSubTypeId.value = subType.id
+                                            expandedSubType = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Frequency Filter
                     val currentFreq by viewModel.subFilterFrequency.collectAsState()
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3484,10 +5025,12 @@ fun SubscriptionFilterDialog(
                         viewModel.subOverviewFilterType.value = null
                         viewModel.subOverviewFilterAuthor.value = null
                         viewModel.subOverviewFilterBook.value = null
+                        viewModel.subOverviewFilterSubTypeId.value = null
                     } else {
                         viewModel.subFilterBookstore.value = null
                         viewModel.subFilterStatus.value = null
                         viewModel.subFilterFrequency.value = null
+                        viewModel.subFilterSubTypeId.value = null
                     }
                     onDismiss()
                 }
@@ -3504,11 +5047,13 @@ fun ScheduledSubscriptionImagePicker(
     onImageSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            onImageSelected(uri.toString())
+            val savedPath = saveImageToInternalStorage(context, uri) ?: uri.toString()
+            onImageSelected(savedPath)
         }
     }
 
@@ -3598,6 +5143,10 @@ private fun <T> RevolverWheelPicker(
     val listState = androidx.compose.foundation.lazy.rememberLazyListState(
         initialFirstVisibleItemIndex = initialListIndex
     )
+    val flingBehavior = rememberSnapFlingBehavior(
+        lazyListState = listState,
+        snapPosition = SnapPosition.Center
+    )
 
     // Sync state when selectedItem changes externally
     LaunchedEffect(selectedItem) {
@@ -3625,7 +5174,6 @@ private fun <T> RevolverWheelPicker(
                 if (closestItem != null) {
                     val actualIndex = closestItem.index % items.size
                     onItemSelected(items[actualIndex])
-                    listState.animateScrollToItem(closestItem.index)
                 }
             }
         }
@@ -3658,6 +5206,7 @@ private fun <T> RevolverWheelPicker(
 
         androidx.compose.foundation.lazy.LazyColumn(
             state = listState,
+            flingBehavior = flingBehavior,
             contentPadding = PaddingValues(vertical = itemHeight),
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -3948,6 +5497,163 @@ private fun GoogleCalendarStyleSubscriptionPeriodPicker(
             onDismiss = { showEndDatePicker = false }
         )
     }
+}
+
+fun formatMonthDay(timeMs: Long): String {
+    val sdf = SimpleDateFormat("MMMM d", Locale.getDefault())
+    return sdf.format(Date(timeMs))
+}
+
+@Composable
+fun MonthDayPickerDialog(
+    initialDateMillis: Long,
+    onDateSelected: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val initialCal = remember(initialDateMillis) {
+        Calendar.getInstance().apply { timeInMillis = initialDateMillis }
+    }
+    var selectedMonth by remember { mutableStateOf(initialCal.get(Calendar.MONTH)) } // 0..11
+    var selectedDay by remember { mutableStateOf(initialCal.get(Calendar.DAY_OF_MONTH)) } // 1..31
+
+    val months = remember {
+        val monthFormat = SimpleDateFormat("MMMM", Locale.getDefault())
+        val cal = Calendar.getInstance()
+        (0..11).map { m ->
+            cal.set(Calendar.MONTH, m)
+            monthFormat.format(cal.time)
+        }
+    }
+
+    val maxDaysInSelectedMonth = remember(selectedMonth) {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.MONTH, selectedMonth)
+        cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+    }
+
+    // Keep selectedDay valid when month changes
+    LaunchedEffect(maxDaysInSelectedMonth) {
+        if (selectedDay > maxDaysInSelectedMonth) {
+            selectedDay = maxDaysInSelectedMonth
+        }
+    }
+
+    val days = (1..maxDaysInSelectedMonth).toList()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Select Due Date",
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header preview showing formatted month and day
+                val calPreview = Calendar.getInstance().apply {
+                    set(Calendar.MONTH, selectedMonth)
+                    set(Calendar.DAY_OF_MONTH, selectedDay.coerceAtMost(maxDaysInSelectedMonth))
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(bottom = 16.dp)
+                ) {
+                    Text(
+                        text = SimpleDateFormat("MMMM d", Locale.getDefault()).format(calPreview.time),
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Month Picker
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1.4f)
+                    ) {
+                        Text(
+                            text = "Month",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        RevolverWheelPicker(
+                            items = (0..11).toList(),
+                            selectedItem = selectedMonth,
+                            onItemSelected = { selectedMonth = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { months[it] }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    // Day Picker
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(0.9f)
+                    ) {
+                        Text(
+                            text = "Day",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        RevolverWheelPicker(
+                            items = days,
+                            selectedItem = selectedDay.coerceAtMost(maxDaysInSelectedMonth),
+                            onItemSelected = { selectedDay = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { it.toString() }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val cal = Calendar.getInstance().apply {
+                        timeInMillis = initialDateMillis
+                        set(Calendar.MONTH, selectedMonth)
+                        val safeDay = selectedDay.coerceAtMost(getActualMaximum(Calendar.DAY_OF_MONTH))
+                        set(Calendar.DAY_OF_MONTH, safeDay)
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    onDateSelected(cal.timeInMillis)
+                    onDismiss()
+                }
+            ) {
+                Text("Select")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

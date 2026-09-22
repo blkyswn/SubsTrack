@@ -25,13 +25,16 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     val subOverviewFilterBookstore = MutableStateFlow<Int?>(null)
     val subOverviewFilterAuthor = MutableStateFlow<String?>(null)
     val subOverviewFilterBook = MutableStateFlow<String?>(null)
+    val subOverviewFilterSubTypeId = MutableStateFlow<Int?>(null)
     val subOverviewIsCalendarView = MutableStateFlow(false)
 
     val subSearch = MutableStateFlow("")
     val subFilterStatus = MutableStateFlow<String?>(null) // Active, Waitlist, Paused, Canceled
     val subFilterBookstore = MutableStateFlow<Int?>(null)
     val subFilterFrequency = MutableStateFlow<String?>(null)
+    val subFilterSubTypeId = MutableStateFlow<Int?>(null)
     val subIsCalendarView = MutableStateFlow(false)
+    val subSelectedTab = MutableStateFlow(0) // 0 = Overview (Renewals), 1 = Subscriptions
 
     val preorderSearch = MutableStateFlow("")
     val preorderFilterBookstore = MutableStateFlow<Int?>(null)
@@ -48,16 +51,55 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     // Base Database flows
     val userState: StateFlow<User?> = repository.userFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val bookstoresState: StateFlow<List<Bookstore>> = repository.allBookstoresFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val bookstoreContactsState: StateFlow<List<BookstoreContact>> = repository.allBookstoreContactsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val forwardingServicesState: StateFlow<List<ForwardingService>> = repository.allForwardingServicesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val forwardingServiceContactsState: StateFlow<List<ForwardingServiceContact>> = repository.allForwardingServiceContactsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val userAddressesState: StateFlow<List<UserAddress>> = repository.allUserAddressesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun insertUserAddress(address: UserAddress) {
+        viewModelScope.launch {
+            repository.insertUserAddress(address)
+        }
+    }
+
+    fun updateUserAddress(address: UserAddress) {
+        viewModelScope.launch {
+            repository.updateUserAddress(address)
+        }
+    }
+
+    fun deleteUserAddress(address: UserAddress) {
+        viewModelScope.launch {
+            repository.deleteUserAddress(address)
+        }
+    }
 
     val rawSubscriptionsState: StateFlow<List<SubscriptionWithBookstore>> = repository.subscriptionsWithBookstoreFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val allSubscriptionSkipsState: StateFlow<List<SubscriptionSkip>> = repository.allSubscriptionSkipsFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val allSubscriptionSkipMethodsState: StateFlow<List<SubscriptionSkipMethod>> = repository.allSubscriptionSkipMethodsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun saveSubscriptionSkipMethods(subscriptionTypeId: Int, methods: List<SubscriptionSkipMethod>) {
+        viewModelScope.launch {
+            repository.saveSubscriptionSkipMethods(subscriptionTypeId, methods)
+        }
+    }
 
     private fun isSameDay(time1: Long, time2: Long): Boolean {
         val cal1 = Calendar.getInstance().apply { timeInMillis = time1 }
@@ -67,43 +109,47 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     }
 
     val rawScheduledState: StateFlow<List<ScheduledWithDetails>> = repository.scheduledWithDetailsFlow
-        .onEach { list ->
-            list.forEach { item ->
-                if (item.scheduled.status.equals("Upcoming", ignoreCase = true)) {
-                    if (isSameDay(System.currentTimeMillis(), item.scheduled.dueDate)) {
-                        viewModelScope.launch {
-                            repository.updateScheduledSubscription(
-                                item.scheduled.copy(status = "Renewed")
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val rawPreordersState: StateFlow<List<PreorderWithBookstore>> = repository.preordersWithBookstoreFlow
-        .onEach { list ->
-            list.forEach { item ->
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    init {
+        // Run prepopulate check and background reconciliation safely on IO dispatcher
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                repository.checkAndPrepopulate()
+                checkAndGenerateActiveSubscriptions()
+                reconcileStatuses()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private suspend fun reconcileStatuses() {
+        try {
+            val now = System.currentTimeMillis()
+            val scheduledList = repository.scheduledWithDetailsFlow.first()
+            for (item in scheduledList) {
+                if (item.scheduled.status.equals("Upcoming", ignoreCase = true) && isSameDay(now, item.scheduled.dueDate)) {
+                    repository.updateScheduledSubscription(
+                        item.scheduled.copy(status = "Renewed")
+                    )
+                }
+            }
+            val preordersList = repository.preordersWithBookstoreFlow.first()
+            for (item in preordersList) {
                 if (item.preorder.status.equals("Upcoming", ignoreCase = true)) {
-                    val today = System.currentTimeMillis()
-                    if (today >= item.preorder.rangedSaleDateStart && today <= item.preorder.rangedSaleDateEnd) {
-                        viewModelScope.launch {
-                            repository.updatePreorder(
-                                item.preorder.copy(status = "Released")
-                            )
-                        }
+                    if (now >= item.preorder.rangedSaleDateStart && now <= item.preorder.rangedSaleDateEnd) {
+                        repository.updatePreorder(
+                            item.preorder.copy(status = "Released")
+                        )
                     }
                 }
             }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    init {
-        // Run prepopulate check
-        viewModelScope.launch {
-            repository.checkAndPrepopulate()
-            checkAndGenerateActiveSubscriptions()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -113,7 +159,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         val status: String?,
         val storeId: Int?,
         val author: String?,
-        val book: String?
+        val book: String?,
+        val subTypeId: Int? = null
     )
 
     data class PreorderFilters(
@@ -129,9 +176,17 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         subOverviewFilterType,
         subOverviewFilterBookstore,
         subOverviewFilterAuthor,
-        subOverviewFilterBook
-    ) { query, status, storeId, author, book ->
-        ScheduledFilters(query, status, storeId, author, book)
+        subOverviewFilterBook,
+        subOverviewFilterSubTypeId
+    ) { args: Array<Any?> ->
+        ScheduledFilters(
+            query = args[0] as String,
+            status = args[1] as String?,
+            storeId = args[2] as Int?,
+            author = args[3] as String?,
+            book = args[4] as String?,
+            subTypeId = args[5] as Int?
+        )
     }
 
     private val preorderFiltersFlow: Flow<PreorderFilters> = combine(
@@ -158,8 +213,9 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             val matchesBookstore = filters.storeId == null || item.bookstore?.id == filters.storeId
             val matchesAuthor = filters.author == null || item.scheduled.bookAuthor.contains(filters.author, ignoreCase = true)
             val matchesBook = filters.book == null || item.scheduled.bookTitle.contains(filters.book, ignoreCase = true)
+            val matchesSubType = filters.subTypeId == null || item.scheduled.subscriptionTypeId == filters.subTypeId
 
-            matchesQuery && matchesStatus && matchesBookstore && matchesAuthor && matchesBook
+            matchesQuery && matchesStatus && matchesBookstore && matchesAuthor && matchesBook && matchesSubType
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -169,8 +225,16 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         subSearch,
         subFilterStatus,
         subFilterBookstore,
-        subFilterFrequency
-    ) { list, query, status, storeId, frequency ->
+        subFilterFrequency,
+        subFilterSubTypeId
+    ) { args: Array<Any?> ->
+        val list = args[0] as List<SubscriptionWithBookstore>
+        val query = args[1] as String
+        val status = args[2] as String?
+        val storeId = args[3] as Int?
+        val frequency = args[4] as String?
+        val subTypeId = args[5] as Int?
+
         list.filter { item ->
             val matchesQuery = query.isBlank() ||
                     item.subscription.title.contains(query, ignoreCase = true) ||
@@ -178,8 +242,9 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             val matchesStatus = status == null || item.subscription.status == status
             val matchesBookstore = storeId == null || item.bookstore?.id == storeId
             val matchesFrequency = frequency == null || item.subscription.frequency == frequency
+            val matchesSubType = subTypeId == null || item.subscription.id == subTypeId
 
-            matchesQuery && matchesStatus && matchesBookstore && matchesFrequency
+            matchesQuery && matchesStatus && matchesBookstore && matchesFrequency && matchesSubType
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -203,9 +268,9 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // --- Database CRUD Actions ---
-    fun updateProfile(username: String, currency: String, language: String, profilePic: String?, defaultScheduledSubCount: Int = 6, themeMode: String = "system", themeCombo: String = "default", dateFormat: String = "yyyy-MM-dd", displayAmounts: Boolean = false) {
+    fun updateProfile(username: String, currency: String, language: String, profilePic: String?, defaultScheduledSubCount: Int = 6, themeMode: String = "system", themeCombo: String = "default", dateFormat: String = "yyyy-MM-dd", displayAmounts: Boolean = false, country: String = "") {
         viewModelScope.launch {
-            repository.saveUser(User(id = 1, username = username, currency = currency, language = language, profilePic = profilePic, defaultScheduledSubCount = defaultScheduledSubCount, themeMode = themeMode, themeCombo = themeCombo, dateFormat = dateFormat, displayAmounts = displayAmounts))
+            repository.saveUser(User(id = 1, username = username, currency = currency, language = language, profilePic = profilePic, defaultScheduledSubCount = defaultScheduledSubCount, themeMode = themeMode, themeCombo = themeCombo, dateFormat = dateFormat, displayAmounts = displayAmounts, country = country))
         }
     }
 
@@ -230,15 +295,26 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun addBookstore(name: String, url: String, profilePic: String?) {
+    fun addBookstore(
+        name: String,
+        website: String,
+        profilePic: String?,
+        contacts: List<BookstoreContact> = emptyList()
+    ) {
         viewModelScope.launch {
-            repository.insertBookstore(Bookstore(name = name, url = url, profilePic = profilePic))
+            val storeId = repository.insertBookstore(Bookstore(name = name, website = website, profilePic = profilePic))
+            if (contacts.isNotEmpty()) {
+                repository.saveBookstoreContacts(storeId.toInt(), contacts)
+            }
         }
     }
 
-    fun updateBookstore(bookstore: Bookstore) {
+    fun updateBookstore(bookstore: Bookstore, contacts: List<BookstoreContact>? = null) {
         viewModelScope.launch {
             repository.updateBookstore(bookstore)
+            if (contacts != null) {
+                repository.saveBookstoreContacts(bookstore.id, contacts)
+            }
         }
     }
 
@@ -251,6 +327,41 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     fun restoreBookstore(bookstore: Bookstore) {
         viewModelScope.launch {
             repository.insertBookstore(bookstore)
+        }
+    }
+
+    fun addForwardingService(
+        name: String,
+        website: String,
+        profilePic: String?,
+        contacts: List<ForwardingServiceContact> = emptyList()
+    ) {
+        viewModelScope.launch {
+            val serviceId = repository.insertForwardingService(ForwardingService(name = name, website = website, profilePic = profilePic))
+            if (contacts.isNotEmpty()) {
+                repository.saveForwardingServiceContacts(serviceId.toInt(), contacts)
+            }
+        }
+    }
+
+    fun updateForwardingService(service: ForwardingService, contacts: List<ForwardingServiceContact>? = null) {
+        viewModelScope.launch {
+            repository.updateForwardingService(service)
+            if (contacts != null) {
+                repository.saveForwardingServiceContacts(service.id, contacts)
+            }
+        }
+    }
+
+    fun deleteForwardingService(service: ForwardingService) {
+        viewModelScope.launch {
+            repository.deleteForwardingService(service)
+        }
+    }
+
+    fun restoreForwardingService(service: ForwardingService) {
+        viewModelScope.launch {
+            repository.insertForwardingService(service)
         }
     }
 
@@ -279,7 +390,19 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         reminderMinute: Int = 0,
         skipType: String = "None",
         numberOfSkips: Int? = null,
-        numberOfMonths: Int? = null
+        numberOfMonths: Int? = null,
+        skipMethod: String? = null,
+        skipLink: String? = null,
+        skipText: String? = null,
+        picturePath: String? = null,
+        skipMethods: List<SubscriptionSkipMethod> = emptyList(),
+        shippingAddressId: Int? = null,
+        currency: String? = null,
+        basePrice: Double? = null,
+        shippingPrice: Double? = null,
+        taxPrice: Double? = null,
+        forwardShippingPrice: Double? = null,
+        forwardTaxPrice: Double? = null
     ) {
         viewModelScope.launch {
             val isWishlist = status.equals("Wishlist", ignoreCase = true)
@@ -304,9 +427,24 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     reminderMinute = reminderMinute,
                     skipType = skipType,
                     numberOfSkips = numberOfSkips,
-                    numberOfMonths = numberOfMonths
+                    numberOfMonths = numberOfMonths,
+                    skipMethod = skipMethod,
+                    skipLink = skipLink,
+                    skipText = skipText,
+                    picturePath = picturePath,
+                    shippingAddressId = shippingAddressId,
+                    currency = currency,
+                    basePrice = basePrice,
+                    shippingPrice = shippingPrice,
+                    taxPrice = taxPrice,
+                    forwardShippingPrice = forwardShippingPrice,
+                    forwardTaxPrice = forwardTaxPrice
                 )
             )
+
+            if (skipMethods.isNotEmpty()) {
+                repository.saveSubscriptionSkipMethods(subId.toInt(), skipMethods)
+            }
 
             if (!isWishlist) {
                 val limit = if (status.equals("Active", ignoreCase = true) && cleanFinishDate <= 0L) {
@@ -413,9 +551,12 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         return dates
     }
 
-    fun updateSubscriptionType(subscription: SubscriptionType) {
+    fun updateSubscriptionType(subscription: SubscriptionType, skipMethods: List<SubscriptionSkipMethod>? = null) {
         viewModelScope.launch {
             repository.updateSubscriptionType(subscription)
+            if (skipMethods != null) {
+                repository.saveSubscriptionSkipMethods(subscription.id, skipMethods)
+            }
             
             val existingScheduled = repository.getScheduledSubscriptionsForType(subscription.id).sortedBy { it.dueDate }
             existingScheduled.forEach { sched ->
@@ -634,6 +775,126 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun generatePastScheduledSubscriptions(
+        bookstoreId: Int?,
+        subscriptionTypeId: Int?,
+        startDate: Long,
+        endDate: Long
+    ) {
+        viewModelScope.launch {
+            val allSubs = rawSubscriptionsState.value
+            val targetSubs = allSubs.filter { subWithDetails ->
+                val sub = subWithDetails.subscription
+                val matchesBookstore = (bookstoreId == null || bookstoreId <= 0 || sub.bookstoreId == bookstoreId)
+                val matchesSubType = (subscriptionTypeId == null || subscriptionTypeId <= 0 || sub.id == subscriptionTypeId)
+                val isActiveOrValid = !sub.status.equals("Wishlist", ignoreCase = true) && !sub.status.equals("Canceled", ignoreCase = true)
+                matchesBookstore && matchesSubType && isActiveOrValid
+            }
+
+            val todayStart = getTodayStartMs()
+
+            targetSubs.forEach { subWithDetails ->
+                val sub = subWithDetails.subscription
+                val existingScheduled = repository.getScheduledSubscriptionsForType(sub.id)
+
+                val anchorDate = if (sub.dueDate > 0L) sub.dueDate else if (sub.startDate > 0L) sub.startDate else startDate
+                val datesToInsert = mutableListOf<Long>()
+                val cal = Calendar.getInstance().apply { timeInMillis = anchorDate }
+
+                if (cal.timeInMillis > startDate) {
+                    while (cal.timeInMillis > startDate) {
+                        when (sub.frequency) {
+                            "Weekly" -> cal.add(Calendar.WEEK_OF_YEAR, -1)
+                            "Monthly" -> cal.add(Calendar.MONTH, -1)
+                            "Bi-Monthly" -> cal.add(Calendar.MONTH, -2)
+                            "Quarterly" -> cal.add(Calendar.MONTH, -3)
+                            "Yearly" -> cal.add(Calendar.YEAR, -1)
+                            else -> cal.add(Calendar.MONTH, -1)
+                        }
+                    }
+                    if (cal.timeInMillis < startDate) {
+                        when (sub.frequency) {
+                            "Weekly" -> cal.add(Calendar.WEEK_OF_YEAR, 1)
+                            "Monthly" -> cal.add(Calendar.MONTH, 1)
+                            "Bi-Monthly" -> cal.add(Calendar.MONTH, 2)
+                            "Quarterly" -> cal.add(Calendar.MONTH, 3)
+                            "Yearly" -> cal.add(Calendar.YEAR, 1)
+                            else -> cal.add(Calendar.MONTH, 1)
+                        }
+                    }
+                } else {
+                    while (cal.timeInMillis < startDate) {
+                        when (sub.frequency) {
+                            "Weekly" -> cal.add(Calendar.WEEK_OF_YEAR, 1)
+                            "Monthly" -> cal.add(Calendar.MONTH, 1)
+                            "Bi-Monthly" -> cal.add(Calendar.MONTH, 2)
+                            "Quarterly" -> cal.add(Calendar.MONTH, 3)
+                            "Yearly" -> cal.add(Calendar.YEAR, 1)
+                            else -> cal.add(Calendar.MONTH, 1)
+                        }
+                    }
+                }
+
+                var current = cal.timeInMillis
+                var iterations = 0
+                while (current <= endDate && iterations < 500) {
+                    if (current >= startDate) {
+                        val alreadyExists = existingScheduled.any { isSameDay(it.dueDate, current) }
+                        if (!alreadyExists) {
+                            datesToInsert.add(current)
+                        }
+                    }
+                    when (sub.frequency) {
+                        "Weekly" -> cal.add(Calendar.WEEK_OF_YEAR, 1)
+                        "Monthly" -> cal.add(Calendar.MONTH, 1)
+                        "Bi-Monthly" -> cal.add(Calendar.MONTH, 2)
+                        "Quarterly" -> cal.add(Calendar.MONTH, 3)
+                        "Yearly" -> cal.add(Calendar.YEAR, 1)
+                        else -> cal.add(Calendar.MONTH, 1)
+                    }
+                    current = cal.timeInMillis
+                    iterations++
+                }
+
+                datesToInsert.forEach { occurrenceDate ->
+                    val scheduledStatus = if (isSameDay(System.currentTimeMillis(), occurrenceDate)) {
+                        "Renewed"
+                    } else if (occurrenceDate < todayStart) {
+                        "Received"
+                    } else {
+                        "Upcoming"
+                    }
+
+                    val schedId = repository.insertScheduledSubscription(
+                        ScheduledSubscription(
+                            subscriptionTypeId = sub.id,
+                            bookTitle = "",
+                            bookAuthor = "",
+                            description = "Automatically scheduled delivery for subscription '${sub.title}'.",
+                            dueDate = occurrenceDate,
+                            status = scheduledStatus,
+                            isSkipped = false,
+                            picturePath = null
+                        )
+                    )
+
+                    if (sub.reminderEnabled && occurrenceDate >= todayStart) {
+                        com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
+                            getApplication(),
+                            schedId.toInt(),
+                            sub.title,
+                            "",
+                            occurrenceDate,
+                            sub.reminderDDayOffset,
+                            sub.reminderHour,
+                            sub.reminderMinute
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun addScheduledSubscription(
         subscriptionTypeId: Int,
         bookTitle: String,
@@ -707,7 +968,10 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun toggleSkipScheduledSubscription(scheduled: ScheduledSubscription) {
+    fun toggleSkipScheduledSubscription(
+        scheduled: ScheduledSubscription,
+        onSkipSuccess: (() -> Unit)? = null
+    ) {
         viewModelScope.launch {
             val isCurrentlySkipped = scheduled.status.equals("Skipped", ignoreCase = true) || scheduled.isSkipped
             val newStatus = if (isCurrentlySkipped) "Upcoming" else "Skipped"
@@ -726,6 +990,10 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             }
 
             repository.updateScheduledSubscription(updated)
+
+            if (!isCurrentlySkipped) {
+                onSkipSuccess?.invoke()
+            }
 
             com.example.receiver.ReminderScheduler.cancelScheduledSubReminder(getApplication(), scheduled.id)
             if (!updated.isSkipped) {
@@ -746,6 +1014,13 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun recalculateSubscriptionSkips() {
+        viewModelScope.launch {
+            val pattern = userState.value?.dateFormat ?: "yyyy-MM-dd"
+            repository.recalculateSubscriptionSkips(pattern)
+        }
+    }
+
     fun addPreorder(
         bookstoreId: Int,
         bookTitle: String,
@@ -760,7 +1035,14 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         reminderDDayOffset: Int = 0,
         reminderHour: Int = 8,
         reminderMinute: Int = 0,
-        rating: Double = 0.0
+        rating: Double = 0.0,
+        shippingAddressId: Int? = null,
+        currency: String? = null,
+        basePrice: Double? = null,
+        shippingPrice: Double? = null,
+        taxPrice: Double? = null,
+        forwardShippingPrice: Double? = null,
+        forwardTaxPrice: Double? = null
     ) {
         viewModelScope.launch {
             val today = System.currentTimeMillis()
@@ -780,7 +1062,14 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     reminderDDayOffset = reminderDDayOffset,
                     reminderHour = reminderHour,
                     reminderMinute = reminderMinute,
-                    rating = rating
+                    rating = rating,
+                    shippingAddressId = shippingAddressId,
+                    currency = currency,
+                    basePrice = basePrice,
+                    shippingPrice = shippingPrice,
+                    taxPrice = taxPrice,
+                    forwardShippingPrice = forwardShippingPrice,
+                    forwardTaxPrice = forwardTaxPrice
                 )
             )
 
@@ -922,14 +1211,14 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
    <Row>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Name</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">URL</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Website</Data></Cell>
    </Row>
 """)
             for (b in bookstores) {
                 xmlBuilder.append("""   <Row>
     <Cell><Data ss:Type="Number">${b.id}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(b.name)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(b.url)}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(b.website)}</Data></Cell>
    </Row>
 """)
             }

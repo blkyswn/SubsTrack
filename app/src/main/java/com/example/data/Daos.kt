@@ -31,9 +31,84 @@ interface BookstoreDao {
 }
 
 @Dao
+interface BookstoreContactDao {
+    @Query("SELECT * FROM bookstore_contacts WHERE bookstoreId = :bookstoreId")
+    fun getContactsForBookstore(bookstoreId: Int): Flow<List<BookstoreContact>>
+
+    @Query("SELECT * FROM bookstore_contacts WHERE bookstoreId = :bookstoreId")
+    suspend fun getContactsForBookstoreDirect(bookstoreId: Int): List<BookstoreContact>
+
+    @Query("SELECT * FROM bookstore_contacts")
+    fun getAllContacts(): Flow<List<BookstoreContact>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(contact: BookstoreContact): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(contacts: List<BookstoreContact>)
+
+    @Update
+    suspend fun update(contact: BookstoreContact)
+
+    @Delete
+    suspend fun delete(contact: BookstoreContact)
+
+    @Query("DELETE FROM bookstore_contacts WHERE bookstoreId = :bookstoreId")
+    suspend fun deleteContactsForBookstore(bookstoreId: Int)
+}
+
+@Dao
+interface ForwardingServiceDao {
+    @Query("SELECT * FROM forwarding_services ORDER BY name ASC")
+    fun getAllForwardingServices(): Flow<List<ForwardingService>>
+
+    @Query("SELECT * FROM forwarding_services WHERE id = :id LIMIT 1")
+    suspend fun getForwardingServiceById(id: Int): ForwardingService?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(forwardingService: ForwardingService): Long
+
+    @Update
+    suspend fun update(forwardingService: ForwardingService)
+
+    @Delete
+    suspend fun delete(forwardingService: ForwardingService)
+}
+
+@Dao
+interface ForwardingServiceContactDao {
+    @Query("SELECT * FROM forwarding_service_contacts WHERE forwardingServiceId = :forwardingServiceId")
+    fun getContactsForForwardingService(forwardingServiceId: Int): Flow<List<ForwardingServiceContact>>
+
+    @Query("SELECT * FROM forwarding_service_contacts WHERE forwardingServiceId = :forwardingServiceId")
+    suspend fun getContactsForForwardingServiceDirect(forwardingServiceId: Int): List<ForwardingServiceContact>
+
+    @Query("SELECT * FROM forwarding_service_contacts")
+    fun getAllContacts(): Flow<List<ForwardingServiceContact>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(contact: ForwardingServiceContact): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(contacts: List<ForwardingServiceContact>)
+
+    @Update
+    suspend fun update(contact: ForwardingServiceContact)
+
+    @Delete
+    suspend fun delete(contact: ForwardingServiceContact)
+
+    @Query("DELETE FROM forwarding_service_contacts WHERE forwardingServiceId = :forwardingServiceId")
+    suspend fun deleteContactsForForwardingService(forwardingServiceId: Int)
+}
+
+@Dao
 interface SubscriptionTypeDao {
     @Query("SELECT * FROM subscription_types ORDER BY title ASC")
     fun getAllSubscriptionTypes(): Flow<List<SubscriptionType>>
+
+    @Query("SELECT * FROM subscription_types")
+    suspend fun getAllSubscriptionTypesList(): List<SubscriptionType>
 
     @Query("SELECT * FROM subscription_types WHERE id = :id LIMIT 1")
     suspend fun getSubscriptionTypeById(id: Int): SubscriptionType?
@@ -68,8 +143,14 @@ interface ScheduledSubscriptionDao {
     @Query("SELECT * FROM scheduled_subscriptions WHERE id = :id LIMIT 1")
     suspend fun getScheduledSubscriptionById(id: Int): ScheduledSubscription?
 
+    @Query("SELECT * FROM scheduled_subscriptions WHERE LOWER(status) = 'skipped' ORDER BY dueDate ASC")
+    suspend fun getSkippedScheduledSubscriptions(): List<ScheduledSubscription>
+
     @Query("DELETE FROM scheduled_subscriptions WHERE subscriptionTypeId = :subTypeId AND dueDate > :date")
     suspend fun deleteScheduledSubsAfterDate(subTypeId: Int, date: Long)
+
+    @Query("DELETE FROM scheduled_subscriptions WHERE subscriptionTypeId = :subTypeId")
+    suspend fun deleteScheduledSubsForType(subTypeId: Int)
 }
 
 @Dao
@@ -109,4 +190,55 @@ interface SubscriptionSkipDao {
 
     @Query("DELETE FROM subscription_skips WHERE subscriptionTypeId = :subTypeId")
     suspend fun deleteBySubscriptionTypeId(subTypeId: Int)
+
+    @Query("DELETE FROM subscription_skips")
+    suspend fun deleteAllSubscriptionSkips()
+}
+
+@Dao
+interface SubscriptionSkipMethodDao {
+    @Query("SELECT * FROM subscription_skip_methods ORDER BY skipMethodOrder ASC")
+    fun getAllSubscriptionSkipMethods(): Flow<List<SubscriptionSkipMethod>>
+
+    @Query("SELECT * FROM subscription_skip_methods WHERE subscriptionTypeId = :subscriptionTypeId ORDER BY skipMethodOrder ASC")
+    fun getSkipMethodsForSubscriptionType(subscriptionTypeId: Int): Flow<List<SubscriptionSkipMethod>>
+
+    @Query("SELECT * FROM subscription_skip_methods WHERE subscriptionTypeId = :subscriptionTypeId ORDER BY skipMethodOrder ASC")
+    suspend fun getSkipMethodsForSubscriptionTypeDirect(subscriptionTypeId: Int): List<SubscriptionSkipMethod>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(subscriptionSkipMethod: SubscriptionSkipMethod): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(methods: List<SubscriptionSkipMethod>)
+
+    @Update
+    suspend fun update(subscriptionSkipMethod: SubscriptionSkipMethod)
+
+    @Delete
+    suspend fun delete(subscriptionSkipMethod: SubscriptionSkipMethod)
+
+    @Query("DELETE FROM subscription_skip_methods WHERE subscriptionTypeId = :subscriptionTypeId")
+    suspend fun deleteBySubscriptionTypeId(subscriptionTypeId: Int)
+}
+
+@Dao
+interface UserAddressDao {
+    @Query("SELECT * FROM user_addresses ORDER BY isDefault DESC, id DESC")
+    fun getAllUserAddresses(): Flow<List<UserAddress>>
+
+    @Query("SELECT * FROM user_addresses WHERE id = :id LIMIT 1")
+    suspend fun getAddressById(id: Int): UserAddress?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(address: UserAddress): Long
+
+    @Update
+    suspend fun update(address: UserAddress)
+
+    @Delete
+    suspend fun delete(address: UserAddress)
+
+    @Query("UPDATE user_addresses SET isDefault = 0 WHERE id != :exceptId")
+    suspend fun clearOtherDefaults(exceptId: Int)
 }

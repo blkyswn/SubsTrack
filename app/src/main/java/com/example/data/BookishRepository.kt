@@ -3,6 +3,7 @@ package com.example.data
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 
 data class SubscriptionWithBookstore(
     val subscription: SubscriptionType,
@@ -24,7 +25,12 @@ data class PreorderWithBookstore(
 class BookishRepository(private val database: BookishDatabase) {
     private val userDao = database.userDao()
     private val bookstoreDao = database.bookstoreDao()
+    private val bookstoreContactDao = database.bookstoreContactDao()
+    private val forwardingServiceDao = database.forwardingServiceDao()
+    private val forwardingServiceContactDao = database.forwardingServiceContactDao()
+    private val userAddressDao = database.userAddressDao()
     private val subscriptionTypeDao = database.subscriptionTypeDao()
+    private val subscriptionSkipMethodDao = database.subscriptionSkipMethodDao()
     private val scheduledSubscriptionDao = database.scheduledSubscriptionDao()
     private val preorderDao = database.preorderDao()
     private val subscriptionSkipDao = database.subscriptionSkipDao()
@@ -38,7 +44,36 @@ class BookishRepository(private val database: BookishDatabase) {
 
     // Expose raw list of bookstores
     val allBookstoresFlow: Flow<List<Bookstore>> = bookstoreDao.getAllBookstores()
+    val allBookstoreContactsFlow: Flow<List<BookstoreContact>> = bookstoreContactDao.getAllContacts()
+
+    // Expose raw list of forwarding services
+    val allForwardingServicesFlow: Flow<List<ForwardingService>> = forwardingServiceDao.getAllForwardingServices()
+    val allForwardingServiceContactsFlow: Flow<List<ForwardingServiceContact>> = forwardingServiceContactDao.getAllContacts()
+
+    // Expose raw list of user addresses
+    val allUserAddressesFlow: Flow<List<UserAddress>> = userAddressDao.getAllUserAddresses()
+
+    suspend fun insertUserAddress(address: UserAddress): Long {
+        val id = userAddressDao.insert(address)
+        if (address.isDefault) {
+            userAddressDao.clearOtherDefaults(id.toInt())
+        }
+        return id
+    }
+
+    suspend fun updateUserAddress(address: UserAddress) {
+        userAddressDao.update(address)
+        if (address.isDefault) {
+            userAddressDao.clearOtherDefaults(address.id)
+        }
+    }
+
+    suspend fun deleteUserAddress(address: UserAddress) {
+        userAddressDao.delete(address)
+    }
+
     val allSubscriptionSkipsFlow: Flow<List<SubscriptionSkip>> = subscriptionSkipDao.getAllSubscriptionSkips()
+    val allSubscriptionSkipMethodsFlow: Flow<List<SubscriptionSkipMethod>> = subscriptionSkipMethodDao.getAllSubscriptionSkipMethods()
 
     suspend fun insertBookstore(bookstore: Bookstore): Long {
         return bookstoreDao.insert(bookstore)
@@ -50,6 +85,76 @@ class BookishRepository(private val database: BookishDatabase) {
 
     suspend fun deleteBookstore(bookstore: Bookstore) {
         bookstoreDao.delete(bookstore)
+    }
+
+    fun getContactsForBookstore(bookstoreId: Int): Flow<List<BookstoreContact>> {
+        return bookstoreContactDao.getContactsForBookstore(bookstoreId)
+    }
+
+    suspend fun getContactsForBookstoreDirect(bookstoreId: Int): List<BookstoreContact> {
+        return bookstoreContactDao.getContactsForBookstoreDirect(bookstoreId)
+    }
+
+    suspend fun saveBookstoreContacts(bookstoreId: Int, contacts: List<BookstoreContact>) {
+        bookstoreContactDao.deleteContactsForBookstore(bookstoreId)
+        val validContacts = contacts.filter { it.contactValue.isNotBlank() }.map {
+            it.copy(id = 0, bookstoreId = bookstoreId)
+        }
+        if (validContacts.isNotEmpty()) {
+            bookstoreContactDao.insertAll(validContacts)
+        }
+    }
+
+    suspend fun insertForwardingService(service: ForwardingService): Long {
+        return forwardingServiceDao.insert(service)
+    }
+
+    suspend fun updateForwardingService(service: ForwardingService) {
+        forwardingServiceDao.update(service)
+    }
+
+    suspend fun deleteForwardingService(service: ForwardingService) {
+        forwardingServiceDao.delete(service)
+    }
+
+    fun getContactsForForwardingService(forwardingServiceId: Int): Flow<List<ForwardingServiceContact>> {
+        return forwardingServiceContactDao.getContactsForForwardingService(forwardingServiceId)
+    }
+
+    suspend fun getContactsForForwardingServiceDirect(forwardingServiceId: Int): List<ForwardingServiceContact> {
+        return forwardingServiceContactDao.getContactsForForwardingServiceDirect(forwardingServiceId)
+    }
+
+    suspend fun saveForwardingServiceContacts(forwardingServiceId: Int, contacts: List<ForwardingServiceContact>) {
+        forwardingServiceContactDao.deleteContactsForForwardingService(forwardingServiceId)
+        val validContacts = contacts.filter { it.contactValue.isNotBlank() }.map {
+            it.copy(id = 0, forwardingServiceId = forwardingServiceId)
+        }
+        if (validContacts.isNotEmpty()) {
+            forwardingServiceContactDao.insertAll(validContacts)
+        }
+    }
+
+    fun getSkipMethodsForSubscriptionType(subscriptionTypeId: Int): Flow<List<SubscriptionSkipMethod>> {
+        return subscriptionSkipMethodDao.getSkipMethodsForSubscriptionType(subscriptionTypeId)
+    }
+
+    suspend fun getSkipMethodsForSubscriptionTypeDirect(subscriptionTypeId: Int): List<SubscriptionSkipMethod> {
+        return subscriptionSkipMethodDao.getSkipMethodsForSubscriptionTypeDirect(subscriptionTypeId)
+    }
+
+    suspend fun saveSubscriptionSkipMethods(subscriptionTypeId: Int, methods: List<SubscriptionSkipMethod>) {
+        subscriptionSkipMethodDao.deleteBySubscriptionTypeId(subscriptionTypeId)
+        val validMethods = methods.filter { it.skipMethodValue.isNotBlank() }.mapIndexed { index, m ->
+            m.copy(
+                id = 0,
+                subscriptionTypeId = subscriptionTypeId,
+                skipMethodOrder = index + 1
+            )
+        }
+        if (validMethods.isNotEmpty()) {
+            subscriptionSkipMethodDao.insertAll(validMethods)
+        }
     }
 
     private fun getStartAndEndOfCurrentYear(): Pair<Long, Long> {
@@ -149,6 +254,7 @@ class BookishRepository(private val database: BookishDatabase) {
     }
 
     suspend fun deleteSubscriptionType(subscriptionType: SubscriptionType) {
+        scheduledSubscriptionDao.deleteScheduledSubsForType(subscriptionType.id)
         subscriptionTypeDao.delete(subscriptionType)
     }
 
@@ -256,10 +362,30 @@ class BookishRepository(private val database: BookishDatabase) {
                     val endOfYear = cal.timeInMillis
 
                     val uninitialized = skips.firstOrNull { it.skipStartDate == null || it.skipEndDate == null }
+                    val currentRegister = skips.firstOrNull {
+                        it.skipStartDate != null && it.skipEndDate != null &&
+                                endOfYear >= it.skipStartDate && endOfYear <= it.skipEndDate
+                    }
                     val maxSkips = subType.numberOfSkips ?: 0
                     if (maxSkips <= 0) {
                         val renewDateStr = formatRenewDate(endOfYear)
                         return "No skips left. Skips renew in $renewDateStr."
+                    } else if (currentRegister != null) {
+                        val currentNum = currentRegister.numberOfSkips ?: maxSkips
+                        val currentLeft = currentRegister.skipsLeft ?: currentNum
+                        val newNum = currentNum + maxSkips
+                        val newLeft = (currentLeft + maxSkips - 1).coerceAtLeast(0)
+                        val newStart = minOf(startOfYear, currentRegister.skipStartDate!!)
+                        val newEnd = maxOf(endOfYear, currentRegister.skipEndDate!!)
+                        subscriptionSkipDao.update(
+                            currentRegister.copy(
+                                numberOfSkips = newNum,
+                                skipsLeft = newLeft,
+                                skipStartDate = newStart,
+                                skipEndDate = newEnd
+                            )
+                        )
+                        return null
                     } else {
                         if (uninitialized != null) {
                             subscriptionSkipDao.update(
@@ -288,40 +414,55 @@ class BookishRepository(private val database: BookishDatabase) {
                 }
             }
             "Every certain months" -> {
-                val matching = skips.firstOrNull { skip ->
+                val startDate = renewalDate
+                val cal = java.util.Calendar.getInstance()
+                cal.timeInMillis = renewalDate
+                cal.add(java.util.Calendar.MONTH, subType.numberOfMonths ?: 1)
+                cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
+                val endDate = cal.timeInMillis
+
+                val matchingDueDate = skips.firstOrNull { skip ->
                     skip.skipStartDate != null && skip.skipEndDate != null &&
                             renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
                 }
 
-                if (matching != null) {
-                    val currentLeft = matching.skipsLeft
-                    if (currentLeft != null && currentLeft <= 0) {
-                        val renewDateStr = formatRenewDate(matching.skipEndDate!!)
+                if (matchingDueDate != null) {
+                    val currentLeft = matchingDueDate.skipsLeft ?: (matchingDueDate.numberOfSkips ?: subType.numberOfSkips ?: 0)
+                    if (currentLeft <= 0) {
+                        val renewDateStr = formatRenewDate(matchingDueDate.skipEndDate!!)
                         return "No skips left. Skips renew in $renewDateStr."
-                    } else {
-                        val initialSkips = matching.skipsLeft ?: (matching.numberOfSkips ?: subType.numberOfSkips ?: 0)
-                        if (initialSkips <= 0) {
-                            val renewDateStr = formatRenewDate(matching.skipEndDate!!)
+                    }
+                    val newSkipsLeft = currentLeft - 1
+                    subscriptionSkipDao.update(matchingDueDate.copy(skipsLeft = newSkipsLeft))
+                    return null
+                } else {
+                    val matchingEndDate = skips.firstOrNull { skip ->
+                        skip.skipStartDate != null && skip.skipEndDate != null &&
+                                endDate >= skip.skipStartDate && endDate <= skip.skipEndDate
+                    }
+
+                    if (matchingEndDate != null) {
+                        val currentLeft = matchingEndDate.skipsLeft ?: (matchingEndDate.numberOfSkips ?: subType.numberOfSkips ?: 0)
+                        if (currentLeft <= 0) {
+                            val renewDateStr = formatRenewDate(matchingEndDate.skipEndDate!!)
                             return "No skips left. Skips renew in $renewDateStr."
                         }
-                        val newSkipsLeft = initialSkips - 1
-                        subscriptionSkipDao.update(matching.copy(skipsLeft = newSkipsLeft))
+                        val newSkipsLeft = currentLeft - 1
+                        subscriptionSkipDao.update(
+                            matchingEndDate.copy(
+                                skipStartDate = startDate,
+                                skipEndDate = endDate,
+                                skipsLeft = newSkipsLeft
+                            )
+                        )
                         return null
-                    }
-                } else {
-                    val startDate = renewalDate
-                    val cal = java.util.Calendar.getInstance()
-                    cal.timeInMillis = renewalDate
-                    cal.add(java.util.Calendar.MONTH, subType.numberOfMonths ?: 1)
-                    cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
-                    val endDate = cal.timeInMillis
-
-                    val uninitialized = skips.firstOrNull { it.skipStartDate == null || it.skipEndDate == null }
-                    val maxSkips = subType.numberOfSkips ?: 0
-                    if (maxSkips <= 0) {
-                        val renewDateStr = formatRenewDate(endDate)
-                        return "No skips left. Skips renew in $renewDateStr."
                     } else {
+                        val maxSkips = subType.numberOfSkips ?: 0
+                        if (maxSkips <= 0) {
+                            val renewDateStr = formatRenewDate(endDate)
+                            return "No skips left. Skips renew in $renewDateStr."
+                        }
+                        val uninitialized = skips.firstOrNull { it.skipStartDate == null || it.skipEndDate == null }
                         if (uninitialized != null) {
                             subscriptionSkipDao.update(
                                 uninitialized.copy(
@@ -440,15 +581,28 @@ class BookishRepository(private val database: BookishDatabase) {
                 currency = "$",
                 language = "English",
                 defaultScheduledSubCount = 6,
-                themeMode = "system"
+                themeMode = "system",
+                country = "United States"
             )
             userDao.insertOrUpdate(defaultUser)
 
             // 2. Insert Bookstore Samples
-            val store1Id = bookstoreDao.insert(Bookstore(name = "FairyLoot", url = "https://fairyloot.com", profilePic = "ic_launcher_foreground")).toInt()
-            val store2Id = bookstoreDao.insert(Bookstore(name = "Illumicrate", url = "https://www.illumicrate.com", profilePic = "ic_launcher_foreground")).toInt()
-            val store3Id = bookstoreDao.insert(Bookstore(name = "Barnes & Noble", url = "https://www.barnesandnoble.com", profilePic = "ic_launcher_foreground")).toInt()
-            val store4Id = bookstoreDao.insert(Bookstore(name = "Waterstones", url = "https://www.waterstones.com", profilePic = "ic_launcher_foreground")).toInt()
+            val store1Id = bookstoreDao.insert(Bookstore(name = "FairyLoot", website = "https://fairyloot.com", profilePic = "ic_launcher_foreground")).toInt()
+            val store2Id = bookstoreDao.insert(Bookstore(name = "Illumicrate", website = "https://www.illumicrate.com", profilePic = "ic_launcher_foreground")).toInt()
+            val store3Id = bookstoreDao.insert(Bookstore(name = "Barnes & Noble", website = "https://www.barnesandnoble.com", profilePic = "ic_launcher_foreground")).toInt()
+            val store4Id = bookstoreDao.insert(Bookstore(name = "Waterstones", website = "https://www.waterstones.com", profilePic = "ic_launcher_foreground")).toInt()
+
+            bookstoreContactDao.insertAll(listOf(
+                BookstoreContact(bookstoreId = store1Id, contactType = "Website", contactValue = "https://fairyloot.com"),
+                BookstoreContact(bookstoreId = store1Id, contactType = "Email", contactValue = "support@fairyloot.com"),
+                BookstoreContact(bookstoreId = store1Id, contactType = "Phone", contactValue = "+44 20 7946 0912"),
+                BookstoreContact(bookstoreId = store2Id, contactType = "Website", contactValue = "https://www.illumicrate.com"),
+                BookstoreContact(bookstoreId = store2Id, contactType = "Email", contactValue = "support@illumicrate.com"),
+                BookstoreContact(bookstoreId = store3Id, contactType = "Website", contactValue = "https://www.barnesandnoble.com"),
+                BookstoreContact(bookstoreId = store3Id, contactType = "Phone", contactValue = "1-800-843-2665"),
+                BookstoreContact(bookstoreId = store4Id, contactType = "Website", contactValue = "https://www.waterstones.com"),
+                BookstoreContact(bookstoreId = store4Id, contactType = "Email", contactValue = "enquiries@waterstones.com")
+            ))
 
             // Time constant: Let's use current time as reference
             val now = System.currentTimeMillis()
@@ -467,7 +621,8 @@ class BookishRepository(private val database: BookishDatabase) {
                 frequency = "Monthly",
                 skipType = "Each calendar year",
                 numberOfSkips = 3,
-                numberOfMonths = null
+                numberOfMonths = null,
+                picturePath = "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=300&q=80"
             )
             val sub1Id = insertSubscriptionType(sub1Obj).toInt()
 
@@ -483,7 +638,8 @@ class BookishRepository(private val database: BookishDatabase) {
                 frequency = "Quarterly",
                 skipType = "Every certain months",
                 numberOfSkips = 1,
-                numberOfMonths = 6
+                numberOfMonths = 6,
+                picturePath = "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=300&q=80"
             )
             val sub2Id = insertSubscriptionType(sub2Obj).toInt()
 
@@ -499,9 +655,38 @@ class BookishRepository(private val database: BookishDatabase) {
                 frequency = "Yearly",
                 skipType = "Unlimited",
                 numberOfSkips = null,
-                numberOfMonths = null
+                numberOfMonths = null,
+                picturePath = "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?auto=format&fit=crop&w=300&q=80"
             )
             val sub3Id = insertSubscriptionType(sub3Obj).toInt()
+
+            // 3b. Insert Sample Skip Methods for Subscriptions
+            subscriptionSkipMethodDao.insertAll(listOf(
+                SubscriptionSkipMethod(
+                    subscriptionTypeId = sub1Id,
+                    skipMethodOrder = 1,
+                    skipMethodType = "Website",
+                    skipMethodValue = "https://fairyloot.com/account/skip",
+                    skipMethodText = "",
+                    consecutiveSkips = 0
+                ),
+                SubscriptionSkipMethod(
+                    subscriptionTypeId = sub1Id,
+                    skipMethodOrder = 2,
+                    skipMethodType = "Email",
+                    skipMethodValue = "support@fairyloot.com",
+                    skipMethodText = "Hi there,\nI would like to skip my upcoming FairyLoot YA Monthly subscription delivery.\nThank you!\nReader",
+                    consecutiveSkips = 2
+                ),
+                SubscriptionSkipMethod(
+                    subscriptionTypeId = sub2Id,
+                    skipMethodOrder = 1,
+                    skipMethodType = "Email",
+                    skipMethodValue = "support@illumicrate.com",
+                    skipMethodText = "Hello,\nPlease skip my upcoming quarterly box delivery.\nThanks,\nReader",
+                    consecutiveSkips = 0
+                )
+            ))
 
             // 4. Insert Scheduled Subscriptions (issues / monthly picks)
             scheduledSubscriptionDao.insert(
@@ -553,16 +738,17 @@ class BookishRepository(private val database: BookishDatabase) {
             )
 
             // 5. Insert Preorders
+            val targetReleaseDay = now + 5 * dayMs
             preorderDao.insert(
                 Preorder(
                     bookstoreId = store3Id,
-                    picturePath = null,
+                    picturePath = "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=300&q=80",
                     bookTitle = "Wind and Truth",
                     bookAuthor = "Brandon Sanderson",
                     description = "Stormlight Archive Book 5. Signed first edition hardback.",
                     price = 34.99,
-                    rangedSaleDateStart = now + 15 * dayMs,
-                    rangedSaleDateEnd = now + 17 * dayMs,
+                    rangedSaleDateStart = targetReleaseDay,
+                    rangedSaleDateEnd = targetReleaseDay + 2 * dayMs,
                     status = "Preordered"
                 )
             )
@@ -570,21 +756,21 @@ class BookishRepository(private val database: BookishDatabase) {
             preorderDao.insert(
                 Preorder(
                     bookstoreId = store4Id,
-                    picturePath = null,
-                    bookTitle = "The Winds of Winter",
-                    bookAuthor = "George R.R. Martin",
-                    description = "Expected release from local bookstore pre-orders.",
-                    price = 28.50,
-                    rangedSaleDateStart = now + 120 * dayMs,
-                    rangedSaleDateEnd = now + 125 * dayMs,
-                    status = "Upcoming"
+                    picturePath = "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=300&q=80",
+                    bookTitle = "Onyx Storm",
+                    bookAuthor = "Rebecca Yarros",
+                    description = "Deluxe dragon rider fantasy novel preorder.",
+                    price = 32.00,
+                    rangedSaleDateStart = targetReleaseDay,
+                    rangedSaleDateEnd = targetReleaseDay + 2 * dayMs,
+                    status = "Preordered"
                 )
             )
 
             preorderDao.insert(
                 Preorder(
                     bookstoreId = store3Id,
-                    picturePath = null,
+                    picturePath = "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?auto=format&fit=crop&w=300&q=80",
                     bookTitle = "Iron Flame (Deluxe Edition)",
                     bookAuthor = "Rebecca Yarros",
                     description = "Special stenciled edges preorder.",
@@ -594,6 +780,48 @@ class BookishRepository(private val database: BookishDatabase) {
                     status = "Shipped"
                 )
             )
+
+            preorderDao.insert(
+                Preorder(
+                    bookstoreId = store4Id,
+                    picturePath = "https://images.unsplash.com/photo-1532012197267-da84d127e765?auto=format&fit=crop&w=300&q=80",
+                    bookTitle = "The Winds of Winter",
+                    bookAuthor = "George R.R. Martin",
+                    description = "Expected release from local bookstore pre-orders.",
+                    price = 28.50,
+                    rangedSaleDateStart = now + 120 * dayMs,
+                    rangedSaleDateEnd = now + 125 * dayMs,
+                    status = "Upcoming"
+                )
+            )
+        }
+
+        val forwardingServices = forwardingServiceDao.getAllForwardingServices().firstOrNull() ?: emptyList()
+        if (forwardingServices.isEmpty()) {
+            val fs1Id = forwardingServiceDao.insert(ForwardingService(name = "Stackry", website = "https://www.stackry.com", profilePic = "ic_launcher_foreground")).toInt()
+            val fs2Id = forwardingServiceDao.insert(ForwardingService(name = "Buyee", website = "https://buyee.jp", profilePic = "ic_launcher_foreground")).toInt()
+            val fs3Id = forwardingServiceDao.insert(ForwardingService(name = "Forward2me", website = "https://www.forward2me.com", profilePic = "ic_launcher_foreground")).toInt()
+
+            forwardingServiceContactDao.insertAll(listOf(
+                ForwardingServiceContact(forwardingServiceId = fs1Id, contactType = "Website", contactValue = "https://www.stackry.com"),
+                ForwardingServiceContact(forwardingServiceId = fs1Id, contactType = "Email", contactValue = "support@stackry.com"),
+                ForwardingServiceContact(forwardingServiceId = fs2Id, contactType = "Website", contactValue = "https://buyee.jp"),
+                ForwardingServiceContact(forwardingServiceId = fs2Id, contactType = "Email", contactValue = "support@buyee.jp"),
+                ForwardingServiceContact(forwardingServiceId = fs3Id, contactType = "Website", contactValue = "https://www.forward2me.com"),
+                ForwardingServiceContact(forwardingServiceId = fs3Id, contactType = "Email", contactValue = "info@forward2me.com")
+            ))
+        }
+    }
+
+    suspend fun recalculateSubscriptionSkips(userDateFormatPattern: String) {
+        subscriptionSkipDao.deleteAllSubscriptionSkips()
+        val allSubTypes = subscriptionTypeDao.getAllSubscriptionTypesList()
+        for (subType in allSubTypes) {
+            syncSubscriptionSkip(subType)
+        }
+        val skippedSubs = scheduledSubscriptionDao.getSkippedScheduledSubscriptions()
+        for (scheduled in skippedSubs) {
+            processSkipForScheduledSub(scheduled, userDateFormatPattern)
         }
     }
 }

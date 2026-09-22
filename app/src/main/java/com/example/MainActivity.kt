@@ -35,15 +35,23 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Create notification channel
-        com.example.receiver.ReminderScheduler.createNotificationChannel(this)
+        // Create notification channel safely
+        try {
+            com.example.receiver.ReminderScheduler.createNotificationChannel(this)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
-        // Request POST_NOTIFICATIONS permission on Android 13+
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            val permission = android.Manifest.permission.POST_NOTIFICATIONS
-            if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(permission), 101)
+        // Request POST_NOTIFICATIONS permission on Android 13+ safely
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                val permission = android.Manifest.permission.POST_NOTIFICATIONS
+                if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(permission), 101)
+                }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
 
         enableEdgeToEdge()
@@ -94,7 +102,7 @@ fun BookishApp(viewModel: BookishViewModel) {
         NavigationItem("subscriptions", "Subs", Icons.Default.AutoStories, "nav_subscriptions"),
         NavigationItem("preorders", "Preorders", ImageVector.vectorResource(R.drawable.ic_book_5), "nav_preorders"),
         NavigationItem("home", "Home", Icons.Default.Home, "nav_home"),
-        NavigationItem("bookstores", "Bookstores", Icons.Default.Storefront, "nav_bookstores"),
+        NavigationItem("bookstores", "Stores", Icons.Default.Storefront, "nav_bookstores"),
         NavigationItem("profile", "Profile", Icons.Default.Person, "nav_profile")
     )
 
@@ -114,6 +122,15 @@ fun BookishApp(viewModel: BookishViewModel) {
                     NavigationBarItem(
                         selected = currentRoute == item.route,
                         onClick = {
+                            if (item.route == "preorders") {
+                                viewModel.preorderIsCalendarView.value = false
+                            } else if (item.route == "subscriptions") {
+                                viewModel.subOverviewIsCalendarView.value = false
+                                viewModel.subIsCalendarView.value = false
+                                if (viewModel.subSelectedTab.value == 1) {
+                                    viewModel.subSelectedTab.value = 0
+                                }
+                            }
                             if (currentRoute != item.route) {
                                 navController.navigate(item.route) {
                                     popUpTo(navController.graph.startDestinationId) {

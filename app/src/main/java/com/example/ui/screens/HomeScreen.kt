@@ -28,6 +28,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import coil.compose.AsyncImage
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
@@ -37,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInWindow
@@ -106,28 +108,22 @@ fun HomeScreen(
 
     val allActiveUpcomingEvents = remember(scheduled, preorders) {
         val now = System.currentTimeMillis()
-        val calToday = Calendar.getInstance().apply {
-            timeInMillis = now
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val todayStart = calToday.timeInMillis
 
         val scheduledEvents = scheduled.filter {
             val status = it.scheduled.status
             !it.scheduled.isSkipped &&
                     !status.equals("Skipped", ignoreCase = true) &&
                     !status.equals("Received", ignoreCase = true) &&
-                    !status.equals("Cancelled", ignoreCase = true) &&
-                    it.scheduled.dueDate >= todayStart
+                    !status.equals("Cancelled", ignoreCase = true)
         }.map {
             val subTypeName = it.subscriptionType?.title?.ifBlank { null } ?: it.scheduled.bookTitle
+            val bookstoreName = it.bookstore?.name?.trim() ?: ""
             val startDt = it.scheduled.dueDate
             val endDt = it.scheduled.dueDate
-            val reminderHour = if (it.subscriptionType?.reminderEnabled == true) it.subscriptionType?.reminderHour else null
-            val reminderMinute = if (it.subscriptionType?.reminderEnabled == true) it.subscriptionType?.reminderMinute else null
+            val subType = it.subscriptionType
+            val isSubReminderDDay = subType?.reminderEnabled == true && subType.reminderDDayOffset == 0
+            val reminderHour = if (isSubReminderDDay) subType?.reminderHour else null
+            val reminderMinute = if (isSubReminderDDay) subType?.reminderMinute else null
 
             UpcomingEvent(
                 id = "sched_${it.scheduled.id}",
@@ -139,7 +135,7 @@ fun HomeScreen(
                 type = "scheduled",
                 status = it.scheduled.status,
                 isSkipped = false,
-                subTitle = subTypeName,
+                subTitle = if (bookstoreName.isNotBlank()) bookstoreName else subTypeName,
                 price = it.subscriptionType?.price,
                 rawScheduled = it,
                 rawPreorder = null,
@@ -151,29 +147,36 @@ fun HomeScreen(
 
         val preorderEvents = preorders.filter {
             val status = it.preorder.status
-            val endDt = if (it.preorder.rangedSaleDateEnd > 0L) it.preorder.rangedSaleDateEnd else it.preorder.rangedSaleDateStart
             !status.equals("Received", ignoreCase = true) &&
-                    !status.equals("Cancelled", ignoreCase = true) &&
-                    endDt >= todayStart
+                    !status.equals("Cancelled", ignoreCase = true)
         }.map {
             val bookstoreName = it.bookstore?.name?.trim() ?: ""
-            val titleText = if (bookstoreName.isNotBlank()) "${it.preorder.bookTitle} ($bookstoreName)" else it.preorder.bookTitle
+            val titleText = it.preorder.bookTitle
             val startDt = it.preorder.rangedSaleDateStart
             val endDt = if (it.preorder.rangedSaleDateEnd > 0L) it.preorder.rangedSaleDateEnd else startDt
 
             val calStart = Calendar.getInstance().apply { timeInMillis = startDt }
-            val startHour: Int? = if (calStart.get(Calendar.HOUR_OF_DAY) != 0 || calStart.get(Calendar.MINUTE) != 0) {
-                calStart.get(Calendar.HOUR_OF_DAY)
-            } else null
-            val startMinute: Int? = if (calStart.get(Calendar.HOUR_OF_DAY) != 0 || calStart.get(Calendar.MINUTE) != 0) {
-                calStart.get(Calendar.MINUTE)
-            } else null
+            val hasStartSpecificTime = calStart.get(Calendar.HOUR_OF_DAY) != 0 || calStart.get(Calendar.MINUTE) != 0
+            val startHour: Int? = if (hasStartSpecificTime) calStart.get(Calendar.HOUR_OF_DAY) else null
+            val startMinute: Int? = if (hasStartSpecificTime) calStart.get(Calendar.MINUTE) else null
 
-            val preorderReminderHour: Int? = if (it.preorder.reminderEnabled) it.preorder.reminderHour else null
-            val preorderReminderMinute: Int? = if (it.preorder.reminderEnabled) it.preorder.reminderMinute else null
+            val isPreorderReminderInDDay = it.preorder.reminderEnabled && it.preorder.reminderDDayOffset == 0
 
-            val finalReminderHour = startHour ?: preorderReminderHour
-            val finalReminderMinute = startMinute ?: preorderReminderMinute
+            val finalReminderHour: Int? = if (startHour != null) {
+                startHour
+            } else if (isPreorderReminderInDDay) {
+                it.preorder.reminderHour
+            } else {
+                null
+            }
+
+            val finalReminderMinute: Int? = if (startMinute != null) {
+                startMinute
+            } else if (isPreorderReminderInDDay) {
+                it.preorder.reminderMinute
+            } else {
+                null
+            }
 
             UpcomingEvent(
                 id = "pre_${it.preorder.id}",
@@ -196,6 +199,7 @@ fun HomeScreen(
         }
 
         (scheduledEvents + preorderEvents)
+            .filter { isUpcomingEvent(it, now) }
             .sortedBy { it.startDate }
     }
 
@@ -203,11 +207,22 @@ fun HomeScreen(
         allActiveUpcomingEvents.take(5)
     }
 
-    var parentBoxWindowY by remember { mutableFloatStateOf(0f) }
-    var currentTargetY by remember { mutableFloatStateOf(-1f) }
+    var parentLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var cardLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var rawTargetY by remember { mutableFloatStateOf(-1f) }
     val density = LocalDensity.current
     val defaultTargetY = with(density) { 380.dp.toPx() }
-    val curveHeightPx = with(density) { 380.dp.toPx() }
+
+    val updateTargetY = {
+        val parent = parentLayoutCoordinates
+        val card = cardLayoutCoordinates
+        if (parent != null && card != null && parent.isAttached && card.isAttached) {
+            try {
+                val topInParent = parent.localPositionOf(card, Offset.Zero).y
+                rawTargetY = topInParent + card.size.height.toFloat() * 0.80f
+            } catch (_: Exception) {}
+        }
+    }
 
     val isDark = isSystemInDarkTheme()
     val backgroundColor = MaterialTheme.colorScheme.background
@@ -223,25 +238,26 @@ fun HomeScreen(
                 .clipToBounds()
                 .padding(innerPadding)
                 .onGloballyPositioned { coordinates ->
-                    parentBoxWindowY = coordinates.positionInWindow().y
+                    parentLayoutCoordinates = coordinates
+                    updateTargetY()
                 }
         ) {
-            val activeTargetY = if (currentTargetY != -1f) currentTargetY else defaultTargetY
+            val targetY = if (rawTargetY != -1f) rawTargetY else defaultTargetY
 
-            if (activeTargetY > 0f) {
+            if (targetY > 0f) {
                 Canvas(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     val extraWidth = size.width * 0.25f
                     val arcWidth = size.width + extraWidth * 2f
                     val arcRadiusY = arcWidth / 2f
-                    val rectHeight = (activeTargetY - arcRadiusY).coerceAtLeast(0f)
+                    val rectHeight = (targetY - arcRadiusY).coerceAtLeast(0f)
 
                     val archBrush = Brush.verticalGradient(
                         0.0f to backgroundColor,
                         1.0f to calendarCardBgColor,
                         startY = 0f,
-                        endY = activeTargetY
+                        endY = targetY
                     )
 
                     // Fill rectangle above the half circle diameter line
@@ -253,13 +269,13 @@ fun HomeScreen(
                         )
                     }
 
-                    // Draw wider half circle arc ending at activeTargetY
+                    // Draw wider half circle arc ending at targetY
                     drawArc(
                         brush = archBrush,
                         startAngle = 0f,
                         sweepAngle = 180f,
                         useCenter = true,
-                        topLeft = Offset(-extraWidth, activeTargetY - 2f * arcRadiusY),
+                        topLeft = Offset(-extraWidth, targetY - 2f * arcRadiusY),
                         size = Size(arcWidth, 2f * arcRadiusY)
                     )
                 }
@@ -397,9 +413,8 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .onGloballyPositioned { coordinates ->
-                            val cardWindowY = coordinates.positionInWindow().y
-                            val cardHeight = coordinates.size.height
-                            currentTargetY = cardWindowY + (cardHeight * 0.80f) - parentBoxWindowY
+                            cardLayoutCoordinates = coordinates
+                            updateTargetY()
                         }
                         .testTag("welcome_calendar_box"),
                     shape = RoundedCornerShape(22.dp),
@@ -466,8 +481,17 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
 
                                 if (todayEvents.isNotEmpty()) {
+                                    val sortedTodayEvents = remember(todayEvents) {
+                                        todayEvents.sortedWith(
+                                            compareByDescending<UpcomingEvent> { it.hasTime || it.reminderHour != null }
+                                                .thenBy { it.reminderHour ?: 24 }
+                                                .thenBy { it.reminderMinute ?: 60 }
+                                        )
+                                    }
+                                    val displayedTodayEvents = sortedTodayEvents.take(2)
+                                    val leftoverTodayEvents = sortedTodayEvents.drop(2)
                                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                        todayEvents.forEach { event ->
+                                        displayedTodayEvents.forEach { event ->
                                             CalendarBoxEventItem(
                                                 event = event,
                                                 targetDayStart = todayStart,
@@ -481,6 +505,25 @@ fun HomeScreen(
                                                     }
                                                 }
                                             )
+                                        }
+                                        if (leftoverTodayEvents.isNotEmpty()) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .clickable {
+                                                        groupedEventsPopupData = GroupedEventsPopupData("Today's Events (${todayEvents.size})", todayEvents)
+                                                    }
+                                                    .padding(vertical = 2.dp, horizontal = 2.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Text(
+                                                    text = "+${leftoverTodayEvents.size} more",
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
+                                                )
+                                            }
                                         }
                                     }
                                 } else {
@@ -515,28 +558,60 @@ fun HomeScreen(
                                         if (startDay >= tomorrowStart) startDay else tomorrowStart
                                     }.toSortedMap()
 
-                                    val topDayGroups = groupedFuture.entries.take(2)
-                                    val displayedFutureCount = topDayGroups.sumOf { it.value.size }
-                                    val totalDisplayedCount = todayEvents.size + displayedFutureCount
-                                    val leftOverCount = (allActiveUpcomingEvents.size - totalDisplayedCount).coerceAtLeast(0)
+                                    val displayedDayGroups = mutableListOf<DisplayedDayGroupInfo>()
+                                    var remainingItemBudget = 3
 
-                                    topDayGroups.forEach { (dayStartTs, eventsForDay) ->
+                                    for ((dayStartTs, eventsForDay) in groupedFuture) {
+                                        if (remainingItemBudget <= 0) break
+
+                                        val isFirstDay = displayedDayGroups.isEmpty()
+                                        if (eventsForDay.size <= remainingItemBudget) {
+                                            displayedDayGroups.add(
+                                                DisplayedDayGroupInfo(
+                                                    dayStartTs = dayStartTs,
+                                                    shownEvents = eventsForDay,
+                                                    leftoverEvents = emptyList(),
+                                                    fullDayEvents = eventsForDay
+                                                )
+                                            )
+                                            remainingItemBudget -= eventsForDay.size
+                                        } else {
+                                            val numToShow = if (isFirstDay) {
+                                                remainingItemBudget.coerceAtMost(3)
+                                            } else {
+                                                1
+                                            }
+                                            val shown = eventsForDay.take(numToShow)
+                                            val leftover = eventsForDay.drop(numToShow)
+                                            displayedDayGroups.add(
+                                                DisplayedDayGroupInfo(
+                                                    dayStartTs = dayStartTs,
+                                                    shownEvents = shown,
+                                                    leftoverEvents = leftover,
+                                                    fullDayEvents = eventsForDay
+                                                )
+                                            )
+                                            remainingItemBudget = 0
+                                        }
+                                    }
+
+                                    displayedDayGroups.forEach { group ->
                                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                             val groupHeaderStr = when {
-                                                dayStartTs == tomorrowStart -> "TOMORROW"
-                                                dayStartTs < sevenDaysOutStart -> dayOfWeekFormat.format(Date(dayStartTs)).uppercase(Locale.getDefault())
-                                                else -> dayMonthFormat.format(Date(dayStartTs)).uppercase(Locale.getDefault())
+                                                group.dayStartTs == tomorrowStart -> "TOMORROW"
+                                                group.dayStartTs < sevenDaysOutStart -> dayOfWeekFormat.format(Date(group.dayStartTs)).uppercase(Locale.getDefault())
+                                                else -> dayMonthFormat.format(Date(group.dayStartTs)).uppercase(Locale.getDefault())
                                             }
 
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .then(
-                                                        if (eventsForDay.size > 1) {
+                                                        if (group.fullDayEvents.size > 1) {
                                                             Modifier
                                                                 .clip(RoundedCornerShape(4.dp))
                                                                 .clickable {
-                                                                    groupedEventsPopupData = GroupedEventsPopupData("Events for $groupHeaderStr (${eventsForDay.size})", eventsForDay)
+                                                                    groupedEventsPopupData = GroupedEventsPopupData("Events for $groupHeaderStr (${group.fullDayEvents.size})", group.fullDayEvents)
                                                                 }
                                                         } else Modifier
                                                     ),
@@ -553,7 +628,7 @@ fun HomeScreen(
                                                     )
                                                 )
 
-                                                if (eventsForDay.size > 1) {
+                                                if (group.fullDayEvents.size > 1) {
                                                     Row(
                                                         verticalAlignment = Alignment.CenterVertically,
                                                         horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -565,7 +640,7 @@ fun HomeScreen(
                                                             modifier = Modifier.size(11.dp)
                                                         )
                                                         Text(
-                                                            text = "${eventsForDay.size} items",
+                                                            text = "${group.fullDayEvents.size} items",
                                                             fontSize = 9.5.sp,
                                                             fontWeight = FontWeight.Bold,
                                                             color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
@@ -574,10 +649,10 @@ fun HomeScreen(
                                                 }
                                             }
 
-                                            eventsForDay.forEach { event ->
+                                            group.shownEvents.forEach { event ->
                                                 CalendarBoxEventItem(
                                                     event = event,
-                                                    targetDayStart = dayStartTs,
+                                                    targetDayStart = group.dayStartTs,
                                                     userDisplayAmounts = user?.displayAmounts == true,
                                                     currency = currency,
                                                     onClick = {
@@ -589,40 +664,29 @@ fun HomeScreen(
                                                     }
                                                 )
                                             }
-                                        }
-                                    }
 
-                                    if (leftOverCount > 0) {
-                                        val leftoverList = futureEventsList.drop(displayedFutureCount)
-                                        Row(
-                                            modifier = Modifier
-                                                .height(IntrinsicSize.Min)
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .clickable {
-                                                    groupedEventsPopupData = GroupedEventsPopupData(
-                                                        "Grouped Upcoming Events (${if (leftoverList.isNotEmpty()) leftoverList.size else allActiveUpcomingEvents.size})",
-                                                        if (leftoverList.isNotEmpty()) leftoverList else allActiveUpcomingEvents
+                                            if (group.leftoverEvents.isNotEmpty()) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .clickable {
+                                                            groupedEventsPopupData = GroupedEventsPopupData(
+                                                                "Events for $groupHeaderStr (${group.fullDayEvents.size})",
+                                                                group.fullDayEvents
+                                                            )
+                                                        }
+                                                        .padding(vertical = 2.dp, horizontal = 2.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "+${group.leftoverEvents.size} more",
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
                                                     )
                                                 }
-                                                .padding(vertical = 2.dp, horizontal = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(2.5.dp)
-                                                    .fillMaxHeight()
-                                                    .background(
-                                                        MaterialTheme.colorScheme.onPrimary,
-                                                        shape = RoundedCornerShape(2.dp)
-                                                    )
-                                            )
-                                            Text(
-                                                text = "+$leftOverCount more event${if (leftOverCount > 1) "s" else ""}",
-                                                fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f)
-                                            )
+                                            }
                                         }
                                     }
                                 }
@@ -895,6 +959,12 @@ fun HomeScreen(
                 val currentCal = Calendar.getInstance()
                 val currentYear = currentCal.get(Calendar.YEAR)
                 val currentMonth = currentCal.get(Calendar.MONTH)
+                val endOfTodayMs = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }.timeInMillis
 
                 val preordersThisMonth = preorders.filter { item ->
                     val cal = Calendar.getInstance().apply { timeInMillis = item.preorder.rangedSaleDateStart }
@@ -906,42 +976,64 @@ fun HomeScreen(
                     cal.get(Calendar.YEAR) == currentYear
                 }
 
+                val activeSubIds = activeSubs.map { it.subscription.id }.toSet()
+
                 val scheduledThisMonth = scheduled.filter { item ->
                     val cal = Calendar.getInstance().apply { timeInMillis = item.scheduled.dueDate }
-                    cal.get(Calendar.YEAR) == currentYear && cal.get(Calendar.MONTH) == currentMonth
+                    val isThisMonth = cal.get(Calendar.YEAR) == currentYear && cal.get(Calendar.MONTH) == currentMonth
+                    val isActiveSub = item.subscriptionType != null && (activeSubIds.contains(item.scheduled.subscriptionTypeId) || activeSubIds.contains(item.subscriptionType.id) || item.subscriptionType.status.equals("Active", ignoreCase = true))
+                    isThisMonth && isActiveSub
                 }
 
                 val scheduledThisYear = scheduled.filter { item ->
                     val cal = Calendar.getInstance().apply { timeInMillis = item.scheduled.dueDate }
-                    cal.get(Calendar.YEAR) == currentYear
+                    val isThisYear = cal.get(Calendar.YEAR) == currentYear
+                    val isActiveSub = item.subscriptionType != null && (activeSubIds.contains(item.scheduled.subscriptionTypeId) || activeSubIds.contains(item.subscriptionType.id) || item.subscriptionType.status.equals("Active", ignoreCase = true))
+                    isThisYear && isActiveSub
                 }
 
-                // Monthly spend: preorders in month (active) + scheduled subs in month (active/renewed/shipped/received)
-                val monthlySpend = preordersThisMonth
-                    .filter { !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
-                    .sumOf { it.preorder.price } +
+                // Monthly spend: this month up to today
+                val monthlySpend = if (subscriptions.isEmpty() && preorders.isEmpty()) 0.0 else (
+                    preordersThisMonth
+                        .filter { it.preorder.rangedSaleDateStart <= endOfTodayMs && !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) && !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.preorder.price } +
                     scheduledThisMonth
-                    .filter { !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
-                    .sumOf { it.subscriptionType?.price ?: 0.0 }
+                        .filter { it.scheduled.dueDate <= endOfTodayMs && !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.subscriptionType?.price ?: 0.0 }
+                )
 
-                // Monthly preview: all status
-                val monthlyPreview = preordersThisMonth.sumOf { it.preorder.price } +
-                    scheduledThisMonth.sumOf { it.subscriptionType?.price ?: 0.0 }
+                // Monthly preview: this month start to end
+                val monthlyPreview = if (subscriptions.isEmpty() && preorders.isEmpty()) 0.0 else (
+                    preordersThisMonth
+                        .filter { !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.preorder.price } +
+                    scheduledThisMonth
+                        .filter { !it.scheduled.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.subscriptionType?.price ?: 0.0 }
+                )
 
-                // Yearly spend: preorders in year (active) + scheduled subs in year (active/renewed/shipped/received)
-                val yearlySpend = preordersThisYear
-                    .filter { !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
-                    .sumOf { it.preorder.price } +
+                // Yearly spend: this year up to today
+                val yearlySpend = if (subscriptions.isEmpty() && preorders.isEmpty()) 0.0 else (
+                    preordersThisYear
+                        .filter { it.preorder.rangedSaleDateStart <= endOfTodayMs && !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) && !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.preorder.price } +
                     scheduledThisYear
-                    .filter { !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
-                    .sumOf { it.subscriptionType?.price ?: 0.0 }
+                        .filter { it.scheduled.dueDate <= endOfTodayMs && !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.subscriptionType?.price ?: 0.0 }
+                )
 
-                // Yearly preview: all status
-                val yearlyPreview = preordersThisYear.sumOf { it.preorder.price } +
-                    scheduledThisYear.sumOf { it.subscriptionType?.price ?: 0.0 }
+                // Yearly preview: this year start to end
+                val yearlyPreview = if (subscriptions.isEmpty() && preorders.isEmpty()) 0.0 else (
+                    preordersThisYear
+                        .filter { !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.preorder.price } +
+                    scheduledThisYear
+                        .filter { !it.scheduled.status.equals("Skipped", ignoreCase = true) }
+                        .sumOf { it.subscriptionType?.price ?: 0.0 }
+                )
 
-                val monthScheduledList = if (scheduledThisMonth.isNotEmpty()) scheduledThisMonth else scheduled
-                val yearScheduledList = if (scheduledThisYear.isNotEmpty()) scheduledThisYear else scheduled
+                val monthScheduledList = scheduledThisMonth
+                val yearScheduledList = scheduledThisYear
 
                 val upcomingSched = monthScheduledList.count { it.scheduled.status.equals("Upcoming", ignoreCase = true) }
                 val renewedSched = monthScheduledList.count { it.scheduled.status.equals("Renewed", ignoreCase = true) || it.scheduled.status.equals("Paid", ignoreCase = true) }
@@ -2437,6 +2529,13 @@ fun HomeScreen(
 }
 }
 
+data class DisplayedDayGroupInfo(
+    val dayStartTs: Long,
+    val shownEvents: List<UpcomingEvent>,
+    val leftoverEvents: List<UpcomingEvent>,
+    val fullDayEvents: List<UpcomingEvent>
+)
+
 data class GroupedEventsPopupData(
     val title: String,
     val events: List<UpcomingEvent>
@@ -2460,6 +2559,47 @@ data class UpcomingEvent(
     val reminderMinute: Int? = null,
     val hasTime: Boolean = false
 )
+
+fun isUpcomingEvent(event: UpcomingEvent, now: Long): Boolean {
+    val hasDistinctEndDate = event.rawPreorder?.let {
+        it.preorder.rangedSaleDateEnd > 0L && it.preorder.rangedSaleDateEnd != it.preorder.rangedSaleDateStart
+    } ?: false
+
+    val targetEndDate = if (hasDistinctEndDate) event.endDate else event.startDate
+
+    val calTargetEnd = Calendar.getInstance().apply { timeInMillis = targetEndDate }
+    val hasTimestampTime = calTargetEnd.get(Calendar.HOUR_OF_DAY) != 0 || calTargetEnd.get(Calendar.MINUTE) != 0
+    val hasSpecificTime = event.hasTime || event.reminderHour != null || hasTimestampTime
+
+    val eventEndTimestampMs: Long = if (hasSpecificTime) {
+        if (event.reminderHour != null) {
+            val cal = Calendar.getInstance().apply { timeInMillis = targetEndDate }
+            cal.set(Calendar.HOUR_OF_DAY, event.reminderHour)
+            cal.set(Calendar.MINUTE, event.reminderMinute ?: 0)
+            cal.set(Calendar.SECOND, 59)
+            cal.set(Calendar.MILLISECOND, 999)
+            cal.timeInMillis
+        } else if (hasTimestampTime) {
+            targetEndDate
+        } else {
+            val cal = Calendar.getInstance().apply { timeInMillis = targetEndDate }
+            cal.set(Calendar.HOUR_OF_DAY, 23)
+            cal.set(Calendar.MINUTE, 59)
+            cal.set(Calendar.SECOND, 59)
+            cal.set(Calendar.MILLISECOND, 999)
+            cal.timeInMillis
+        }
+    } else {
+        val cal = Calendar.getInstance().apply { timeInMillis = targetEndDate }
+        cal.set(Calendar.HOUR_OF_DAY, 23)
+        cal.set(Calendar.MINUTE, 59)
+        cal.set(Calendar.SECOND, 59)
+        cal.set(Calendar.MILLISECOND, 999)
+        cal.timeInMillis
+    }
+
+    return now <= eventEndTimestampMs
+}
 
 @Composable
 fun MiniStatusDot(
@@ -2775,20 +2915,81 @@ fun BentoTimelineItem(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    Text(
-                        text = event.title,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1
-                    )
+                    if (event.type == "preorder") {
+                        val bookTitle = event.rawPreorder?.preorder?.bookTitle?.ifBlank { null } ?: event.title
+                        val bookAuthor = event.rawPreorder?.preorder?.bookAuthor?.ifBlank { null } ?: event.author
+                        val bookstoreName = event.rawPreorder?.bookstore?.name?.ifBlank { null } ?: event.subTitle
 
-                    Text(
-                        text = "By ${event.author} • ${event.subTitle}",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
+                        Text(
+                            text = bookTitle,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        val subtitleStr = buildString {
+                            if (bookAuthor.isNotBlank()) append("By $bookAuthor")
+                            if (bookstoreName.isNotBlank()) {
+                                if (isNotEmpty()) append(" • ")
+                                append(bookstoreName)
+                            }
+                        }
+
+                        if (subtitleStr.isNotBlank()) {
+                            Text(
+                                text = subtitleStr,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else { // "scheduled"
+                        val subsTypeTitle = event.rawScheduled?.subscriptionType?.title?.ifBlank { null } ?: event.title
+                        val bookTitle = event.rawScheduled?.scheduled?.bookTitle?.trim() ?: ""
+                        val bookAuthor = event.rawScheduled?.scheduled?.bookAuthor?.trim() ?: ""
+                        val bookstoreName = event.rawScheduled?.bookstore?.name?.ifBlank { null } ?: event.subTitle.ifBlank { null } ?: ""
+
+                        Text(
+                            text = subsTypeTitle,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        val bookInfo = buildString {
+                            if (bookTitle.isNotBlank()) append(bookTitle)
+                            if (bookAuthor.isNotBlank()) {
+                                if (isNotEmpty()) append(" by ") else append("By ")
+                                append(bookAuthor)
+                            }
+                        }
+
+                        if (bookInfo.isNotBlank()) {
+                            Text(
+                                text = bookInfo,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        if (bookstoreName.isNotBlank()) {
+                            Text(
+                                text = bookstoreName,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
 
