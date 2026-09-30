@@ -7,8 +7,10 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.example.utils.ExcelExporter
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -19,29 +21,35 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
-    // UI Search and Filter States as MutableStateFlows
+    // UI Search and Filter States as MutableStateFlows (Multi-select sets)
     val subOverviewSearch = MutableStateFlow("")
-    val subOverviewFilterType = MutableStateFlow<String?>(null) // Scheduled Subscription Status (Upcoming, Paid, Shipped, Received)
-    val subOverviewFilterBookstore = MutableStateFlow<Int?>(null)
+    val subOverviewFilterTypes = MutableStateFlow<Set<String>>(emptySet()) // Scheduled Subscription Statuses (Upcoming, Skipped, Renewed, Shipped, Received)
+    val subOverviewFilterBookstores = MutableStateFlow<Set<Int>>(emptySet())
     val subOverviewFilterAuthor = MutableStateFlow<String?>(null)
     val subOverviewFilterBook = MutableStateFlow<String?>(null)
-    val subOverviewFilterSubTypeId = MutableStateFlow<Int?>(null)
+    val subOverviewFilterSubTypeIds = MutableStateFlow<Set<Int>>(emptySet())
     val subOverviewIsCalendarView = MutableStateFlow(false)
 
     val subSearch = MutableStateFlow("")
-    val subFilterStatus = MutableStateFlow<String?>(null) // Active, Waitlist, Paused, Canceled
-    val subFilterBookstore = MutableStateFlow<Int?>(null)
-    val subFilterFrequency = MutableStateFlow<String?>(null)
-    val subFilterSubTypeId = MutableStateFlow<Int?>(null)
+    val subFilterStatuses = MutableStateFlow<Set<String>>(emptySet()) // Active, Waitlist, Paused, Canceled, Wishlist
+    val subFilterBookstores = MutableStateFlow<Set<Int>>(emptySet())
+    val subFilterFrequencies = MutableStateFlow<Set<String>>(emptySet())
+    val subFilterSubTypeIds = MutableStateFlow<Set<Int>>(emptySet())
     val subIsCalendarView = MutableStateFlow(false)
     val subSelectedTab = MutableStateFlow(0) // 0 = Overview (Renewals), 1 = Subscriptions
 
     val preorderSearch = MutableStateFlow("")
-    val preorderFilterBookstore = MutableStateFlow<Int?>(null)
+    val preorderFilterBookstores = MutableStateFlow<Set<Int>>(emptySet())
     val preorderFilterAuthor = MutableStateFlow<String?>(null)
     val preorderFilterBook = MutableStateFlow<String?>(null)
-    val preorderFilterStatus = MutableStateFlow<String?>(null) // Upcoming, Released, Preordered, Shipped, Received
+    val preorderFilterStatuses = MutableStateFlow<Set<String>>(emptySet()) // Upcoming, Released, Preordered, Shipped, Received
     val preorderIsCalendarView = MutableStateFlow(false)
+
+    val homeScrollToTopTrigger = MutableStateFlow(0L)
+
+    fun resetHomeScreenToTop() {
+        homeScrollToTopTrigger.value = System.currentTimeMillis()
+    }
 
     val alertMessage = MutableStateFlow<String?>(null)
 
@@ -65,7 +73,16 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     val forwardingServiceContactsState: StateFlow<List<ForwardingServiceContact>> = repository.allForwardingServiceContactsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val shippingCompaniesState: StateFlow<List<ShippingCompany>> = repository.allShippingCompaniesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val shippingCompanyContactsState: StateFlow<List<ShippingCompanyContact>> = repository.allShippingCompanyContactsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val userAddressesState: StateFlow<List<UserAddress>> = repository.allUserAddressesFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val allPackagesState: StateFlow<List<PackageItem>> = repository.allPackagesFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun insertUserAddress(address: UserAddress) {
@@ -156,50 +173,58 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     // Helper classes for robust type-safe flow combination exceeding 5 elements
     data class ScheduledFilters(
         val query: String,
-        val status: String?,
-        val storeId: Int?,
+        val statuses: Set<String>,
+        val storeIds: Set<Int>,
         val author: String?,
         val book: String?,
-        val subTypeId: Int? = null
+        val subTypeIds: Set<Int>
     )
 
     data class PreorderFilters(
         val query: String,
-        val storeId: Int?,
+        val storeIds: Set<Int>,
         val author: String?,
         val book: String?,
-        val status: String?
+        val statuses: Set<String>
     )
 
+    @Suppress("UNCHECKED_CAST")
     private val scheduledFiltersFlow: Flow<ScheduledFilters> = combine(
         subOverviewSearch,
-        subOverviewFilterType,
-        subOverviewFilterBookstore,
+        subOverviewFilterTypes,
+        subOverviewFilterBookstores,
         subOverviewFilterAuthor,
         subOverviewFilterBook,
-        subOverviewFilterSubTypeId
+        subOverviewFilterSubTypeIds
     ) { args: Array<Any?> ->
         ScheduledFilters(
             query = args[0] as String,
-            status = args[1] as String?,
-            storeId = args[2] as Int?,
+            statuses = args[1] as Set<String>,
+            storeIds = args[2] as Set<Int>,
             author = args[3] as String?,
             book = args[4] as String?,
-            subTypeId = args[5] as Int?
+            subTypeIds = args[5] as Set<Int>
         )
     }
 
+    @Suppress("UNCHECKED_CAST")
     private val preorderFiltersFlow: Flow<PreorderFilters> = combine(
         preorderSearch,
-        preorderFilterBookstore,
+        preorderFilterBookstores,
         preorderFilterAuthor,
         preorderFilterBook,
-        preorderFilterStatus
-    ) { query, storeId, author, book, status ->
-        PreorderFilters(query, storeId, author, book, status)
+        preorderFilterStatuses
+    ) { args: Array<Any?> ->
+        PreorderFilters(
+            query = args[0] as String,
+            storeIds = args[1] as Set<Int>,
+            author = args[2] as String?,
+            book = args[3] as String?,
+            statuses = args[4] as Set<String>
+        )
     }
 
-    // 1. FILTERED Scheduled Subscriptions (Subscriptions Overview)
+    // 1. FILTERED Scheduled Subscriptions (Subscriptions Overview / Renewals)
     val filteredScheduledState: StateFlow<List<ScheduledWithDetails>> = combine(
         repository.scheduledWithDetailsFlow,
         scheduledFiltersFlow
@@ -209,40 +234,41 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     item.scheduled.bookTitle.contains(filters.query, ignoreCase = true) ||
                     item.scheduled.bookAuthor.contains(filters.query, ignoreCase = true) ||
                     (item.subscriptionType?.title?.contains(filters.query, ignoreCase = true) ?: false)
-            val matchesStatus = filters.status == null || item.scheduled.status == filters.status
-            val matchesBookstore = filters.storeId == null || item.bookstore?.id == filters.storeId
+            val matchesStatus = filters.statuses.isEmpty() || item.scheduled.status in filters.statuses
+            val matchesBookstore = filters.storeIds.isEmpty() || (item.bookstore?.id != null && item.bookstore.id in filters.storeIds)
             val matchesAuthor = filters.author == null || item.scheduled.bookAuthor.contains(filters.author, ignoreCase = true)
             val matchesBook = filters.book == null || item.scheduled.bookTitle.contains(filters.book, ignoreCase = true)
-            val matchesSubType = filters.subTypeId == null || item.scheduled.subscriptionTypeId == filters.subTypeId
+            val matchesSubType = filters.subTypeIds.isEmpty() || item.scheduled.subscriptionTypeId in filters.subTypeIds
 
             matchesQuery && matchesStatus && matchesBookstore && matchesAuthor && matchesBook && matchesSubType
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 2. FILTERED Subscription Types (Subscriptions main tab)
+    @Suppress("UNCHECKED_CAST")
     val filteredSubscriptionsState: StateFlow<List<SubscriptionWithBookstore>> = combine(
         repository.subscriptionsWithBookstoreFlow,
         subSearch,
-        subFilterStatus,
-        subFilterBookstore,
-        subFilterFrequency,
-        subFilterSubTypeId
+        subFilterStatuses,
+        subFilterBookstores,
+        subFilterFrequencies,
+        subFilterSubTypeIds
     ) { args: Array<Any?> ->
         val list = args[0] as List<SubscriptionWithBookstore>
         val query = args[1] as String
-        val status = args[2] as String?
-        val storeId = args[3] as Int?
-        val frequency = args[4] as String?
-        val subTypeId = args[5] as Int?
+        val statuses = args[2] as Set<String>
+        val storeIds = args[3] as Set<Int>
+        val frequencies = args[4] as Set<String>
+        val subTypeIds = args[5] as Set<Int>
 
         list.filter { item ->
             val matchesQuery = query.isBlank() ||
                     item.subscription.title.contains(query, ignoreCase = true) ||
                     (item.bookstore?.name?.contains(query, ignoreCase = true) ?: false)
-            val matchesStatus = status == null || item.subscription.status == status
-            val matchesBookstore = storeId == null || item.bookstore?.id == storeId
-            val matchesFrequency = frequency == null || item.subscription.frequency == frequency
-            val matchesSubType = subTypeId == null || item.subscription.id == subTypeId
+            val matchesStatus = statuses.isEmpty() || item.subscription.status in statuses
+            val matchesBookstore = storeIds.isEmpty() || (item.bookstore?.id != null && item.bookstore.id in storeIds)
+            val matchesFrequency = frequencies.isEmpty() || item.subscription.frequency in frequencies
+            val matchesSubType = subTypeIds.isEmpty() || item.subscription.id in subTypeIds
 
             matchesQuery && matchesStatus && matchesBookstore && matchesFrequency && matchesSubType
         }
@@ -258,10 +284,10 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     item.preorder.bookTitle.contains(filters.query, ignoreCase = true) ||
                     item.preorder.bookAuthor.contains(filters.query, ignoreCase = true) ||
                     (item.bookstore?.name?.contains(filters.query, ignoreCase = true) ?: false)
-            val matchesBookstore = filters.storeId == null || item.bookstore?.id == filters.storeId
+            val matchesBookstore = filters.storeIds.isEmpty() || (item.bookstore?.id != null && item.bookstore.id in filters.storeIds)
             val matchesAuthor = filters.author == null || item.preorder.bookAuthor.contains(filters.author, ignoreCase = true)
             val matchesBook = filters.book == null || item.preorder.bookTitle.contains(filters.book, ignoreCase = true)
-            val matchesStatus = filters.status == null || item.preorder.status == filters.status
+            val matchesStatus = filters.statuses.isEmpty() || item.preorder.status in filters.statuses
 
             matchesQuery && matchesBookstore && matchesAuthor && matchesBook && matchesStatus
         }
@@ -334,10 +360,26 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         name: String,
         website: String,
         profilePic: String?,
-        contacts: List<ForwardingServiceContact> = emptyList()
+        storageDays: Int? = null,
+        contacts: List<ForwardingServiceContact> = emptyList(),
+        reminderEnabled: Boolean = false,
+        reminderDDayOffset: Int = 0,
+        reminderHour: Int = 8,
+        reminderMinute: Int = 0
     ) {
         viewModelScope.launch {
-            val serviceId = repository.insertForwardingService(ForwardingService(name = name, website = website, profilePic = profilePic))
+            val serviceId = repository.insertForwardingService(
+                ForwardingService(
+                    name = name,
+                    website = website,
+                    profilePic = profilePic,
+                    storageDays = storageDays,
+                    reminderEnabled = reminderEnabled,
+                    reminderDDayOffset = reminderDDayOffset,
+                    reminderHour = reminderHour,
+                    reminderMinute = reminderMinute
+                )
+            )
             if (contacts.isNotEmpty()) {
                 repository.saveForwardingServiceContacts(serviceId.toInt(), contacts)
             }
@@ -350,11 +392,13 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             if (contacts != null) {
                 repository.saveForwardingServiceContacts(service.id, contacts)
             }
+            syncStorageRemindersForService(service)
         }
     }
 
     fun deleteForwardingService(service: ForwardingService) {
         viewModelScope.launch {
+            cancelStorageRemindersForService(service.id)
             repository.deleteForwardingService(service)
         }
     }
@@ -362,6 +406,43 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     fun restoreForwardingService(service: ForwardingService) {
         viewModelScope.launch {
             repository.insertForwardingService(service)
+        }
+    }
+
+    fun addShippingCompany(
+        name: String,
+        website: String,
+        profilePic: String?,
+        contacts: List<ShippingCompanyContact> = emptyList()
+    ) {
+        viewModelScope.launch {
+            val companyId = repository.insertShippingCompany(
+                ShippingCompany(name = name, website = website, profilePic = profilePic)
+            )
+            if (contacts.isNotEmpty()) {
+                repository.saveShippingCompanyContacts(companyId.toInt(), contacts)
+            }
+        }
+    }
+
+    fun updateShippingCompany(company: ShippingCompany, contacts: List<ShippingCompanyContact>? = null) {
+        viewModelScope.launch {
+            repository.updateShippingCompany(company)
+            if (contacts != null) {
+                repository.saveShippingCompanyContacts(company.id, contacts)
+            }
+        }
+    }
+
+    fun deleteShippingCompany(company: ShippingCompany) {
+        viewModelScope.launch {
+            repository.deleteShippingCompany(company)
+        }
+    }
+
+    fun restoreShippingCompany(company: ShippingCompany) {
+        viewModelScope.launch {
+            repository.insertShippingCompany(company)
         }
     }
 
@@ -399,6 +480,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         shippingAddressId: Int? = null,
         currency: String? = null,
         basePrice: Double? = null,
+        discountedAmount: Double? = null,
         shippingPrice: Double? = null,
         taxPrice: Double? = null,
         forwardShippingPrice: Double? = null,
@@ -435,6 +517,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     shippingAddressId = shippingAddressId,
                     currency = currency,
                     basePrice = basePrice,
+                    discountedAmount = discountedAmount,
                     shippingPrice = shippingPrice,
                     taxPrice = taxPrice,
                     forwardShippingPrice = forwardShippingPrice,
@@ -890,6 +973,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                             sub.reminderMinute
                         )
                     }
+                    syncStorageReminderForOrigin("scheduled_subs", schedId.toInt())
                 }
             }
         }
@@ -906,7 +990,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         rating: Double = 0.0
     ) {
         viewModelScope.launch {
-            repository.insertScheduledSubscription(
+            val newId = repository.insertScheduledSubscription(
                 ScheduledSubscription(
                     subscriptionTypeId = subscriptionTypeId,
                     bookTitle = bookTitle,
@@ -919,6 +1003,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     rating = rating
                 )
             )
+            syncStorageReminderForOrigin("scheduled_subs", newId.toInt())
         }
     }
 
@@ -958,12 +1043,17 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     subType.reminderMinute
                 )
             }
+            syncStorageReminderForOrigin("scheduled_subs", scheduled.id)
         }
     }
 
     fun deleteScheduledSubscription(scheduled: ScheduledSubscription) {
         viewModelScope.launch {
             com.example.receiver.ReminderScheduler.cancelScheduledSubReminder(getApplication(), scheduled.id)
+            val pkg = repository.getPackageDirect("scheduled_subs", scheduled.id)
+            if (pkg != null) {
+                com.example.receiver.ReminderScheduler.cancelForwardingStorageReminder(getApplication(), pkg.id)
+            }
             repository.deleteScheduledSubscription(scheduled)
         }
     }
@@ -1039,6 +1129,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         shippingAddressId: Int? = null,
         currency: String? = null,
         basePrice: Double? = null,
+        discountedAmount: Double? = null,
         shippingPrice: Double? = null,
         taxPrice: Double? = null,
         forwardShippingPrice: Double? = null,
@@ -1066,6 +1157,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     shippingAddressId = shippingAddressId,
                     currency = currency,
                     basePrice = basePrice,
+                    discountedAmount = discountedAmount,
                     shippingPrice = shippingPrice,
                     taxPrice = taxPrice,
                     forwardShippingPrice = forwardShippingPrice,
@@ -1084,6 +1176,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     reminderMinute
                 )
             }
+            syncStorageReminderForOrigin("preorders", preorderId.toInt())
         }
     }
 
@@ -1102,12 +1195,17 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     preorder.reminderMinute
                 )
             }
+            syncStorageReminderForOrigin("preorders", preorder.id)
         }
     }
 
     fun deletePreorder(preorder: Preorder) {
         viewModelScope.launch {
             com.example.receiver.ReminderScheduler.cancelPreorderReminder(getApplication(), preorder.id)
+            val pkg = repository.getPackageDirect("preorders", preorder.id)
+            if (pkg != null) {
+                com.example.receiver.ReminderScheduler.cancelForwardingStorageReminder(getApplication(), pkg.id)
+            }
             repository.deletePreorder(preorder)
         }
     }
@@ -1121,253 +1219,25 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     // --- CSV EXCEL EXPORTING ---
     fun exportToExcelSpreadsheet(context: Context) {
         viewModelScope.launch {
-            val bookstores = bookstoresState.value
-            val subscriptions = rawSubscriptionsState.value
-            val scheduled = rawScheduledState.value
-            val preorders = rawPreordersState.value
             val user = userState.value ?: User(id = 1, username = "Guest", profilePic = null, currency = "$", language = "English", themeMode = "system")
-
-            val userDateFormatPattern = user.dateFormat ?: "yyyy-MM-dd"
-            val dateFormat = SimpleDateFormat(userDateFormatPattern, Locale.getDefault())
-
-            val xmlBuilder = StringBuilder()
-
-            xmlBuilder.append("""<?xml version="1.0" encoding="UTF-8"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
- <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">
-  <Author>Bookish</Author>
-  <Title>Bookish Export</Title>
- </DocumentProperties>
- <Styles>
-  <Style ss:ID="Default" ss:Name="Normal">
-   <Alignment ss:Vertical="Bottom"/>
-   <Font ss:FontName="Calibri" x:Family="Swiss" ss:Size="11" ss:Color="#000000"/>
-  </Style>
-  <Style ss:ID="Header">
-   <Font ss:FontName="Calibri" ss:Size="11" ss:Color="#1E293B" ss:Bold="1"/>
-   <Interior ss:Color="#E2E8F0" ss:Pattern="Solid"/>
-  </Style>
-  <Style ss:ID="Title">
-   <Font ss:FontName="Calibri" ss:Size="14" ss:Color="#0F172A" ss:Bold="1"/>
-  </Style>
- </Styles>
-""")
-
-            // 1. Overview Sheet
-            xmlBuilder.append(""" <Worksheet ss:Name="Overview">
-  <Table>
-   <Column ss:Width="180"/>
-   <Column ss:Width="220"/>
-   <Row>
-    <Cell ss:StyleID="Title"><Data ss:Type="String">BOOKISH DATA EXPORT</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">Export Date</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(dateFormat.format(Date()))}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">User Name</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(user.username)}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">Preferred Currency</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(user.currency)}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">Preferred Language</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(user.language)}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">Total Bookstores</Data></Cell>
-    <Cell><Data ss:Type="Number">${bookstores.size}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">Total Subscriptions</Data></Cell>
-    <Cell><Data ss:Type="Number">${subscriptions.size}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">Total Scheduled Deliveries</Data></Cell>
-    <Cell><Data ss:Type="Number">${scheduled.size}</Data></Cell>
-   </Row>
-   <Row>
-    <Cell><Data ss:Type="String">Total Preorders</Data></Cell>
-    <Cell><Data ss:Type="Number">${preorders.size}</Data></Cell>
-   </Row>
-  </Table>
- </Worksheet>
-""")
-
-            // 2. Bookstores Sheet
-            xmlBuilder.append(""" <Worksheet ss:Name="Bookstores">
-  <Table>
-   <Column ss:Width="100"/>
-   <Column ss:Width="200"/>
-   <Column ss:Width="300"/>
-   <Row>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore ID</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Name</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Website</Data></Cell>
-   </Row>
-""")
-            for (b in bookstores) {
-                xmlBuilder.append("""   <Row>
-    <Cell><Data ss:Type="Number">${b.id}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(b.name)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(b.website)}</Data></Cell>
-   </Row>
-""")
-            }
-            xmlBuilder.append("  </Table>\n </Worksheet>\n")
-
-            // 3. Subscriptions Sheet
-            xmlBuilder.append(""" <Worksheet ss:Name="Subscriptions">
-  <Table>
-   <Column ss:Width="100"/>
-   <Column ss:Width="180"/>
-   <Column ss:Width="200"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="120"/>
-   <Row>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Subscription ID</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Title</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Status</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Price</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Due Date</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Start Date</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Finish Date</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Alert Days</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Frequency</Data></Cell>
-   </Row>
-""")
-            for (s in subscriptions) {
-                val sub = s.subscription
-                val bookstoreName = s.bookstore?.name ?: "Unknown"
-                val dueDateStr = if (sub.dueDate > 0) dateFormat.format(Date(sub.dueDate)) else ""
-                val startDateStr = if (sub.startDate > 0) dateFormat.format(Date(sub.startDate)) else ""
-                val finishDateStr = if (sub.finishDate > 0) dateFormat.format(Date(sub.finishDate)) else ""
-                xmlBuilder.append("""   <Row>
-    <Cell><Data ss:Type="Number">${sub.id}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(bookstoreName)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(sub.title)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(sub.status)}</Data></Cell>
-    <Cell><Data ss:Type="Number">${sub.price}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(dueDateStr)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(startDateStr)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(finishDateStr)}</Data></Cell>
-    <Cell><Data ss:Type="Number">${sub.notificationAlertDays ?: 0}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(sub.frequency)}</Data></Cell>
-   </Row>
-""")
-            }
-            xmlBuilder.append("  </Table>\n </Worksheet>\n")
-
-            // 4. Scheduled Subscriptions Sheet
-            xmlBuilder.append(""" <Worksheet ss:Name="Scheduled Subscriptions">
-  <Table>
-   <Column ss:Width="100"/>
-   <Column ss:Width="200"/>
-   <Column ss:Width="200"/>
-   <Column ss:Width="180"/>
-   <Column ss:Width="250"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="90"/>
-   <Row>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Scheduled ID</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Subscription</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Book Title</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Author</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Description</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Due Date</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Status</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Is Skipped</Data></Cell>
-   </Row>
-""")
-            for (sch in scheduled) {
-                val sc = sch.scheduled
-                val subTitle = sch.subscriptionType?.title ?: "Unknown"
-                val dueDateStr = if (sc.dueDate > 0) dateFormat.format(Date(sc.dueDate)) else ""
-                xmlBuilder.append("""   <Row>
-    <Cell><Data ss:Type="Number">${sc.id}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(subTitle)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(sc.bookTitle)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(sc.bookAuthor)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(sc.description)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(dueDateStr)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(sc.status)}</Data></Cell>
-    <Cell><Data ss:Type="String">${if (sc.isSkipped) "Yes" else "No"}</Data></Cell>
-   </Row>
-""")
-            }
-            xmlBuilder.append("  </Table>\n </Worksheet>\n")
-
-            // 5. Preorders Sheet
-            xmlBuilder.append(""" <Worksheet ss:Name="Preorders">
-  <Table>
-   <Column ss:Width="100"/>
-   <Column ss:Width="180"/>
-   <Column ss:Width="200"/>
-   <Column ss:Width="180"/>
-   <Column ss:Width="250"/>
-   <Column ss:Width="100"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="120"/>
-   <Column ss:Width="100"/>
-   <Row>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Preorder ID</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Book Title</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Author</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Description</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Price</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Sale Start Date</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Sale End Date</Data></Cell>
-    <Cell ss:StyleID="Header"><Data ss:Type="String">Status</Data></Cell>
-   </Row>
-""")
-            for (p in preorders) {
-                val pr = p.preorder
-                val storeName = p.bookstore?.name ?: "Unknown"
-                val startDateStr = if (pr.rangedSaleDateStart > 0) dateFormat.format(Date(pr.rangedSaleDateStart)) else ""
-                val endDateStr = if (pr.rangedSaleDateEnd > 0) dateFormat.format(Date(pr.rangedSaleDateEnd)) else ""
-                xmlBuilder.append("""   <Row>
-    <Cell><Data ss:Type="Number">${pr.id}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(storeName)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(pr.bookTitle)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(pr.bookAuthor)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(pr.description)}</Data></Cell>
-    <Cell><Data ss:Type="Number">${pr.price}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(startDateStr)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(endDateStr)}</Data></Cell>
-    <Cell><Data ss:Type="String">${escapeXml(pr.status)}</Data></Cell>
-   </Row>
-""")
-            }
-            xmlBuilder.append("  </Table>\n </Worksheet>\n")
-            xmlBuilder.append("</Workbook>")
-
-            shareExportFile(context, "bookish_library_export.xls", xmlBuilder.toString(), "application/vnd.ms-excel")
+            val xmlString = ExcelExporter.generateWorkbookXml(
+                user = user,
+                bookstores = bookstoresState.value,
+                bookstoreContacts = bookstoreContactsState.value,
+                forwardingServices = forwardingServicesState.value,
+                forwardingServiceContacts = forwardingServiceContactsState.value,
+                shippingCompanies = shippingCompaniesState.value,
+                shippingCompanyContacts = shippingCompanyContactsState.value,
+                userAddresses = userAddressesState.value,
+                subscriptions = rawSubscriptionsState.value,
+                subscriptionSkipMethods = allSubscriptionSkipMethodsState.value,
+                subscriptionSkips = allSubscriptionSkipsState.value,
+                scheduled = rawScheduledState.value,
+                preorders = rawPreordersState.value,
+                packages = allPackagesState.value
+            )
+            shareExportFile(context, "bookish_library_export.xls", xmlString, "application/vnd.ms-excel")
         }
-    }
-
-    private fun escapeXml(value: String): String {
-        return value
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("\"", "&quot;")
-            .replace("'", "&apos;")
     }
 
     private fun shareExportFile(context: Context, fileName: String, content: String, mimeType: String) {
@@ -1390,6 +1260,121 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             context.startActivity(chooser)
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    // Packages
+    fun getPackageFlow(originTable: String, originId: Int): Flow<PackageItem?> {
+        return repository.getPackageFlow(originTable, originId)
+    }
+
+    suspend fun getOrCreatePackage(originTable: String, originId: Int): PackageItem {
+        return repository.getOrCreatePackage(originTable, originId)
+    }
+
+    fun updatePackage(packageItem: PackageItem) {
+        viewModelScope.launch {
+            repository.updatePackage(packageItem)
+            syncStorageReminderForOrigin(packageItem.originTable, packageItem.originId)
+        }
+    }
+
+    // Forwarding Service Storage Reminders
+    private suspend fun syncStorageReminderForOrigin(originTable: String, originId: Int) {
+        val pkg = repository.getPackageDirect(originTable, originId) ?: return
+        var bookTitle = ""
+        var status = ""
+        var forwardingService: ForwardingService? = null
+
+        if (originTable == "preorders") {
+            val preorder = repository.getPreorderById(originId) ?: return
+            bookTitle = preorder.bookTitle
+            status = preorder.status
+            val address = preorder.shippingAddressId?.let { repository.getUserAddressById(it) }
+            forwardingService = address?.forwardingServiceId?.let { repository.getForwardingServiceById(it) }
+        } else if (originTable == "scheduled_subs") {
+            val scheduled = repository.getScheduledSubscriptionById(originId) ?: return
+            bookTitle = scheduled.bookTitle
+            status = scheduled.status
+            val subType = repository.getSubscriptionTypeById(scheduled.subscriptionTypeId)
+            val address = subType?.shippingAddressId?.let { repository.getUserAddressById(it) }
+            forwardingService = address?.forwardingServiceId?.let { repository.getForwardingServiceById(it) }
+        }
+
+        val curStatus = status.lowercase().trim()
+        val isStoredAtForwarder = forwardingService != null &&
+            curStatus !in listOf("shipped", "received") &&
+            pkg.forwarderShippedDate == null &&
+            (curStatus == "in suite" || pkg.forwarderReceivedDate != null)
+
+        val storageDays = forwardingService?.storageDays
+        if (isStoredAtForwarder && forwardingService != null && forwardingService.reminderEnabled && storageDays != null && storageDays > 0) {
+            val effectiveReceivedDate = pkg.forwarderReceivedDate ?: if (curStatus == "in suite") System.currentTimeMillis() else null
+            if (effectiveReceivedDate != null) {
+                val utcCal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                    timeInMillis = effectiveReceivedDate
+                    add(java.util.Calendar.DAY_OF_YEAR, storageDays)
+                }
+                val limitDate = utcCal.timeInMillis
+                com.example.receiver.ReminderScheduler.scheduleForwardingStorageReminder(
+                    getApplication(),
+                    pkg.id,
+                    forwardingService.name,
+                    bookTitle,
+                    limitDate,
+                    forwardingService.reminderDDayOffset,
+                    forwardingService.reminderHour,
+                    forwardingService.reminderMinute
+                )
+                return
+            }
+        }
+        com.example.receiver.ReminderScheduler.cancelForwardingStorageReminder(getApplication(), pkg.id)
+    }
+
+    private suspend fun syncStorageRemindersForService(service: ForwardingService) {
+        val userAddresses = userAddressesState.value
+        val serviceAddressIds = userAddresses.filter { it.forwardingServiceId == service.id }.map { it.id }.toSet()
+        if (serviceAddressIds.isEmpty()) return
+
+        val preorders = rawPreordersState.value
+        for (item in preorders) {
+            if (item.preorder.shippingAddressId in serviceAddressIds) {
+                syncStorageReminderForOrigin("preorders", item.preorder.id)
+            }
+        }
+
+        val scheduledList = rawScheduledState.value
+        for (item in scheduledList) {
+            if (item.subscriptionType?.shippingAddressId in serviceAddressIds) {
+                syncStorageReminderForOrigin("scheduled_subs", item.scheduled.id)
+            }
+        }
+    }
+
+    private suspend fun cancelStorageRemindersForService(serviceId: Int) {
+        val userAddresses = userAddressesState.value
+        val serviceAddressIds = userAddresses.filter { it.forwardingServiceId == serviceId }.map { it.id }.toSet()
+        if (serviceAddressIds.isEmpty()) return
+
+        val preorders = rawPreordersState.value
+        for (item in preorders) {
+            if (item.preorder.shippingAddressId in serviceAddressIds) {
+                val pkg = repository.getPackageDirect("preorders", item.preorder.id)
+                if (pkg != null) {
+                    com.example.receiver.ReminderScheduler.cancelForwardingStorageReminder(getApplication(), pkg.id)
+                }
+            }
+        }
+
+        val scheduledList = rawScheduledState.value
+        for (item in scheduledList) {
+            if (item.subscriptionType?.shippingAddressId in serviceAddressIds) {
+                val pkg = repository.getPackageDirect("scheduled_subs", item.scheduled.id)
+                if (pkg != null) {
+                    com.example.receiver.ReminderScheduler.cancelForwardingStorageReminder(getApplication(), pkg.id)
+                }
+            }
         }
     }
 }

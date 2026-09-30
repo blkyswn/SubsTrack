@@ -1,7 +1,12 @@
 package com.example.ui.screens
 
 import com.example.ui.components.InlineReminderSelector
+import com.example.ui.components.MultiSelectChipGroup
 import com.example.ui.components.OtherFormTabContent
+import com.example.ui.components.PackageDetailsDialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.res.painterResource
+import com.example.R
  
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -115,6 +120,8 @@ fun SubscriptionsScreen(
     val bookstores by viewModel.bookstoresState.collectAsState()
     val allSkipMethods by viewModel.allSubscriptionSkipMethodsState.collectAsState()
     val rawScheduled by viewModel.rawScheduledState.collectAsState()
+    val allPackages by viewModel.allPackagesState.collectAsState()
+    val userAddresses by viewModel.userAddressesState.collectAsState()
 
     // Dialog trigger states
     var showAddSubscriptionDialog by remember { mutableStateOf(false) }
@@ -130,6 +137,24 @@ fun SubscriptionsScreen(
     // Calendar toggles
     val isOverviewCalendar by viewModel.subOverviewIsCalendarView.collectAsState()
     val isSubCalendar by viewModel.subIsCalendarView.collectAsState()
+
+    // Filter states for active filter badge
+    val overviewFilterStoreIds by viewModel.subOverviewFilterBookstores.collectAsState()
+    val overviewFilterTypeIds by viewModel.subOverviewFilterSubTypeIds.collectAsState()
+    val overviewFilterTypes by viewModel.subOverviewFilterTypes.collectAsState()
+    val overviewFilterAuthor by viewModel.subOverviewFilterAuthor.collectAsState()
+    val overviewFilterBook by viewModel.subOverviewFilterBook.collectAsState()
+
+    val subFilterStoreIds by viewModel.subFilterBookstores.collectAsState()
+    val subFilterStatuses by viewModel.subFilterStatuses.collectAsState()
+    val subFilterFrequencies by viewModel.subFilterFrequencies.collectAsState()
+    val subFilterSubTypeIds by viewModel.subFilterSubTypeIds.collectAsState()
+
+    val isFilterActive = if (selectedTab == 0) {
+        overviewFilterStoreIds.isNotEmpty() || overviewFilterTypeIds.isNotEmpty() || overviewFilterTypes.isNotEmpty() || !overviewFilterAuthor.isNullOrBlank() || !overviewFilterBook.isNullOrBlank()
+    } else {
+        subFilterStoreIds.isNotEmpty() || subFilterStatuses.isNotEmpty() || subFilterFrequencies.isNotEmpty() || subFilterSubTypeIds.isNotEmpty()
+    }
 
     // Active timeframe for Overview counters (7 days, monthly, yearly)
     var currentOverviewTimeframe by remember { mutableStateOf(0) } // 0 = 7 days, 1 = monthly (30d), 2 = yearly (365d)
@@ -221,10 +246,19 @@ fun SubscriptionsScreen(
                             onClick = { showFilterDialog = true },
                             modifier = Modifier.testTag("sub_filter")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.FilterList,
-                                contentDescription = "Filter"
-                            )
+                            BadgedBox(
+                                badge = {
+                                    if (isFilterActive) {
+                                        Badge(containerColor = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FilterList,
+                                    contentDescription = "Filter",
+                                    tint = if (isFilterActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                                )
+                            }
                         }
 
                         // Action 4: Add Button
@@ -780,85 +814,183 @@ fun SubscriptionsScreen(
                                     }
                                 }
 
+                                val packagesByScheduledId = remember(allPackages) {
+                                    allPackages.filter { it.originTable == "scheduled_subs" }.associateBy { it.originId }
+                                }
+                                val addressesById = remember(userAddresses) {
+                                    userAddresses.associateBy { it.id }
+                                }
+
                                 val upcomingScheduled = scheduledList.filter {
-                                    it.scheduled.status.equals("Upcoming", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                    it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.isSkipped && it.scheduled.dueDate in startTime..endTime
                                 }
                                 val skippedScheduled = scheduledList.filter {
-                                    it.scheduled.status.equals("Skipped", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                    (it.scheduled.status.equals("Skipped", ignoreCase = true) || it.scheduled.isSkipped) && it.scheduled.dueDate in startTime..endTime
                                 }
                                 val renewedScheduled = scheduledList.filter {
-                                    (it.scheduled.status.equals("Renewed", ignoreCase = true) || it.scheduled.status.equals("Paid", ignoreCase = true)) && it.scheduled.dueDate in startTime..endTime
+                                    val status = it.scheduled.status.lowercase().trim()
+                                    if ((status == "renewed" || status == "paid") && !it.scheduled.isSkipped) {
+                                        val pkg = packagesByScheduledId[it.scheduled.id]
+                                        val date = pkg?.purchaseDate ?: it.scheduled.dueDate
+                                        date in startTime..endTime
+                                    } else false
+                                }
+                                val forwardedScheduled = scheduledList.filter {
+                                    val status = it.scheduled.status.lowercase().trim()
+                                    if (status == "forwarded" && !it.scheduled.isSkipped) {
+                                        val pkg = packagesByScheduledId[it.scheduled.id]
+                                        val date = pkg?.storeShippingDate
+                                        date != null && date in startTime..endTime
+                                    } else false
+                                }
+                                val inSuiteScheduled = scheduledList.filter {
+                                    val status = it.scheduled.status.lowercase().trim()
+                                    if (status == "in suite" && !it.scheduled.isSkipped) {
+                                        val pkg = packagesByScheduledId[it.scheduled.id]
+                                        val date = pkg?.forwarderReceivedDate
+                                        date != null && date in startTime..endTime
+                                    } else false
                                 }
                                 val shippedScheduled = scheduledList.filter {
-                                    it.scheduled.status.equals("Shipped", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                    val status = it.scheduled.status.lowercase().trim()
+                                    if (status == "shipped" && !it.scheduled.isSkipped) {
+                                        val pkg = packagesByScheduledId[it.scheduled.id]
+                                        val hasForwarding = it.subscriptionType?.shippingAddressId?.let { addrId ->
+                                            addressesById[addrId]?.forwardingServiceId != null
+                                        } ?: false
+                                        val date = if (hasForwarding) pkg?.forwarderShippedDate else pkg?.storeShippingDate
+                                        date != null && date in startTime..endTime
+                                    } else false
                                 }
                                 val receivedScheduled = scheduledList.filter {
-                                    it.scheduled.status.equals("Received", ignoreCase = true) && it.scheduled.dueDate in startTime..endTime
+                                    val status = it.scheduled.status.lowercase().trim()
+                                    if (status == "received" && !it.scheduled.isSkipped) {
+                                        val pkg = packagesByScheduledId[it.scheduled.id]
+                                        val date = pkg?.receivedDate
+                                        date != null && date in startTime..endTime
+                                    } else false
                                 }
 
                                 val dueCost = upcomingScheduled.sumOf { it.subscriptionType?.price ?: 0.0 }
-                                val totalSpentScheduled = scheduledList.filter {
-                                    it.scheduled.dueDate in startTime..endTime &&
-                                    !it.scheduled.status.equals("Upcoming", ignoreCase = true) &&
-                                    !it.scheduled.status.equals("Skipped", ignoreCase = true)
+                                val totalSpentScheduled = scheduledList.filter { item ->
+                                    val status = item.scheduled.status.lowercase().trim()
+                                    if (status == "upcoming" || status == "skipped" || item.scheduled.isSkipped) {
+                                        false
+                                    } else {
+                                        val pkg = packagesByScheduledId[item.scheduled.id]
+                                        val date = when (status) {
+                                            "renewed", "paid" -> pkg?.purchaseDate ?: item.scheduled.dueDate
+                                            "forwarded" -> pkg?.storeShippingDate
+                                            "in suite" -> pkg?.forwarderReceivedDate
+                                            "shipped" -> {
+                                                val hasForwarding = item.subscriptionType?.shippingAddressId?.let { addrId ->
+                                                    addressesById[addrId]?.forwardingServiceId != null
+                                                } ?: false
+                                                if (hasForwarding) pkg?.forwarderShippedDate else pkg?.storeShippingDate
+                                            }
+                                            "received" -> pkg?.receivedDate
+                                            else -> item.scheduled.dueDate
+                                         }
+                                        date != null && date in startTime..endTime
+                                    }
                                 }
                                 val totalSpent = totalSpentScheduled.sumOf { it.subscriptionType?.price ?: 0.0 }
 
                                 val isPastTimeframe = pageLabel in listOf("Last Week", "Last Month", "Last Year")
 
                                 Column(modifier = Modifier.fillMaxWidth()) {
+                                    // Top Row: Upcoming, Skipped, Renewed
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceAround,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Upcoming", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Upcoming", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
-                                                "${upcomingScheduled.size}",
+                                                 "${upcomingScheduled.size}",
+                                                 fontSize = 18.sp,
+                                                 fontWeight = FontWeight.Bold,
+                                                 color = Color(0xFF64748B)
+                                             )
+                                         }
+                                         Divider(
+                                             modifier = Modifier
+                                                 .height(28.dp)
+                                                 .width(1.dp),
+                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                         )
+                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                             Text("Skipped", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                             Text(
+                                                 "${skippedScheduled.size}",
+                                                 fontSize = 18.sp,
+                                                 fontWeight = FontWeight.Bold,
+                                                 color = Color(0xFFEF4444)
+                                             )
+                                         }
+                                         Divider(
+                                             modifier = Modifier
+                                                 .height(28.dp)
+                                                 .width(1.dp),
+                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+                                         )
+                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                             Text("Renewed", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                             Text(
+                                                 "${renewedScheduled.size}",
+                                                 fontSize = 18.sp,
+                                                 fontWeight = FontWeight.Bold,
+                                                 color = Color(0xFF2563EB)
+                                             )
+                                         }
+                                    }
+
+                                    Divider(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp),
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                    )
+
+                                    // Bottom Row: Forwarded, In Suite, Shipped, Received
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceAround,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Forwarded", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "${forwardedScheduled.size}",
                                                 fontSize = 18.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF64748B)
+                                                color = Color(0xFF0EA5E9)
                                             )
                                         }
                                         Divider(
                                             modifier = Modifier
-                                                .height(32.dp)
+                                                .height(28.dp)
                                                 .width(1.dp),
                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
                                         )
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Skipped", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("In Suite", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
-                                                "${skippedScheduled.size}",
+                                                "${inSuiteScheduled.size}",
                                                 fontSize = 18.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color(0xFFEF4444)
+                                                color = Color(0xFFD97706)
                                             )
                                         }
                                         Divider(
                                             modifier = Modifier
-                                                .height(32.dp)
+                                                .height(28.dp)
                                                 .width(1.dp),
                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
                                         )
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Renewed", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text(
-                                                "${renewedScheduled.size}",
-                                                fontSize = 18.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF2563EB)
-                                            )
-                                        }
-                                        Divider(
-                                            modifier = Modifier
-                                                .height(32.dp)
-                                                .width(1.dp),
-                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
-                                        )
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Shipped", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Shipped", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
                                                 "${shippedScheduled.size}",
                                                 fontSize = 18.sp,
@@ -868,12 +1000,12 @@ fun SubscriptionsScreen(
                                         }
                                         Divider(
                                             modifier = Modifier
-                                                .height(32.dp)
+                                                .height(28.dp)
                                                 .width(1.dp),
                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
                                         )
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Received", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Received", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text(
                                                 "${receivedScheduled.size}",
                                                 fontSize = 18.sp,
@@ -990,6 +1122,8 @@ fun SubscriptionsScreen(
                                         "skipped" -> Color(0xFFEF4444)
                                         "upcoming" -> Color(0xFF64748B)
                                         "renewed", "paid" -> Color(0xFF2563EB)
+                                        "forwarded" -> Color(0xFF0EA5E9)
+                                        "in suite" -> Color(0xFFD97706)
                                         "shipped" -> Color(0xFF8B5CF6)
                                         "received" -> Color(0xFF10B981)
                                         else -> Color(0xFF2563EB)
@@ -1465,9 +1599,37 @@ fun ScheduledItemRow(
         )
     }
 
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val forwardingServices by viewModel.forwardingServicesState.collectAsState()
+    val allPackages by viewModel.allPackagesState.collectAsState()
+
+    val subAddress = remember(item.subscriptionType?.shippingAddressId, userAddresses) {
+        userAddresses.find { it.id == item.subscriptionType?.shippingAddressId }
+    }
+    val forwardingService = remember(subAddress, forwardingServices) {
+        subAddress?.forwardingServiceId?.let { fsId -> forwardingServices.find { it.id == fsId } }
+    }
+    val packageItem = remember(allPackages, item.scheduled.id) {
+        allPackages.find { it.originTable == "scheduled_subs" && it.originId == item.scheduled.id }
+    }
+
+    val curSubStatus = item.scheduled.status.lowercase().trim()
+    val isStoredAtForwarder = forwardingService != null &&
+        curSubStatus !in listOf("shipped", "received") &&
+        packageItem?.forwarderShippedDate == null &&
+        (curSubStatus == "in suite" || packageItem?.forwarderReceivedDate != null)
+
+    val effectiveReceivedDate = packageItem?.forwarderReceivedDate ?: if (curSubStatus == "in suite") System.currentTimeMillis() else null
+
+    val hasForwardingAddress = remember(item.subscriptionType?.shippingAddressId, userAddresses) {
+        userAddresses.find { it.id == item.subscriptionType?.shippingAddressId }?.forwardingServiceId != null
+    }
+
     val accentColor = when (item.scheduled.status.lowercase()) {
         "upcoming" -> Color(0xFF64748B) // Grey
         "renewed", "paid" -> Color(0xFF2563EB) // Blue
+        "forwarded" -> Color(0xFF0EA5E9) // Sky Blue
+        "in suite" -> Color(0xFFD97706) // Amber
         "skipped" -> Color(0xFFEF4444) // Red
         "shipped" -> Color(0xFF8B5CF6) // Purple
         "received" -> Color(0xFF10B981) // Green
@@ -1478,11 +1640,13 @@ fun ScheduledItemRow(
     val isSkippedStatus = item.scheduled.status.equals("Skipped", ignoreCase = true)
     val isDueDateToCome = item.scheduled.dueDate >= (System.currentTimeMillis() - 86400000L)
     val isRenewed = item.scheduled.status.equals("Renewed", ignoreCase = true) || item.scheduled.status.equals("Paid", ignoreCase = true)
+    val isForwarded = item.scheduled.status.equals("Forwarded", ignoreCase = true)
+    val isInSuite = item.scheduled.status.equals("In Suite", ignoreCase = true)
     val isShipped = item.scheduled.status.equals("Shipped", ignoreCase = true)
     val isReceived = item.scheduled.status.equals("Received", ignoreCase = true)
 
-    val canSwipeRight = isSkippedStatus || isUpcoming || isRenewed || isShipped
-    val canSwipeLeft = isReceived || isShipped || isRenewed || isUpcoming || (isSkippedStatus && isDueDateToCome)
+    val canSwipeRight = isSkippedStatus || isUpcoming || isRenewed || isForwarded || isInSuite || isShipped
+    val canSwipeLeft = isReceived || isShipped || isInSuite || isForwarded || isRenewed || isUpcoming || (isSkippedStatus && isDueDateToCome)
     val density = LocalDensity.current
     val thresholdPx = remember(density) { with(density) { 48.dp.toPx() } }
 
@@ -1496,7 +1660,9 @@ fun ScheduledItemRow(
                             val newStatus = when {
                                 isSkippedStatus -> "Upcoming"
                                 isUpcoming -> "Renewed"
-                                isRenewed -> "Shipped"
+                                isRenewed -> if (hasForwardingAddress) "Forwarded" else "Shipped"
+                                isForwarded -> "In Suite"
+                                isInSuite -> "Shipped"
                                 isShipped -> "Received"
                                 else -> item.scheduled.status
                             }
@@ -1529,6 +1695,25 @@ fun ScheduledItemRow(
                                     }
                                 }
                                 isShipped -> {
+                                    val prevStatus = if (hasForwardingAddress) "In Suite" else "Renewed"
+                                    val newScheduled = item.scheduled.copy(status = prevStatus)
+                                    val msg = "$displayTitle: Status changed to $prevStatus"
+                                    if (onStateChanged != null) {
+                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    } else {
+                                        viewModel.updateScheduledSubscription(newScheduled)
+                                    }
+                                }
+                                isInSuite -> {
+                                    val newScheduled = item.scheduled.copy(status = "Forwarded")
+                                    val msg = "$displayTitle: Status changed to Forwarded"
+                                    if (onStateChanged != null) {
+                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    } else {
+                                        viewModel.updateScheduledSubscription(newScheduled)
+                                    }
+                                }
+                                isForwarded -> {
                                     val newScheduled = item.scheduled.copy(status = "Renewed")
                                     val msg = "$displayTitle: Status changed to Renewed"
                                     if (onStateChanged != null) {
@@ -1596,7 +1781,9 @@ fun ScheduledItemRow(
                         when {
                             isSkippedStatus -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             isUpcoming -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
-                            isRenewed -> Color(0xFF8B5CF6).copy(alpha = 0.15f)
+                            isRenewed -> if (hasForwardingAddress) Color(0xFF0EA5E9).copy(alpha = 0.15f) else Color(0xFF8B5CF6).copy(alpha = 0.15f)
+                            isForwarded -> Color(0xFFD97706).copy(alpha = 0.15f)
+                            isInSuite -> Color(0xFF8B5CF6).copy(alpha = 0.15f)
                             isShipped -> Color(0xFF10B981).copy(alpha = 0.15f)
                             else -> Color.Transparent
                         }
@@ -1604,7 +1791,9 @@ fun ScheduledItemRow(
                     isEndToStart -> {
                         when {
                             isReceived -> Color(0xFF8B5CF6).copy(alpha = 0.15f)
-                            isShipped -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
+                            isShipped -> if (hasForwardingAddress) Color(0xFFD97706).copy(alpha = 0.15f) else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
+                            isInSuite -> Color(0xFF0EA5E9).copy(alpha = 0.15f)
+                            isForwarded -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)
                             isRenewed -> Color(0xFF64748B).copy(alpha = 0.15f)
                             isUpcoming -> Color(0xFFEF4444).copy(alpha = 0.15f)
                             isSkippedStatus -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
@@ -1623,7 +1812,9 @@ fun ScheduledItemRow(
                         when {
                             isSkippedStatus -> Icons.AutoMirrored.Filled.Undo
                             isUpcoming -> Icons.Default.Autorenew
-                            isRenewed -> Icons.Default.LocalShipping
+                            isRenewed -> if (hasForwardingAddress) Icons.Default.AltRoute else Icons.Default.LocalShipping
+                            isForwarded -> Icons.Default.Warehouse
+                            isInSuite -> Icons.Default.LocalShipping
                             isShipped -> Icons.Default.CheckCircle
                             else -> null
                         }
@@ -1631,7 +1822,9 @@ fun ScheduledItemRow(
                     isEndToStart -> {
                         when {
                             isReceived -> Icons.Default.LocalShipping
-                            isShipped -> Icons.Default.Autorenew
+                            isShipped -> if (hasForwardingAddress) Icons.Default.Warehouse else Icons.Default.Autorenew
+                            isInSuite -> Icons.Default.AltRoute
+                            isForwarded -> Icons.Default.Autorenew
                             isRenewed -> Icons.Default.Schedule
                             isUpcoming -> Icons.Default.Block
                             isSkippedStatus -> Icons.AutoMirrored.Filled.Undo
@@ -1645,7 +1838,9 @@ fun ScheduledItemRow(
                         when {
                             isSkippedStatus -> MaterialTheme.colorScheme.primary
                             isUpcoming -> MaterialTheme.colorScheme.tertiary
-                            isRenewed -> Color(0xFF8B5CF6)
+                            isRenewed -> if (hasForwardingAddress) Color(0xFF0EA5E9) else Color(0xFF8B5CF6)
+                            isForwarded -> Color(0xFFD97706)
+                            isInSuite -> Color(0xFF8B5CF6)
                             isShipped -> Color(0xFF10B981)
                             else -> Color.Transparent
                         }
@@ -1653,7 +1848,9 @@ fun ScheduledItemRow(
                     isEndToStart -> {
                         when {
                             isReceived -> Color(0xFF8B5CF6)
-                            isShipped -> MaterialTheme.colorScheme.tertiary
+                            isShipped -> if (hasForwardingAddress) Color(0xFFD97706) else MaterialTheme.colorScheme.tertiary
+                            isInSuite -> Color(0xFF0EA5E9)
+                            isForwarded -> MaterialTheme.colorScheme.tertiary
                             isRenewed -> Color(0xFF64748B)
                             isUpcoming -> Color(0xFFEF4444)
                             isSkippedStatus -> MaterialTheme.colorScheme.primary
@@ -1693,6 +1890,8 @@ fun ScheduledItemRow(
                     containerColor = when (item.scheduled.status.lowercase()) {
                         "upcoming" -> Color(0xFF64748B).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "renewed", "paid" -> Color(0xFF2563EB).copy(alpha = if (isDark) 0.12f else 0.06f)
+                        "forwarded" -> Color(0xFF0EA5E9).copy(alpha = if (isDark) 0.12f else 0.06f)
+                        "in suite" -> Color(0xFFD97706).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "skipped" -> Color(0xFFEF4444).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "shipped" -> Color(0xFF8B5CF6).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "received" -> Color(0xFF10B981).copy(alpha = if (isDark) 0.12f else 0.06f)
@@ -1764,6 +1963,14 @@ fun ScheduledItemRow(
                                 )
                             }
                         }
+
+                        if (isStoredAtForwarder) {
+                            com.example.ui.components.StorageCountdownPill(
+                                forwarderReceivedDate = effectiveReceivedDate,
+                                storageDays = forwardingService?.storageDays,
+                                modifier = Modifier.align(Alignment.BottomCenter)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(10.dp))
@@ -1822,6 +2029,8 @@ fun ScheduledItemRow(
                         val statusContainerColor = when (item.scheduled.status.lowercase()) {
                             "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
                             "renewed", "paid" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+                            "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
+                            "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
                             "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
                             "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
                             "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
@@ -1830,6 +2039,8 @@ fun ScheduledItemRow(
                         val statusOnContainerColor = when (item.scheduled.status.lowercase()) {
                             "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
                             "renewed", "paid" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+                            "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+                            "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
                             "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
                             "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
                             "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
@@ -1838,6 +2049,8 @@ fun ScheduledItemRow(
                         val statusIcon = when (item.scheduled.status.lowercase()) {
                             "upcoming" -> Icons.Default.Schedule
                             "renewed", "paid" -> Icons.Default.Payments
+                            "forwarded" -> Icons.Default.AltRoute
+                            "in suite" -> Icons.Default.Warehouse
                             "shipped" -> Icons.Default.LocalShipping
                             "received" -> Icons.Default.CheckCircle
                             "skipped" -> Icons.Default.Block
@@ -3286,6 +3499,7 @@ fun AddSubscriptionTypeDialog(
     var selectedShippingAddressId by remember { mutableStateOf<Int?>(null) }
     var selectedCurrency by remember { mutableStateOf(userState?.currency ?: "$") }
     var basePriceStr by remember { mutableStateOf("") }
+    var discountedAmountStr by remember { mutableStateOf("") }
     var shippingPriceStr by remember { mutableStateOf("") }
     var taxPriceStr by remember { mutableStateOf("") }
     var forwardShippingPriceStr by remember { mutableStateOf("") }
@@ -3730,6 +3944,8 @@ fun AddSubscriptionTypeDialog(
                                         priceStr = it
                                     }
                                 },
+                                discountedAmountStr = discountedAmountStr,
+                                onDiscountedAmountChange = { discountedAmountStr = it },
                                 shippingPriceStr = shippingPriceStr,
                                 onShippingPriceChange = { shippingPriceStr = it },
                                 taxPriceStr = taxPriceStr,
@@ -3753,29 +3969,30 @@ fun AddSubscriptionTypeDialog(
                     val hasForwarding = selectedAddr?.forwardingServiceId != null
 
                     if (title.isNotEmpty() && selectedBookstoreId > 0) {
-                        viewModel.addSubscriptionType(
-                            bookstoreId = selectedBookstoreId,
-                            title = title,
-                            status = status,
-                            price = parsedPrice,
-                            dueDate = dueDate,
-                            startDate = startDate,
-                            finishDate = finishDate,
-                            notificationAlertDays = null,
-                            frequency = frequency,
-                            reminderEnabled = reminderEnabled,
-                            reminderDDayOffset = reminderDDayOffset,
-                            reminderHour = reminderHour,
-                            reminderMinute = reminderMinute,
-                            skipType = skipType,
-                            numberOfSkips = numberOfSkipsStr.toIntOrNull(),
-                            numberOfMonths = numberOfMonthsStr.toIntOrNull(),
-                            picturePath = imageUrl.ifEmpty { null },
-                            skipMethods = if (skipType != "None") skipMethodsList else emptyList(),
-                            shippingAddressId = selectedShippingAddressId,
-                            currency = selectedCurrency,
-                            basePrice = parsedBase,
-                            shippingPrice = shippingPriceStr.toDoubleOrNull(),
+                         viewModel.addSubscriptionType(
+                             bookstoreId = selectedBookstoreId,
+                             title = title,
+                             status = status,
+                             price = parsedPrice,
+                             dueDate = dueDate,
+                             startDate = startDate,
+                             finishDate = finishDate,
+                             notificationAlertDays = null,
+                             frequency = frequency,
+                             reminderEnabled = reminderEnabled,
+                             reminderDDayOffset = reminderDDayOffset,
+                             reminderHour = reminderHour,
+                             reminderMinute = reminderMinute,
+                             skipType = skipType,
+                             numberOfSkips = numberOfSkipsStr.toIntOrNull(),
+                             numberOfMonths = numberOfMonthsStr.toIntOrNull(),
+                             picturePath = imageUrl.ifEmpty { null },
+                             skipMethods = if (skipType != "None") skipMethodsList else emptyList(),
+                             shippingAddressId = selectedShippingAddressId,
+                             currency = selectedCurrency,
+                             basePrice = parsedBase,
+                             discountedAmount = discountedAmountStr.toDoubleOrNull(),
+                             shippingPrice = shippingPriceStr.toDoubleOrNull(),
                             taxPrice = taxPriceStr.toDoubleOrNull(),
                             forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
                             forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null
@@ -3819,6 +4036,7 @@ fun EditSubscriptionTypeDialog(
     var selectedShippingAddressId by remember { mutableStateOf<Int?>(sub.shippingAddressId) }
     var selectedCurrency by remember { mutableStateOf(sub.currency ?: (userState?.currency ?: "$")) }
     var basePriceStr by remember { mutableStateOf(sub.basePrice?.toString() ?: "") }
+    var discountedAmountStr by remember { mutableStateOf(sub.discountedAmount?.toString() ?: "") }
     var shippingPriceStr by remember { mutableStateOf(sub.shippingPrice?.toString() ?: "") }
     var taxPriceStr by remember { mutableStateOf(sub.taxPrice?.toString() ?: "") }
     var forwardShippingPriceStr by remember { mutableStateOf(sub.forwardShippingPrice?.toString() ?: "") }
@@ -4281,6 +4499,8 @@ fun EditSubscriptionTypeDialog(
                                         priceStr = it
                                     }
                                 },
+                                discountedAmountStr = discountedAmountStr,
+                                onDiscountedAmountChange = { discountedAmountStr = it },
                                 shippingPriceStr = shippingPriceStr,
                                 onShippingPriceChange = { shippingPriceStr = it },
                                 taxPriceStr = taxPriceStr,
@@ -4337,6 +4557,7 @@ fun EditSubscriptionTypeDialog(
                                     shippingAddressId = selectedShippingAddressId,
                                     currency = selectedCurrency,
                                     basePrice = parsedBase,
+                                    discountedAmount = discountedAmountStr.toDoubleOrNull(),
                                     shippingPrice = shippingPriceStr.toDoubleOrNull(),
                                     taxPrice = taxPriceStr.toDoubleOrNull(),
                                     forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
@@ -4379,6 +4600,23 @@ fun AddScheduledSubscriptionDialog(
     var bookAuthor by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Upcoming") }
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val currentSub = subscriptionsList.find { it.subscription.id == selectedSubId } ?: subscriptionsList.firstOrNull()
+    val isForwardingAddress = remember(currentSub?.subscription?.shippingAddressId, userAddresses) {
+        userAddresses.find { it.id == currentSub?.subscription?.shippingAddressId }?.forwardingServiceId != null
+    }
+    val availableStatuses = remember(isForwardingAddress) {
+        if (isForwardingAddress) {
+            listOf("Upcoming", "Skipped", "Renewed", "Forwarded", "In Suite", "Shipped", "Received")
+        } else {
+            listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received")
+        }
+    }
+    LaunchedEffect(isForwardingAddress) {
+        if (!isForwardingAddress && status in listOf("Forwarded", "In Suite")) {
+            status = "Renewed"
+        }
+    }
     var imageUrl by remember { mutableStateOf("") }
     var rating by remember { mutableStateOf(0.0) }
 
@@ -4475,7 +4713,7 @@ fun AddScheduledSubscriptionDialog(
                             Text(status)
                         }
                         DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                            listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received").forEach { st ->
+                            availableStatuses.forEach { st ->
                                 DropdownMenuItem(
                                     text = { Text(st) },
                                     onClick = {
@@ -4561,20 +4799,58 @@ fun EditScheduledSubscriptionDialog(
     var bookAuthor by remember { mutableStateOf(sc.bookAuthor) }
     var description by remember { mutableStateOf(sc.description) }
     var status by remember { mutableStateOf(sc.status) }
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val isForwardingAddress = remember(subType?.shippingAddressId, userAddresses) {
+        userAddresses.find { it.id == subType?.shippingAddressId }?.forwardingServiceId != null
+    }
+    val availableStatuses = remember(isForwardingAddress) {
+        if (isForwardingAddress) {
+            listOf("Upcoming", "Skipped", "Renewed", "Forwarded", "In Suite", "Shipped", "Received")
+        } else {
+            listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received")
+        }
+    }
+    LaunchedEffect(isForwardingAddress) {
+        if (!isForwardingAddress && status in listOf("Forwarded", "In Suite")) {
+            status = "Renewed"
+        }
+    }
     var imageUrl by remember { mutableStateOf(sc.picturePath ?: "") }
     var rating by remember { mutableStateOf(sc.rating) }
 
     var dueDate by remember { mutableStateOf(sc.dueDate) }
     var showDueDatePicker by remember { mutableStateOf(false) }
-
-
+    var showPackageDialog by remember { mutableStateOf(false) }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Edit Scheduled Subscription", fontWeight = FontWeight.Bold) },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Edit Scheduled Subscription",
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { showPackageDialog = true },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_package_2),
+                        contentDescription = "Package Details",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        },
         text = {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
@@ -4622,7 +4898,7 @@ fun EditScheduledSubscriptionDialog(
                                     Text(status)
                                 }
                                 DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                                    listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received").forEach { st ->
+                                    availableStatuses.forEach { st ->
                                         DropdownMenuItem(
                                             text = { Text(st) },
                                             onClick = {
@@ -4750,8 +5026,19 @@ fun EditScheduledSubscriptionDialog(
             onDismiss = { showDueDatePicker = false }
         )
     }
+
+    if (showPackageDialog) {
+        PackageDetailsDialog(
+            originTable = "scheduled_subs",
+            originId = sc.id,
+            viewModel = viewModel,
+            hasForwardingAddress = isForwardingAddress,
+            onDismiss = { showPackageDialog = false }
+        )
+    }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SubscriptionFilterDialog(
     viewModel: BookishViewModel,
@@ -4760,285 +5047,211 @@ fun SubscriptionFilterDialog(
     selectedTab: Int,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Filter Subscriptions", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                if (selectedTab == 0) {
-                    // FILTER 1: Overview Tab Filters
-                    Text("Filter Scheduled Subscriptions", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    if (selectedTab == 0) {
+        // FILTER 1: Overview / Renewals Tab Filters
+        val initialStoreIds by viewModel.subOverviewFilterBookstores.collectAsState()
+        val initialTypeIds by viewModel.subOverviewFilterSubTypeIds.collectAsState()
+        val initialStatuses by viewModel.subOverviewFilterTypes.collectAsState()
+        val initialAuthor by viewModel.subOverviewFilterAuthor.collectAsState()
+        val initialBook by viewModel.subOverviewFilterBook.collectAsState()
 
-                    // Bookstore Filter
-                    val currentStoreId by viewModel.subOverviewFilterBookstore.collectAsState()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Bookstore: ", modifier = Modifier.weight(1f))
-                        var expandedStore by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { expandedStore = true }) {
-                                Text(bookstores.find { it.id == currentStoreId }?.name ?: "All")
-                            }
-                            DropdownMenu(expanded = expandedStore, onDismissRequest = { expandedStore = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All") },
-                                    onClick = {
-                                        viewModel.subOverviewFilterBookstore.value = null
-                                        expandedStore = false
-                                    }
-                                )
-                                bookstores.forEach { store ->
-                                    DropdownMenuItem(
-                                        text = { Text(store.name) },
-                                        onClick = {
-                                            viewModel.subOverviewFilterBookstore.value = store.id
-                                            expandedStore = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
+        val userAddresses by viewModel.userAddressesState.collectAsState()
+        val hasAnyForwardingAddress = remember(userAddresses) {
+            userAddresses.any { it.forwardingServiceId != null }
+        }
+        val statusFilterItems = remember(hasAnyForwardingAddress) {
+            if (hasAnyForwardingAddress) {
+                listOf("Upcoming", "Skipped", "Renewed", "Forwarded", "In Suite", "Shipped", "Received")
+            } else {
+                listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received")
+            }
+        }
+
+        var selectedStoreIds by remember(initialStoreIds) { mutableStateOf(initialStoreIds) }
+        var selectedTypeIds by remember(initialTypeIds) { mutableStateOf(initialTypeIds) }
+        var selectedStatuses by remember(initialStatuses) { mutableStateOf(initialStatuses) }
+        var authorText by remember(initialAuthor) { mutableStateOf(initialAuthor ?: "") }
+        var bookText by remember(initialBook) { mutableStateOf(initialBook ?: "") }
+
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            title = { Text("Filter Renewals", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .imePadding()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    MultiSelectChipGroup(
+                        title = "Status",
+                        items = statusFilterItems,
+                        selectedItems = selectedStatuses,
+                        onSelectionChanged = { selectedStatuses = it },
+                        labelProvider = { it }
+                    )
+
+                    if (bookstores.isNotEmpty()) {
+                        MultiSelectChipGroup(
+                            title = "Bookstore",
+                            items = bookstores.map { it.id },
+                            selectedItems = selectedStoreIds,
+                            onSelectionChanged = { selectedStoreIds = it },
+                            labelProvider = { id -> bookstores.find { it.id == id }?.name ?: "" }
+                        )
                     }
 
-                    // Subscription Type Filter
-                    val currentOverviewSubTypeId by viewModel.subOverviewFilterSubTypeId.collectAsState()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Subscription Type: ", modifier = Modifier.weight(1f))
-                        var expandedSubType by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { expandedSubType = true }) {
-                                Text(subscriptionTypes.find { it.id == currentOverviewSubTypeId }?.title ?: "All")
-                            }
-                            DropdownMenu(expanded = expandedSubType, onDismissRequest = { expandedSubType = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All") },
-                                    onClick = {
-                                        viewModel.subOverviewFilterSubTypeId.value = null
-                                        expandedSubType = false
-                                    }
-                                )
-                                subscriptionTypes.forEach { subType ->
-                                    DropdownMenuItem(
-                                        text = { Text(subType.title) },
-                                        onClick = {
-                                            viewModel.subOverviewFilterSubTypeId.value = subType.id
-                                            expandedSubType = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
+                    if (subscriptionTypes.isNotEmpty()) {
+                        MultiSelectChipGroup(
+                            title = "Subscription Type",
+                            items = subscriptionTypes.map { it.id },
+                            selectedItems = selectedTypeIds,
+                            onSelectionChanged = { selectedTypeIds = it },
+                            labelProvider = { id -> subscriptionTypes.find { it.id == id }?.title ?: "" }
+                        )
                     }
-
-                    // Status Filter
-                    val currentType by viewModel.subOverviewFilterType.collectAsState()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Status: ", modifier = Modifier.weight(1f))
-                        var expandedType by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { expandedType = true }) {
-                                Text(currentType ?: "All")
-                            }
-                            DropdownMenu(expanded = expandedType, onDismissRequest = { expandedType = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All") },
-                                    onClick = {
-                                        viewModel.subOverviewFilterType.value = null
-                                        expandedType = false
-                                    }
-                                )
-                                listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received").forEach { ty ->
-                                    DropdownMenuItem(
-                                        text = { Text(ty) },
-                                        onClick = {
-                                            viewModel.subOverviewFilterType.value = ty
-                                            expandedType = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Author / Book Freeform Filters
-                    var authorText by remember { mutableStateOf(viewModel.subOverviewFilterAuthor.value ?: "") }
-                    var bookText by remember { mutableStateOf(viewModel.subOverviewFilterBook.value ?: "") }
 
                     OutlinedTextField(
                         value = authorText,
-                        onValueChange = {
-                            authorText = it
-                            viewModel.subOverviewFilterAuthor.value = if (it.isBlank()) null else it
-                        },
+                        onValueChange = { authorText = it },
                         label = { Text("Filter by Author Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
                     OutlinedTextField(
                         value = bookText,
-                        onValueChange = {
-                            bookText = it
-                            viewModel.subOverviewFilterBook.value = if (it.isBlank()) null else it
-                        },
+                        onValueChange = { bookText = it },
                         label = { Text("Filter by Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         modifier = Modifier.fillMaxWidth()
                     )
-
-                } else {
-                    // FILTER 2: Subscriptions Main Tab Filters
-                    Text("Filter Subscriptions", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-
-                    // Bookstore Filter
-                    val currentStoreId by viewModel.subFilterBookstore.collectAsState()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Bookstore: ", modifier = Modifier.weight(1f))
-                        var expandedStore by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { expandedStore = true }) {
-                                Text(bookstores.find { it.id == currentStoreId }?.name ?: "All")
-                            }
-                            DropdownMenu(expanded = expandedStore, onDismissRequest = { expandedStore = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All") },
-                                    onClick = {
-                                        viewModel.subFilterBookstore.value = null
-                                        expandedStore = false
-                                    }
-                                )
-                                bookstores.forEach { store ->
-                                    DropdownMenuItem(
-                                        text = { Text(store.name) },
-                                        onClick = {
-                                            viewModel.subFilterBookstore.value = store.id
-                                            expandedStore = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Status Filter
-                    val currentStatus by viewModel.subFilterStatus.collectAsState()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Status: ", modifier = Modifier.weight(1f))
-                        var expandedStatus by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { expandedStatus = true }) {
-                                Text(currentStatus ?: "All")
-                            }
-                            DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All") },
-                                    onClick = {
-                                        viewModel.subFilterStatus.value = null
-                                        expandedStatus = false
-                                    }
-                                )
-                                listOf("Waitlist", "Active", "Paused", "Canceled", "Wishlist").forEach { st ->
-                                    DropdownMenuItem(
-                                        text = { Text(st) },
-                                        onClick = {
-                                            viewModel.subFilterStatus.value = st
-                                            expandedStatus = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Subscription Type Filter
-                    val currentMainSubTypeId by viewModel.subFilterSubTypeId.collectAsState()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Subscription Type: ", modifier = Modifier.weight(1f))
-                        var expandedSubType by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { expandedSubType = true }) {
-                                Text(subscriptionTypes.find { it.id == currentMainSubTypeId }?.title ?: "All")
-                            }
-                            DropdownMenu(expanded = expandedSubType, onDismissRequest = { expandedSubType = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All") },
-                                    onClick = {
-                                        viewModel.subFilterSubTypeId.value = null
-                                        expandedSubType = false
-                                    }
-                                )
-                                subscriptionTypes.forEach { subType ->
-                                    DropdownMenuItem(
-                                        text = { Text(subType.title) },
-                                        onClick = {
-                                            viewModel.subFilterSubTypeId.value = subType.id
-                                            expandedSubType = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Frequency Filter
-                    val currentFreq by viewModel.subFilterFrequency.collectAsState()
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Frequency: ", modifier = Modifier.weight(1f))
-                        var expandedFreq by remember { mutableStateOf(false) }
-                        Box {
-                            OutlinedButton(onClick = { expandedFreq = true }) {
-                                Text(currentFreq ?: "All")
-                            }
-                            DropdownMenu(expanded = expandedFreq, onDismissRequest = { expandedFreq = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("All") },
-                                    onClick = {
-                                        viewModel.subFilterFrequency.value = null
-                                        expandedFreq = false
-                                    }
-                                )
-                                listOf("Weekly", "Monthly", "Bi-Monthly", "Quarterly", "Yearly").forEach { f ->
-                                    DropdownMenuItem(
-                                        text = { Text(f) },
-                                        onClick = {
-                                            viewModel.subFilterFrequency.value = f
-                                            expandedFreq = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onDismiss) {
-                Text("Apply")
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = {
-                    if (selectedTab == 0) {
-                        viewModel.subOverviewFilterBookstore.value = null
-                        viewModel.subOverviewFilterType.value = null
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.subOverviewFilterBookstores.value = selectedStoreIds
+                        viewModel.subOverviewFilterSubTypeIds.value = selectedTypeIds
+                        viewModel.subOverviewFilterTypes.value = selectedStatuses
+                        viewModel.subOverviewFilterAuthor.value = if (authorText.isBlank()) null else authorText
+                        viewModel.subOverviewFilterBook.value = if (bookText.isBlank()) null else bookText
+                        onDismiss()
+                    }
+                ) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.subOverviewFilterBookstores.value = emptySet()
+                        viewModel.subOverviewFilterSubTypeIds.value = emptySet()
+                        viewModel.subOverviewFilterTypes.value = emptySet()
                         viewModel.subOverviewFilterAuthor.value = null
                         viewModel.subOverviewFilterBook.value = null
-                        viewModel.subOverviewFilterSubTypeId.value = null
-                    } else {
-                        viewModel.subFilterBookstore.value = null
-                        viewModel.subFilterStatus.value = null
-                        viewModel.subFilterFrequency.value = null
-                        viewModel.subFilterSubTypeId.value = null
+                        onDismiss()
                     }
-                    onDismiss()
+                ) {
+                    Text("Clear All")
                 }
-            ) {
-                Text("Clear All")
             }
-        }
-    )
+        )
+    } else {
+        // FILTER 2: Subscriptions Main Tab Filters
+        val initialStoreIds by viewModel.subFilterBookstores.collectAsState()
+        val initialStatuses by viewModel.subFilterStatuses.collectAsState()
+        val initialFrequencies by viewModel.subFilterFrequencies.collectAsState()
+        val initialTypeIds by viewModel.subFilterSubTypeIds.collectAsState()
+
+        var selectedStoreIds by remember(initialStoreIds) { mutableStateOf(initialStoreIds) }
+        var selectedStatuses by remember(initialStatuses) { mutableStateOf(initialStatuses) }
+        var selectedFrequencies by remember(initialFrequencies) { mutableStateOf(initialFrequencies) }
+        var selectedTypeIds by remember(initialTypeIds) { mutableStateOf(initialTypeIds) }
+
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            title = { Text("Filter Subscriptions", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .imePadding()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    MultiSelectChipGroup(
+                        title = "Status",
+                        items = listOf("Waitlist", "Active", "Paused", "Canceled", "Wishlist"),
+                        selectedItems = selectedStatuses,
+                        onSelectionChanged = { selectedStatuses = it },
+                        labelProvider = { it }
+                    )
+
+                    if (bookstores.isNotEmpty()) {
+                        MultiSelectChipGroup(
+                            title = "Bookstore",
+                            items = bookstores.map { it.id },
+                            selectedItems = selectedStoreIds,
+                            onSelectionChanged = { selectedStoreIds = it },
+                            labelProvider = { id -> bookstores.find { it.id == id }?.name ?: "" }
+                        )
+                    }
+
+                    if (subscriptionTypes.isNotEmpty()) {
+                        MultiSelectChipGroup(
+                            title = "Subscription Type",
+                            items = subscriptionTypes.map { it.id },
+                            selectedItems = selectedTypeIds,
+                            onSelectionChanged = { selectedTypeIds = it },
+                            labelProvider = { id -> subscriptionTypes.find { it.id == id }?.title ?: "" }
+                        )
+                    }
+
+                    MultiSelectChipGroup(
+                        title = "Frequency",
+                        items = listOf("Weekly", "Monthly", "Bi-Monthly", "Quarterly", "Yearly"),
+                        selectedItems = selectedFrequencies,
+                        onSelectionChanged = { selectedFrequencies = it },
+                        labelProvider = { it }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.subFilterBookstores.value = selectedStoreIds
+                        viewModel.subFilterStatuses.value = selectedStatuses
+                        viewModel.subFilterFrequencies.value = selectedFrequencies
+                        viewModel.subFilterSubTypeIds.value = selectedTypeIds
+                        onDismiss()
+                    }
+                ) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.subFilterBookstores.value = emptySet()
+                        viewModel.subFilterStatuses.value = emptySet()
+                        viewModel.subFilterFrequencies.value = emptySet()
+                        viewModel.subFilterSubTypeIds.value = emptySet()
+                        onDismiss()
+                    }
+                ) {
+                    Text("Clear All")
+                }
+            }
+        )
+    }
 }
 
 @Composable

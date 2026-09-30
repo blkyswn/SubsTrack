@@ -164,6 +164,9 @@ interface PreorderDao {
     @Update
     suspend fun update(preorder: Preorder)
 
+    @Query("SELECT * FROM preorders WHERE id = :id LIMIT 1")
+    suspend fun getPreorderById(id: Int): Preorder?
+
     @Delete
     suspend fun delete(preorder: Preorder)
 }
@@ -242,3 +245,74 @@ interface UserAddressDao {
     @Query("UPDATE user_addresses SET isDefault = 0 WHERE id != :exceptId")
     suspend fun clearOtherDefaults(exceptId: Int)
 }
+
+@Dao
+interface ShippingCompanyDao {
+    @Query("SELECT * FROM shipping_companies ORDER BY name ASC")
+    fun getAllShippingCompanies(): Flow<List<ShippingCompany>>
+
+    @Query("SELECT * FROM shipping_companies WHERE id = :id LIMIT 1")
+    suspend fun getShippingCompanyById(id: Int): ShippingCompany?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(shippingCompany: ShippingCompany): Long
+
+    @Update
+    suspend fun update(shippingCompany: ShippingCompany)
+
+    @Delete
+    suspend fun delete(shippingCompany: ShippingCompany)
+}
+
+@Dao
+interface ShippingCompanyContactDao {
+    @Query("SELECT * FROM shipping_company_contacts WHERE shippingCompanyId = :shippingCompanyId")
+    fun getContactsForShippingCompany(shippingCompanyId: Int): Flow<List<ShippingCompanyContact>>
+
+    @Query("SELECT * FROM shipping_company_contacts WHERE shippingCompanyId = :shippingCompanyId")
+    suspend fun getContactsForShippingCompanyDirect(shippingCompanyId: Int): List<ShippingCompanyContact>
+
+    @Query("SELECT * FROM shipping_company_contacts")
+    fun getAllContacts(): Flow<List<ShippingCompanyContact>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(contact: ShippingCompanyContact): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(contacts: List<ShippingCompanyContact>)
+
+    @Update
+    suspend fun update(contact: ShippingCompanyContact)
+
+    @Delete
+    suspend fun delete(contact: ShippingCompanyContact)
+
+    @Query("DELETE FROM shipping_company_contacts WHERE shippingCompanyId = :shippingCompanyId")
+    suspend fun deleteContactsForShippingCompany(shippingCompanyId: Int)
+}
+
+@Dao
+interface PackageDao {
+    @Query("SELECT * FROM packages WHERE originTable = :originTable AND originId = :originId LIMIT 1")
+    fun getPackage(originTable: String, originId: Int): Flow<PackageItem?>
+
+    @Query("SELECT * FROM packages WHERE originTable = :originTable AND originId = :originId LIMIT 1")
+    suspend fun getPackageDirect(originTable: String, originId: Int): PackageItem?
+
+    @Query("SELECT * FROM packages")
+    fun getAllPackages(): Flow<List<PackageItem>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(packageItem: PackageItem): Long
+
+    @Update
+    suspend fun update(packageItem: PackageItem)
+
+    @Delete
+    suspend fun delete(packageItem: PackageItem)
+
+    @Query("DELETE FROM packages WHERE originTable = :originTable AND originId = :originId")
+    suspend fun deleteByOrigin(originTable: String, originId: Int)
+}
+
+

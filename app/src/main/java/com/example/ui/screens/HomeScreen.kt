@@ -17,10 +17,12 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -37,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -70,6 +73,7 @@ private data class SubGraphData(
 fun HomeScreen(
     viewModel: BookishViewModel,
     onNavigateToSubscriptions: () -> Unit = {},
+    onNavigateToUpcomingCalendar: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val user by viewModel.userState.collectAsState()
@@ -90,6 +94,7 @@ fun HomeScreen(
 
     var selectedPreorderForEdit by remember { mutableStateOf<PreorderWithBookstore?>(null) }
     var selectedScheduledForEdit by remember { mutableStateOf<ScheduledWithDetails?>(null) }
+    var itemToPromptSkip by remember { mutableStateOf<ScheduledWithDetails?>(null) }
     var groupedEventsPopupData by remember { mutableStateOf<GroupedEventsPopupData?>(null) }
 
     val coroutineScope = rememberCoroutineScope()
@@ -207,20 +212,49 @@ fun HomeScreen(
         allActiveUpcomingEvents.take(5)
     }
 
+    val homeListState = rememberLazyListState()
+    val scrollToTopTrigger by viewModel.homeScrollToTopTrigger.collectAsState()
+
+    LaunchedEffect(scrollToTopTrigger) {
+        if (scrollToTopTrigger > 0L) {
+            homeListState.scrollToItem(0)
+        }
+    }
+
     var parentLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var cardLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var rawTargetY by remember { mutableFloatStateOf(-1f) }
     val density = LocalDensity.current
     val defaultTargetY = with(density) { 380.dp.toPx() }
+    var restingTargetY by remember { mutableFloatStateOf(defaultTargetY) }
 
     val updateTargetY = {
         val parent = parentLayoutCoordinates
         val card = cardLayoutCoordinates
         if (parent != null && card != null && parent.isAttached && card.isAttached) {
             try {
-                val topInParent = parent.localPositionOf(card, Offset.Zero).y
-                rawTargetY = topInParent + card.size.height.toFloat() * 0.80f
+                if (homeListState.firstVisibleItemIndex == 0 && homeListState.firstVisibleItemScrollOffset == 0) {
+                    val topInParent = parent.localPositionOf(card, Offset.Zero).y
+                    val measured = topInParent + card.size.height.toFloat() * 0.80f
+                    if (measured > with(density) { 200.dp.toPx() }) {
+                        restingTargetY = measured
+                    }
+                }
             } catch (_: Exception) {}
+        }
+    }
+
+    val scrollOffset by remember {
+        derivedStateOf {
+            if (homeListState.firstVisibleItemIndex == 0) {
+                homeListState.firstVisibleItemScrollOffset.toFloat()
+            } else {
+                val approxItem0Px = with(density) { 90.dp.toPx() }
+                if (homeListState.firstVisibleItemIndex == 1) {
+                    approxItem0Px + homeListState.firstVisibleItemScrollOffset.toFloat()
+                } else {
+                    with(density) { 1000.dp.toPx() }
+                }
+            }
         }
     }
 
@@ -242,11 +276,15 @@ fun HomeScreen(
                     updateTargetY()
                 }
         ) {
-            val targetY = if (rawTargetY != -1f) rawTargetY else defaultTargetY
+            val targetY = if (restingTargetY > 0f) restingTargetY else defaultTargetY
 
             if (targetY > 0f) {
                 Canvas(
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            translationY = -scrollOffset
+                        }
                 ) {
                     val extraWidth = size.width * 0.25f
                     val arcWidth = size.width + extraWidth * 2f
@@ -282,6 +320,7 @@ fun HomeScreen(
             }
 
             LazyColumn(
+                state = homeListState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
@@ -1326,13 +1365,13 @@ fun HomeScreen(
                                                         modifier = Modifier
                                                             .size(36.dp)
                                                             .clip(RoundedCornerShape(10.dp))
-                                                            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f)),
+                                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                                                         contentAlignment = Alignment.Center
                                                     ) {
                                                         Icon(
                                                             imageVector = Icons.Default.AutoStories,
                                                             contentDescription = null,
-                                                            tint = MaterialTheme.colorScheme.tertiary,
+                                                            tint = MaterialTheme.colorScheme.primary,
                                                             modifier = Modifier.size(20.dp)
                                                         )
                                                     }
@@ -1794,17 +1833,35 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Upcoming Timeline",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "Next 5 events",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column {
+                        Text(
+                            text = "Upcoming Timeline",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Next 5 events",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(
+                        onClick = onNavigateToUpcomingCalendar,
+                        modifier = Modifier.testTag("upcoming_timeline_see_more")
+                    ) {
+                        Text(
+                            text = "See more",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "See more",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
 
@@ -2139,6 +2196,8 @@ fun HomeScreen(
                                     val statusColor = when (item.scheduled.status.lowercase()) {
                                         "upcoming" -> Color(0xFF64748B)
                                         "renewed", "paid" -> Color(0xFF2563EB)
+                                        "forwarded" -> Color(0xFF0EA5E9)
+                                        "in suite" -> Color(0xFFD97706)
                                         "shipped" -> Color(0xFF8B5CF6)
                                         "received" -> Color(0xFF10B981)
                                         "skipped" -> Color(0xFFEF4444)
@@ -2147,6 +2206,8 @@ fun HomeScreen(
                                     val statusBgColor = when (item.scheduled.status.lowercase()) {
                                         "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
                                         "renewed", "paid" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+                                        "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
+                                        "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
                                         "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
                                         "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
                                         "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
@@ -2155,6 +2216,8 @@ fun HomeScreen(
                                     val statusTextColor = when (item.scheduled.status.lowercase()) {
                                         "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
                                         "renewed", "paid" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+                                        "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+                                        "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
                                         "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
                                         "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
                                         "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
@@ -2344,7 +2407,20 @@ fun HomeScreen(
             EditScheduledSubscriptionDialog(
                 scheduledWithDetails = scheduledItem,
                 viewModel = viewModel,
-                onDismiss = { selectedScheduledForEdit = null }
+                onDismiss = { selectedScheduledForEdit = null },
+                onPromptSkip = { itemToPromptSkip = it }
+            )
+        }
+
+        // Hoisted Skip Action Prompt Dialog
+        itemToPromptSkip?.let { scheduledItem ->
+            val allSkipMethods by viewModel.allSubscriptionSkipMethodsState.collectAsState()
+            SkipActionPromptDialog(
+                scheduledWithDetails = scheduledItem,
+                allSkipMethods = allSkipMethods,
+                allScheduled = scheduled,
+                viewModel = viewModel,
+                onDismiss = { itemToPromptSkip = null }
             )
         }
 
@@ -2388,6 +2464,8 @@ fun HomeScreen(
                                 val statusColor = when (statusLower) {
                                     "upcoming" -> Color(0xFF64748B)
                                     "renewed", "paid", "preordered" -> Color(0xFF2563EB)
+                                    "forwarded" -> Color(0xFF0EA5E9)
+                                    "in suite" -> Color(0xFFD97706)
                                     "released" -> Color(0xFFEA580C)
                                     "skipped" -> Color(0xFFEF4444)
                                     "shipped" -> Color(0xFF8B5CF6)
@@ -2397,6 +2475,8 @@ fun HomeScreen(
                                 val statusBgColor = when (statusLower) {
                                     "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
                                     "renewed", "paid", "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+                                    "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
+                                    "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
                                     "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
                                     "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
                                     "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
@@ -2406,6 +2486,8 @@ fun HomeScreen(
                                 val statusTextColor = when (statusLower) {
                                     "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
                                     "renewed", "paid", "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+                                    "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+                                    "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
                                     "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
                                     "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
                                     "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
@@ -2803,6 +2885,8 @@ fun BentoTimelineItem(
     val statusBgColor = when (statusLower) {
         "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
         "renewed", "paid", "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+        "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
+        "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
         "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
         "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
         "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
@@ -2812,6 +2896,8 @@ fun BentoTimelineItem(
     val statusTextColor = when (statusLower) {
         "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
         "renewed", "paid", "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+        "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+        "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
         "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
         "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
         "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
@@ -2822,6 +2908,8 @@ fun BentoTimelineItem(
         "upcoming" -> if (event.type == "scheduled") Icons.Default.Schedule else Icons.Default.ShoppingBag
         "preordered" -> Icons.Default.ShoppingBag
         "renewed", "paid" -> Icons.Default.Payments
+        "forwarded" -> Icons.Default.AltRoute
+        "in suite" -> Icons.Default.Warehouse
         "released" -> Icons.Default.NewReleases
         "shipped" -> Icons.Default.LocalShipping
         "received" -> Icons.Default.CheckCircle
@@ -2845,7 +2933,7 @@ fun BentoTimelineItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
@@ -2882,7 +2970,8 @@ fun BentoTimelineItem(
                                 text = if (event.type == "scheduled") "Subscription" else "Preorder",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = accentColor
+                                color = accentColor,
+                                lineHeight = 10.sp
                             )
                         }
 
@@ -2907,13 +2996,14 @@ fun BentoTimelineItem(
                                     text = event.status,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = statusTextColor
+                                    color = statusTextColor,
+                                    lineHeight = 10.sp
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
 
                     if (event.type == "preorder") {
                         val bookTitle = event.rawPreorder?.preorder?.bookTitle?.ifBlank { null } ?: event.title
@@ -2924,57 +3014,18 @@ fun BentoTimelineItem(
                             text = bookTitle,
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
+                            lineHeight = 18.sp,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
 
-                        val subtitleStr = buildString {
-                            if (bookAuthor.isNotBlank()) append("By $bookAuthor")
-                            if (bookstoreName.isNotBlank()) {
-                                if (isNotEmpty()) append(" • ")
-                                append(bookstoreName)
-                            }
-                        }
-
-                        if (subtitleStr.isNotBlank()) {
+                        if (bookAuthor.isNotBlank()) {
                             Text(
-                                text = subtitleStr,
+                                text = "By $bookAuthor",
                                 fontSize = 12.sp,
+                                lineHeight = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    } else { // "scheduled"
-                        val subsTypeTitle = event.rawScheduled?.subscriptionType?.title?.ifBlank { null } ?: event.title
-                        val bookTitle = event.rawScheduled?.scheduled?.bookTitle?.trim() ?: ""
-                        val bookAuthor = event.rawScheduled?.scheduled?.bookAuthor?.trim() ?: ""
-                        val bookstoreName = event.rawScheduled?.bookstore?.name?.ifBlank { null } ?: event.subTitle.ifBlank { null } ?: ""
-
-                        Text(
-                            text = subsTypeTitle,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        val bookInfo = buildString {
-                            if (bookTitle.isNotBlank()) append(bookTitle)
-                            if (bookAuthor.isNotBlank()) {
-                                if (isNotEmpty()) append(" by ") else append("By ")
-                                append(bookAuthor)
-                            }
-                        }
-
-                        if (bookInfo.isNotBlank()) {
-                            Text(
-                                text = bookInfo,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -2984,6 +3035,57 @@ fun BentoTimelineItem(
                             Text(
                                 text = bookstoreName,
                                 fontSize = 12.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else { // "scheduled"
+                        val subsTypeTitle = event.rawScheduled?.subscriptionType?.title?.trim()?.ifBlank { null }
+                            ?: event.title
+                        val bookTitle = event.rawScheduled?.scheduled?.bookTitle?.trim() ?: ""
+                        val bookAuthor = event.rawScheduled?.scheduled?.bookAuthor?.trim() ?: event.author.trim()
+                        val bookstoreName = event.rawScheduled?.bookstore?.name?.trim()?.ifBlank { null }
+                            ?: (if (event.subTitle != subsTypeTitle) event.subTitle.trim().ifBlank { null } else null)
+                            ?: ""
+
+                        Text(
+                            text = subsTypeTitle,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            lineHeight = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        val bookAndAuthor = buildString {
+                            if (bookTitle.isNotBlank()) {
+                                append(bookTitle)
+                            }
+                            if (bookAuthor.isNotBlank()) {
+                                if (isNotEmpty()) append(" by ") else append("By ")
+                                append(bookAuthor)
+                            }
+                        }
+
+                        if (bookAndAuthor.isNotBlank()) {
+                            Text(
+                                text = bookAndAuthor,
+                                fontSize = 12.sp,
+                                lineHeight = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        if (bookstoreName.isNotBlank()) {
+                            Text(
+                                text = bookstoreName,
+                                fontSize = 12.sp,
+                                lineHeight = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -3002,44 +3104,53 @@ fun BentoTimelineItem(
                 ),
                 shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, accentColor.copy(alpha = 0.2f)),
-                modifier = Modifier.width(60.dp)
+                modifier = Modifier
+                    .size(62.dp)
+                    .aspectRatio(1f)
             ) {
-                Column(
-                    modifier = Modifier
-                        .padding(vertical = 6.dp, horizontal = 2.dp)
-                        .fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = monthStr,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = accentColor,
-                        letterSpacing = 0.5.sp
-                    )
-                    Text(
-                        text = dayStr,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 18.sp
-                    )
-                    if (event.type == "preorder") {
-                        val startCal = Calendar.getInstance().apply { timeInMillis = event.date }
-                        val formattedTime = String.format(
-                            Locale.getDefault(),
-                            "%02d:%02d",
-                            startCal.get(Calendar.HOUR_OF_DAY),
-                            startCal.get(Calendar.MINUTE)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = monthStr,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = accentColor,
+                            letterSpacing = 0.5.sp,
+                            lineHeight = 11.sp
                         )
                         Text(
-                            text = formattedTime,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accentColor,
-                            modifier = Modifier.padding(top = 2.dp)
+                            text = dayStr,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 18.sp
                         )
+                        if (event.type == "preorder") {
+                            val startCal = Calendar.getInstance().apply { timeInMillis = event.date }
+                            val formattedTime = String.format(
+                                Locale.getDefault(),
+                                "%02d:%02d",
+                                startCal.get(Calendar.HOUR_OF_DAY),
+                                startCal.get(Calendar.MINUTE)
+                            )
+                            Text(
+                                text = formattedTime,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor,
+                                lineHeight = 11.sp,
+                                modifier = Modifier.padding(top = 1.dp)
+                            )
+                        }
                     }
                 }
             }

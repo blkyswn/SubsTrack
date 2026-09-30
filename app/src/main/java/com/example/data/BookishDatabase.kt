@@ -14,14 +14,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookstoreContact::class,
         ForwardingService::class,
         ForwardingServiceContact::class,
+        ShippingCompany::class,
+        ShippingCompanyContact::class,
         UserAddress::class,
         SubscriptionType::class,
         SubscriptionSkipMethod::class,
         ScheduledSubscription::class,
         Preorder::class,
-        SubscriptionSkip::class
+        SubscriptionSkip::class,
+        PackageItem::class
     ],
-    version = 20,
+    version = 26,
     exportSchema = false
 )
 abstract class BookishDatabase : RoomDatabase() {
@@ -30,12 +33,15 @@ abstract class BookishDatabase : RoomDatabase() {
     abstract fun bookstoreContactDao(): BookstoreContactDao
     abstract fun forwardingServiceDao(): ForwardingServiceDao
     abstract fun forwardingServiceContactDao(): ForwardingServiceContactDao
+    abstract fun shippingCompanyDao(): ShippingCompanyDao
+    abstract fun shippingCompanyContactDao(): ShippingCompanyContactDao
     abstract fun userAddressDao(): UserAddressDao
     abstract fun subscriptionTypeDao(): SubscriptionTypeDao
     abstract fun subscriptionSkipMethodDao(): SubscriptionSkipMethodDao
     abstract fun scheduledSubscriptionDao(): ScheduledSubscriptionDao
     abstract fun preorderDao(): PreorderDao
     abstract fun subscriptionSkipDao(): SubscriptionSkipDao
+    abstract fun packageDao(): PackageDao
 
     companion object {
         @Volatile
@@ -268,6 +274,85 @@ abstract class BookishDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `subscription_types` ADD COLUMN `discountedAmount` REAL")
+                db.execSQL("ALTER TABLE `preorders` ADD COLUMN `discountedAmount` REAL")
+            }
+        }
+
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `forwarding_services` ADD COLUMN `storageDays` INTEGER")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `shipping_companies` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `website` TEXT NOT NULL,
+                        `profilePic` TEXT
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `shipping_company_contacts` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `shippingCompanyId` INTEGER NOT NULL,
+                        `contactType` TEXT NOT NULL,
+                        `contactValue` TEXT NOT NULL,
+                        FOREIGN KEY(`shippingCompanyId`) REFERENCES `shipping_companies`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `packages` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `originTable` TEXT NOT NULL,
+                        `originId` INTEGER NOT NULL,
+                        `storeShippingDate` INTEGER,
+                        `storeShippingCompany` TEXT,
+                        `storeTrackingNumber` TEXT,
+                        `forwarderReceivedDate` INTEGER,
+                        `forwarderShippingCompany` TEXT,
+                        `forwarderTrackingNumber` TEXT,
+                        `forwarderShippedDate` INTEGER,
+                        `receivedDate` INTEGER
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_packages_originTable_originId` ON `packages` (`originTable`, `originId`)")
+            }
+        }
+
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `packages` ADD COLUMN `forwarderShippingCompany` TEXT")
+                db.execSQL("ALTER TABLE `packages` ADD COLUMN `forwarderTrackingNumber` TEXT")
+            }
+        }
+
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `packages` ADD COLUMN `purchaseDate` INTEGER")
+            }
+        }
+
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `forwarding_services` ADD COLUMN `reminderEnabled` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `forwarding_services` ADD COLUMN `reminderDDayOffset` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `forwarding_services` ADD COLUMN `reminderHour` INTEGER NOT NULL DEFAULT 8")
+                db.execSQL("ALTER TABLE `forwarding_services` ADD COLUMN `reminderMinute` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): BookishDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -275,7 +360,7 @@ abstract class BookishDatabase : RoomDatabase() {
                     BookishDatabase::class.java,
                     "bookish_database"
                 )
-                .addMigrations(MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
+                .addMigrations(MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
                 .addCallback(object : RoomDatabase.Callback() {
                     override fun onOpen(db: SupportSQLiteDatabase) {
                         super.onOpen(db)

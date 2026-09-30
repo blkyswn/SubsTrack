@@ -28,12 +28,15 @@ class BookishRepository(private val database: BookishDatabase) {
     private val bookstoreContactDao = database.bookstoreContactDao()
     private val forwardingServiceDao = database.forwardingServiceDao()
     private val forwardingServiceContactDao = database.forwardingServiceContactDao()
+    private val shippingCompanyDao = database.shippingCompanyDao()
+    private val shippingCompanyContactDao = database.shippingCompanyContactDao()
     private val userAddressDao = database.userAddressDao()
     private val subscriptionTypeDao = database.subscriptionTypeDao()
     private val subscriptionSkipMethodDao = database.subscriptionSkipMethodDao()
     private val scheduledSubscriptionDao = database.scheduledSubscriptionDao()
     private val preorderDao = database.preorderDao()
     private val subscriptionSkipDao = database.subscriptionSkipDao()
+    private val packageDao = database.packageDao()
 
     // Expose User Flow
     val userFlow: Flow<User?> = userDao.getUser()
@@ -50,8 +53,15 @@ class BookishRepository(private val database: BookishDatabase) {
     val allForwardingServicesFlow: Flow<List<ForwardingService>> = forwardingServiceDao.getAllForwardingServices()
     val allForwardingServiceContactsFlow: Flow<List<ForwardingServiceContact>> = forwardingServiceContactDao.getAllContacts()
 
+    // Expose raw list of shipping companies
+    val allShippingCompaniesFlow: Flow<List<ShippingCompany>> = shippingCompanyDao.getAllShippingCompanies()
+    val allShippingCompanyContactsFlow: Flow<List<ShippingCompanyContact>> = shippingCompanyContactDao.getAllContacts()
+
     // Expose raw list of user addresses
     val allUserAddressesFlow: Flow<List<UserAddress>> = userAddressDao.getAllUserAddresses()
+
+    // Expose raw list of packages
+    val allPackagesFlow: Flow<List<PackageItem>> = packageDao.getAllPackages()
 
     suspend fun insertUserAddress(address: UserAddress): Long {
         val id = userAddressDao.insert(address)
@@ -132,6 +142,36 @@ class BookishRepository(private val database: BookishDatabase) {
         }
         if (validContacts.isNotEmpty()) {
             forwardingServiceContactDao.insertAll(validContacts)
+        }
+    }
+
+    suspend fun insertShippingCompany(shippingCompany: ShippingCompany): Long {
+        return shippingCompanyDao.insert(shippingCompany)
+    }
+
+    suspend fun updateShippingCompany(shippingCompany: ShippingCompany) {
+        shippingCompanyDao.update(shippingCompany)
+    }
+
+    suspend fun deleteShippingCompany(shippingCompany: ShippingCompany) {
+        shippingCompanyDao.delete(shippingCompany)
+    }
+
+    fun getContactsForShippingCompany(shippingCompanyId: Int): Flow<List<ShippingCompanyContact>> {
+        return shippingCompanyContactDao.getContactsForShippingCompany(shippingCompanyId)
+    }
+
+    suspend fun getContactsForShippingCompanyDirect(shippingCompanyId: Int): List<ShippingCompanyContact> {
+        return shippingCompanyContactDao.getContactsForShippingCompanyDirect(shippingCompanyId)
+    }
+
+    suspend fun saveShippingCompanyContacts(shippingCompanyId: Int, contacts: List<ShippingCompanyContact>) {
+        shippingCompanyContactDao.deleteContactsForShippingCompany(shippingCompanyId)
+        val validContacts = contacts.filter { it.contactValue.isNotBlank() }.map {
+            it.copy(id = 0, shippingCompanyId = shippingCompanyId)
+        }
+        if (validContacts.isNotEmpty()) {
+            shippingCompanyContactDao.insertAll(validContacts)
         }
     }
 
@@ -277,6 +317,18 @@ class BookishRepository(private val database: BookishDatabase) {
 
     suspend fun getScheduledSubscriptionById(id: Int): ScheduledSubscription? {
         return scheduledSubscriptionDao.getScheduledSubscriptionById(id)
+    }
+
+    suspend fun getPreorderById(id: Int): Preorder? {
+        return preorderDao.getPreorderById(id)
+    }
+
+    suspend fun getUserAddressById(id: Int): UserAddress? {
+        return userAddressDao.getAddressById(id)
+    }
+
+    suspend fun getForwardingServiceById(id: Int): ForwardingService? {
+        return forwardingServiceDao.getForwardingServiceById(id)
     }
 
     suspend fun processSkipForScheduledSub(
@@ -532,18 +584,44 @@ class BookishRepository(private val database: BookishDatabase) {
     }
 
     suspend fun insertScheduledSubscription(scheduled: ScheduledSubscription): Long {
-        return scheduledSubscriptionDao.insert(scheduled)
+        val id = scheduledSubscriptionDao.insert(scheduled)
+        val existing = packageDao.getPackageDirect("scheduled_subs", id.toInt())
+        val statusLower = scheduled.status.lowercase().trim()
+        val today = System.currentTimeMillis()
+        if (existing == null) {
+            packageDao.insert(
+                PackageItem(
+                    originTable = "scheduled_subs",
+                    originId = id.toInt(),
+                    purchaseDate = if (statusLower in listOf("renewed", "paid", "forwarded", "in suite", "shipped", "received")) today else null,
+                    storeShippingDate = if (statusLower == "shipped" || statusLower == "forwarded") today else null,
+                    forwarderReceivedDate = if (statusLower == "in suite") today else null,
+                    forwarderShippedDate = if (statusLower == "shipped") today else null,
+                    receivedDate = if (statusLower == "received") today else null
+                )
+            )
+        }
+        return id
     }
 
     suspend fun updateScheduledSubscription(scheduled: ScheduledSubscription) {
+        val oldScheduled = scheduledSubscriptionDao.getScheduledSubscriptionById(scheduled.id)
         scheduledSubscriptionDao.update(scheduled)
+        if (oldScheduled != null && !oldScheduled.status.equals(scheduled.status, ignoreCase = true)) {
+            syncPackageStatusChange("scheduled_subs", scheduled.id, oldScheduled.status, scheduled.status)
+        }
     }
 
     suspend fun deleteScheduledSubscription(scheduled: ScheduledSubscription) {
+        packageDao.deleteByOrigin("scheduled_subs", scheduled.id)
         scheduledSubscriptionDao.delete(scheduled)
     }
 
     suspend fun deleteScheduledSubsAfterDate(subTypeId: Int, date: Long) {
+        val subsToDelete = scheduledSubscriptionDao.getScheduledSubscriptionsForType(subTypeId).filter { it.dueDate > date }
+        subsToDelete.forEach {
+            packageDao.deleteByOrigin("scheduled_subs", it.id)
+        }
         scheduledSubscriptionDao.deleteScheduledSubsAfterDate(subTypeId, date)
     }
 
@@ -558,15 +636,211 @@ class BookishRepository(private val database: BookishDatabase) {
     }
 
     suspend fun insertPreorder(preorder: Preorder): Long {
-        return preorderDao.insert(preorder)
+        val id = preorderDao.insert(preorder)
+        val existing = packageDao.getPackageDirect("preorders", id.toInt())
+        val statusLower = preorder.status.lowercase().trim()
+        val today = System.currentTimeMillis()
+        if (existing == null) {
+            packageDao.insert(
+                PackageItem(
+                    originTable = "preorders",
+                    originId = id.toInt(),
+                    purchaseDate = if (statusLower in listOf("preordered", "forwarded", "in suite", "shipped", "received")) today else null,
+                    storeShippingDate = if (statusLower == "shipped" || statusLower == "forwarded") today else null,
+                    forwarderReceivedDate = if (statusLower == "in suite") today else null,
+                    forwarderShippedDate = if (statusLower == "shipped") today else null,
+                    receivedDate = if (statusLower == "received") today else null
+                )
+            )
+        }
+        return id
     }
 
     suspend fun updatePreorder(preorder: Preorder) {
-        preorderDao.update(preorder)
+        val oldPreorder = preorderDao.getPreorderById(preorder.id)
+        val resolvedPreorder = if (preorder.shippingAddressId == null && oldPreorder?.shippingAddressId != null) {
+            preorder.copy(shippingAddressId = oldPreorder.shippingAddressId)
+        } else {
+            preorder
+        }
+        preorderDao.update(resolvedPreorder)
+        if (oldPreorder != null && !oldPreorder.status.equals(resolvedPreorder.status, ignoreCase = true)) {
+            syncPackageStatusChange("preorders", resolvedPreorder.id, oldPreorder.status, resolvedPreorder.status)
+        }
+    }
+
+    suspend fun syncPackageStatusChange(
+        originTable: String,
+        originId: Int,
+        oldStatusStr: String,
+        newStatusStr: String
+    ) {
+        val old = oldStatusStr.lowercase().trim()
+        val next = newStatusStr.lowercase().trim()
+        if (old == next) return
+
+        val pkg = getOrCreatePackage(originTable, originId)
+        val today = System.currentTimeMillis()
+
+        var purchaseDate = pkg.purchaseDate
+        var storeShippingDate = pkg.storeShippingDate
+        var forwarderReceivedDate = pkg.forwarderReceivedDate
+        var forwarderShippedDate = pkg.forwarderShippedDate
+        var receivedDate = pkg.receivedDate
+
+        // Purchase date:
+        // When preorders change status from upcoming/released to preordered (or higher)
+        if (originTable == "preorders") {
+            if ((old == "upcoming" || old == "released") && (next == "preordered" || next == "forwarded" || next == "in suite" || next == "shipped" || next == "received")) {
+                purchaseDate = today
+            }
+        }
+
+        // When scheduled subs change status from upcoming (or skipped) to renewed (or higher)
+        if (originTable == "scheduled_subs") {
+            if ((old == "upcoming" || old == "skipped") && (next == "renewed" || next == "paid" || next == "forwarded" || next == "in suite" || next == "shipped" || next == "received")) {
+                purchaseDate = today
+            }
+        }
+
+        val isOldPreorderedOrRenewed = old == "preordered" || old == "renewed" || old == "paid"
+        val isNextPreorderedOrRenewed = next == "preordered" || next == "renewed" || next == "paid" || next == "upcoming" || next == "released" || next == "skipped"
+
+        // 1. when status changes from preordered (in preorders)/renewed (scheduled subs) to shipped/forwarded, update store shipped date in packages table to today
+        if (isOldPreorderedOrRenewed && (next == "shipped" || next == "forwarded")) {
+            storeShippingDate = today
+        }
+
+        // 2. when status changes forwarded to in suite, update forwarder received date in packages table to today
+        if (old == "forwarded" && next == "in suite") {
+            forwarderReceivedDate = today
+        }
+
+        // 3. when status changes in suite to shipped, update forwarder sent date in packages table to today
+        if (old == "in suite" && next == "shipped") {
+            forwarderShippedDate = today
+        }
+
+        // 4. when status changes shipped to received, update received date in packages table to today
+        if (old == "shipped" && next == "received") {
+            receivedDate = today
+        }
+
+        // 5. when status is reverted, corresponding date is cleared:
+        // 5a. Reverting from received to shipped (or earlier): clear receivedDate
+        if (old == "received" && next != "received") {
+            receivedDate = null
+        }
+
+        // 5b. Reverting from shipped:
+        if (old == "shipped") {
+            if (next == "in suite") {
+                forwarderShippedDate = null
+                receivedDate = null
+            } else if (next == "forwarded") {
+                forwarderReceivedDate = null
+                forwarderShippedDate = null
+                receivedDate = null
+            } else if (isNextPreorderedOrRenewed) {
+                storeShippingDate = null
+                forwarderReceivedDate = null
+                forwarderShippedDate = null
+                receivedDate = null
+            }
+        }
+
+        // 5c. Reverting from in suite:
+        if (old == "in suite") {
+            if (next == "forwarded") {
+                forwarderReceivedDate = null
+                forwarderShippedDate = null
+                receivedDate = null
+            } else if (isNextPreorderedOrRenewed) {
+                storeShippingDate = null
+                forwarderReceivedDate = null
+                forwarderShippedDate = null
+                receivedDate = null
+            }
+        }
+
+        // 5d. Reverting from forwarded:
+        if (old == "forwarded" && isNextPreorderedOrRenewed) {
+            storeShippingDate = null
+            forwarderReceivedDate = null
+            forwarderShippedDate = null
+            receivedDate = null
+        }
+
+        // Catch-all reversion to preordered/renewed/upcoming from any higher state:
+        if (isNextPreorderedOrRenewed && (old == "forwarded" || old == "in suite" || old == "shipped" || old == "received")) {
+            storeShippingDate = null
+            forwarderReceivedDate = null
+            forwarderShippedDate = null
+            receivedDate = null
+        }
+
+        // 5e. Reverting back to upcoming/released/skipped clears purchase date:
+        if (originTable == "preorders" && (next == "upcoming" || next == "released")) {
+            purchaseDate = null
+            storeShippingDate = null
+            forwarderReceivedDate = null
+            forwarderShippedDate = null
+            receivedDate = null
+        }
+
+        if (originTable == "scheduled_subs" && (next == "upcoming" || next == "skipped")) {
+            purchaseDate = null
+            storeShippingDate = null
+            forwarderReceivedDate = null
+            forwarderShippedDate = null
+            receivedDate = null
+        }
+
+        val updated = pkg.copy(
+            purchaseDate = purchaseDate,
+            storeShippingDate = storeShippingDate,
+            forwarderReceivedDate = forwarderReceivedDate,
+            forwarderShippedDate = forwarderShippedDate,
+            receivedDate = receivedDate
+        )
+        if (updated != pkg) {
+            packageDao.update(updated)
+        }
     }
 
     suspend fun deletePreorder(preorder: Preorder) {
+        packageDao.deleteByOrigin("preorders", preorder.id)
         preorderDao.delete(preorder)
+    }
+
+    // Package Table APIs
+    fun getPackageFlow(originTable: String, originId: Int): Flow<PackageItem?> {
+        return packageDao.getPackage(originTable, originId)
+    }
+
+    suspend fun getPackageDirect(originTable: String, originId: Int): PackageItem? {
+        return packageDao.getPackageDirect(originTable, originId)
+    }
+
+    suspend fun getOrCreatePackage(originTable: String, originId: Int): PackageItem {
+        val existing = packageDao.getPackageDirect(originTable, originId)
+        if (existing != null) {
+            return existing
+        }
+        val newPkg = PackageItem(
+            originTable = originTable,
+            originId = originId
+        )
+        val id = packageDao.insert(newPkg)
+        return newPkg.copy(id = id.toInt())
+    }
+
+    suspend fun updatePackage(packageItem: PackageItem) {
+        packageDao.update(packageItem)
+    }
+
+    suspend fun insertPackage(packageItem: PackageItem): Long {
+        return packageDao.insert(packageItem)
     }
 
     // Prepopulate database with rich realistic sample data if empty
@@ -689,7 +963,7 @@ class BookishRepository(private val database: BookishDatabase) {
             ))
 
             // 4. Insert Scheduled Subscriptions (issues / monthly picks)
-            scheduledSubscriptionDao.insert(
+            insertScheduledSubscription(
                 ScheduledSubscription(
                     subscriptionTypeId = sub1Id,
                     bookTitle = "The Shadow of the Gods",
@@ -701,7 +975,7 @@ class BookishRepository(private val database: BookishDatabase) {
                 )
             )
 
-            scheduledSubscriptionDao.insert(
+            insertScheduledSubscription(
                 ScheduledSubscription(
                     subscriptionTypeId = sub1Id,
                     bookTitle = "The Hunger Games (Deluxe)",
@@ -713,7 +987,7 @@ class BookishRepository(private val database: BookishDatabase) {
                 )
             )
 
-            scheduledSubscriptionDao.insert(
+            insertScheduledSubscription(
                 ScheduledSubscription(
                     subscriptionTypeId = sub2Id,
                     bookTitle = "Piranesi (Illustrated)",
@@ -725,7 +999,7 @@ class BookishRepository(private val database: BookishDatabase) {
                 )
             )
 
-            scheduledSubscriptionDao.insert(
+            insertScheduledSubscription(
                 ScheduledSubscription(
                     subscriptionTypeId = sub1Id,
                     bookTitle = "A Court of Thorns and Roses",
@@ -739,7 +1013,7 @@ class BookishRepository(private val database: BookishDatabase) {
 
             // 5. Insert Preorders
             val targetReleaseDay = now + 5 * dayMs
-            preorderDao.insert(
+            insertPreorder(
                 Preorder(
                     bookstoreId = store3Id,
                     picturePath = "https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=300&q=80",
@@ -753,7 +1027,7 @@ class BookishRepository(private val database: BookishDatabase) {
                 )
             )
 
-            preorderDao.insert(
+            insertPreorder(
                 Preorder(
                     bookstoreId = store4Id,
                     picturePath = "https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=300&q=80",
@@ -767,7 +1041,7 @@ class BookishRepository(private val database: BookishDatabase) {
                 )
             )
 
-            preorderDao.insert(
+            insertPreorder(
                 Preorder(
                     bookstoreId = store3Id,
                     picturePath = "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?auto=format&fit=crop&w=300&q=80",
@@ -781,7 +1055,7 @@ class BookishRepository(private val database: BookishDatabase) {
                 )
             )
 
-            preorderDao.insert(
+            insertPreorder(
                 Preorder(
                     bookstoreId = store4Id,
                     picturePath = "https://images.unsplash.com/photo-1532012197267-da84d127e765?auto=format&fit=crop&w=300&q=80",
@@ -798,9 +1072,9 @@ class BookishRepository(private val database: BookishDatabase) {
 
         val forwardingServices = forwardingServiceDao.getAllForwardingServices().firstOrNull() ?: emptyList()
         if (forwardingServices.isEmpty()) {
-            val fs1Id = forwardingServiceDao.insert(ForwardingService(name = "Stackry", website = "https://www.stackry.com", profilePic = "ic_launcher_foreground")).toInt()
-            val fs2Id = forwardingServiceDao.insert(ForwardingService(name = "Buyee", website = "https://buyee.jp", profilePic = "ic_launcher_foreground")).toInt()
-            val fs3Id = forwardingServiceDao.insert(ForwardingService(name = "Forward2me", website = "https://www.forward2me.com", profilePic = "ic_launcher_foreground")).toInt()
+            val fs1Id = forwardingServiceDao.insert(ForwardingService(name = "Stackry", website = "https://www.stackry.com", profilePic = "ic_launcher_foreground", storageDays = 45)).toInt()
+            val fs2Id = forwardingServiceDao.insert(ForwardingService(name = "Buyee", website = "https://buyee.jp", profilePic = "ic_launcher_foreground", storageDays = 30)).toInt()
+            val fs3Id = forwardingServiceDao.insert(ForwardingService(name = "Forward2me", website = "https://www.forward2me.com", profilePic = "ic_launcher_foreground", storageDays = 30)).toInt()
 
             forwardingServiceContactDao.insertAll(listOf(
                 ForwardingServiceContact(forwardingServiceId = fs1Id, contactType = "Website", contactValue = "https://www.stackry.com"),
@@ -809,6 +1083,22 @@ class BookishRepository(private val database: BookishDatabase) {
                 ForwardingServiceContact(forwardingServiceId = fs2Id, contactType = "Email", contactValue = "support@buyee.jp"),
                 ForwardingServiceContact(forwardingServiceId = fs3Id, contactType = "Website", contactValue = "https://www.forward2me.com"),
                 ForwardingServiceContact(forwardingServiceId = fs3Id, contactType = "Email", contactValue = "info@forward2me.com")
+            ))
+        }
+
+        val shippingCompanies = shippingCompanyDao.getAllShippingCompanies().firstOrNull() ?: emptyList()
+        if (shippingCompanies.isEmpty()) {
+            val sc1Id = shippingCompanyDao.insert(ShippingCompany(name = "DHL Express", website = "https://www.dhl.com", profilePic = "ic_launcher_foreground")).toInt()
+            val sc2Id = shippingCompanyDao.insert(ShippingCompany(name = "FedEx", website = "https://www.fedex.com", profilePic = "ic_launcher_foreground")).toInt()
+            val sc3Id = shippingCompanyDao.insert(ShippingCompany(name = "UPS", website = "https://www.ups.com", profilePic = "ic_launcher_foreground")).toInt()
+
+            shippingCompanyContactDao.insertAll(listOf(
+                ShippingCompanyContact(shippingCompanyId = sc1Id, contactType = "Website", contactValue = "https://www.dhl.com"),
+                ShippingCompanyContact(shippingCompanyId = sc1Id, contactType = "Phone", contactValue = "+1-800-225-5345"),
+                ShippingCompanyContact(shippingCompanyId = sc2Id, contactType = "Website", contactValue = "https://www.fedex.com"),
+                ShippingCompanyContact(shippingCompanyId = sc2Id, contactType = "Phone", contactValue = "+1-800-463-3339"),
+                ShippingCompanyContact(shippingCompanyId = sc3Id, contactType = "Website", contactValue = "https://www.ups.com"),
+                ShippingCompanyContact(shippingCompanyId = sc3Id, contactType = "Phone", contactValue = "+1-800-742-5877")
             ))
         }
     }

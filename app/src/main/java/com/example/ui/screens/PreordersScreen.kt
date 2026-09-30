@@ -1,7 +1,11 @@
 package com.example.ui.screens
 
 import com.example.ui.components.InlineReminderSelector
+import com.example.ui.components.MultiSelectChipGroup
 import com.example.ui.components.OtherFormTabContent
+import com.example.ui.components.PackageDetailsDialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.res.painterResource
 
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -82,6 +86,8 @@ fun PreordersScreen(
     val currency = userState?.currency ?: "$"
     val preordersList by viewModel.filteredPreordersState.collectAsState()
     val bookstores by viewModel.bookstoresState.collectAsState()
+    val allPackages by viewModel.allPackagesState.collectAsState()
+    val userAddresses by viewModel.userAddressesState.collectAsState()
 
     // Filter, Add, Search trigger states
     var showAddPreorderDialog by remember { mutableStateOf(false) }
@@ -91,6 +97,17 @@ fun PreordersScreen(
 
     // Calendar toggle
     val isCalendarView by viewModel.preorderIsCalendarView.collectAsState()
+
+    // Filter states for active filter badge
+    val preorderFilterStoreIds by viewModel.preorderFilterBookstores.collectAsState()
+    val preorderFilterStatuses by viewModel.preorderFilterStatuses.collectAsState()
+    val preorderFilterAuthor by viewModel.preorderFilterAuthor.collectAsState()
+    val preorderFilterBook by viewModel.preorderFilterBook.collectAsState()
+
+    val isFilterActive = preorderFilterStoreIds.isNotEmpty() ||
+            preorderFilterStatuses.isNotEmpty() ||
+            !preorderFilterAuthor.isNullOrBlank() ||
+            !preorderFilterBook.isNullOrBlank()
 
     // Timeframe selector for stats (0 = 7 days, 1 = Monthly, 2 = Yearly)
     var currentStatsTimeframe by remember { mutableStateOf(0) }
@@ -196,10 +213,19 @@ fun PreordersScreen(
                             onClick = { showFilterDialog = true },
                             modifier = Modifier.testTag("preorder_filter")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.FilterList,
-                                contentDescription = "Filter"
-                            )
+                            BadgedBox(
+                                badge = {
+                                    if (isFilterActive) {
+                                        Badge(containerColor = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FilterList,
+                                    contentDescription = "Filter",
+                                    tint = if (isFilterActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                                )
+                            }
                         }
 
                         // Action 4: Add Preorder
@@ -270,8 +296,8 @@ fun PreordersScreen(
                 }
             }
             var showCosts by remember(userState?.displayAmounts) { mutableStateOf(userState?.displayAmounts ?: false) }
-            val contrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.tertiary
-            val statsCardBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.tertiary.copy(alpha = 0.05f)
+            val contrastColor = if (!isDark) Color(0xFFFF5722) else MaterialTheme.colorScheme.primary
+            val statsCardBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
             val statsCardBorder = if (!isDark) BorderStroke(1.dp, Color(0xFFFF5722).copy(alpha = 0.15f)) else null
 
             if (!isCalendarView) {
@@ -386,13 +412,17 @@ fun PreordersScreen(
                                     it.preorder.rangedSaleDateStart in startNW..endNW
                                 }
                                 val upcomingNW = preordersNW.count { it.preorder.status.lowercase() == "upcoming" }
-                                val totalUpcomingNW = preordersNW.sumOf { it.preorder.price }
+                                val totalUpcomingNW = preordersNW
+                                    .filter { it.preorder.status.lowercase() == "upcoming" }
+                                    .sumOf { it.preorder.price }
 
                                 val preordersNM = preordersList.filter {
                                     it.preorder.rangedSaleDateStart in startNM..endNM
                                 }
                                 val upcomingNM = preordersNM.count { it.preorder.status.lowercase() == "upcoming" }
-                                val totalUpcomingNM = preordersNM.sumOf { it.preorder.price }
+                                val totalUpcomingNM = preordersNM
+                                    .filter { it.preorder.status.lowercase() == "upcoming" }
+                                    .sumOf { it.preorder.price }
 
                                 Row(
                                     modifier = Modifier
@@ -608,51 +638,144 @@ fun PreordersScreen(
                                     }
                                 }
 
-                                val preordersInScope = preordersList.filter {
-                                    it.preorder.rangedSaleDateStart in startTime..endTime
+                                val packagesByPreorderId = remember(allPackages) {
+                                    allPackages.filter { it.originTable == "preorders" }.associateBy { it.originId }
+                                }
+                                val addressesById = remember(userAddresses) {
+                                    userAddresses.associateBy { it.id }
                                 }
 
-                                val upcoming = preordersInScope.count { it.preorder.status.lowercase() == "upcoming" }
-                                val released = preordersInScope.count { it.preorder.status.lowercase() == "released" }
-                                val preordered = preordersInScope.count { it.preorder.status.lowercase() == "preordered" }
-                                val shipped = preordersInScope.count { it.preorder.status.lowercase() == "shipped" }
-                                val received = preordersInScope.count { it.preorder.status.lowercase() == "received" }
+                                val upcoming = preordersList.count {
+                                    it.preorder.status.lowercase().trim() == "upcoming" && it.preorder.rangedSaleDateStart in startTime..endTime
+                                }
+                                val released = preordersList.count {
+                                    it.preorder.status.lowercase().trim() == "released" && it.preorder.rangedSaleDateStart in startTime..endTime
+                                }
+                                val preordered = preordersList.count {
+                                    val status = it.preorder.status.lowercase().trim()
+                                    if (status == "preordered") {
+                                        val pkg = packagesByPreorderId[it.preorder.id]
+                                        val date = pkg?.purchaseDate ?: it.preorder.rangedSaleDateStart
+                                        date in startTime..endTime
+                                    } else false
+                                }
+                                val forwarded = preordersList.count {
+                                    val status = it.preorder.status.lowercase().trim()
+                                    if (status == "forwarded") {
+                                        val pkg = packagesByPreorderId[it.preorder.id]
+                                        val date = pkg?.storeShippingDate
+                                        date != null && date in startTime..endTime
+                                    } else false
+                                }
+                                val inSuite = preordersList.count {
+                                    val status = it.preorder.status.lowercase().trim()
+                                    if (status == "in suite") {
+                                        val pkg = packagesByPreorderId[it.preorder.id]
+                                        val date = pkg?.forwarderReceivedDate
+                                        date != null && date in startTime..endTime
+                                    } else false
+                                }
+                                val shipped = preordersList.count {
+                                    val status = it.preorder.status.lowercase().trim()
+                                    if (status == "shipped") {
+                                        val pkg = packagesByPreorderId[it.preorder.id]
+                                        val hasForwarding = it.preorder.shippingAddressId?.let { addrId ->
+                                            addressesById[addrId]?.forwardingServiceId != null
+                                        } ?: false
+                                        val date = if (hasForwarding) pkg?.forwarderShippedDate else pkg?.storeShippingDate
+                                        date != null && date in startTime..endTime
+                                    } else false
+                                }
+                                val received = preordersList.count {
+                                    val status = it.preorder.status.lowercase().trim()
+                                    if (status == "received") {
+                                        val pkg = packagesByPreorderId[it.preorder.id]
+                                        val date = pkg?.receivedDate
+                                        date != null && date in startTime..endTime
+                                    } else false
+                                }
 
-                                val totalSpent = preordersInScope
-                                    .filter { it.preorder.status.lowercase() in listOf("preordered", "shipped", "received") }
+                                val totalSpent = preordersList
+                                    .filter { item ->
+                                        val status = item.preorder.status.lowercase().trim()
+                                        if (status in listOf("preordered", "forwarded", "in suite", "shipped", "received")) {
+                                            val pkg = packagesByPreorderId[item.preorder.id]
+                                            val date = when (status) {
+                                                "preordered" -> pkg?.purchaseDate ?: item.preorder.rangedSaleDateStart
+                                                "forwarded" -> pkg?.storeShippingDate
+                                                "in suite" -> pkg?.forwarderReceivedDate
+                                                "shipped" -> {
+                                                    val hasForwarding = item.preorder.shippingAddressId?.let { addrId ->
+                                                        addressesById[addrId]?.forwardingServiceId != null
+                                                    } ?: false
+                                                    if (hasForwarding) pkg?.forwarderShippedDate else pkg?.storeShippingDate
+                                                }
+                                                "received" -> pkg?.receivedDate
+                                                else -> item.preorder.rangedSaleDateStart
+                                            }
+                                            date != null && date in startTime..endTime
+                                        } else false
+                                    }
                                     .sumOf { it.preorder.price }
-                                val totalUpcoming = preordersInScope.sumOf { it.preorder.price }
+                                val totalUpcoming = preordersList
+                                    .filter { it.preorder.status.lowercase().trim() == "upcoming" && it.preorder.rangedSaleDateStart in startTime..endTime }
+                                    .sumOf { it.preorder.price }
 
                                 val isPastTimeframe = pageLabel in listOf("Last Week", "Last Month", "Last Year")
 
                                 Column(modifier = Modifier.fillMaxWidth()) {
+                                    // Top Row: Upcoming, Released, Preordered
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceAround,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Upcoming", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Upcoming", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text("$upcoming", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFD84315) else MaterialTheme.colorScheme.outline)
                                         }
-                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Released", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Released", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text("$released", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFE65100) else Color(0xFFFF9800))
                                         }
-                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Preordered", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Preordered", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text("$preordered", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1976D2) else Color(0xFF2196F3))
                                         }
-                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                    }
+
+                                    Divider(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp),
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                    )
+
+                                    // Bottom Row: Forwarded, In Suite, Shipped, Received
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceAround,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Shipped", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Forwarded", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("$forwarded", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0EA5E9))
+                                        }
+                                        Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("In Suite", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("$inSuite", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD97706))
+                                        }
+                                        Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Text("Shipped", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text("$shipped", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1565C0) else MaterialTheme.colorScheme.primary)
                                         }
-                                        Divider(modifier = Modifier.height(30.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                        Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Received", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Received", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Text("$received", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF059669) else Color(0xFF10B981))
                                         }
                                     }
@@ -670,16 +793,16 @@ fun PreordersScreen(
                                             horizontalArrangement = Arrangement.SpaceAround,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
-                                                Text("Total Spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Text("${currency}${String.format("%.2f", totalSpent)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contrastColor)
-                                            }
                                             if (!isPastTimeframe) {
-                                                Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
                                                     Text("Total Upcoming", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                     Text("${currency}${String.format("%.2f", totalUpcoming)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                                 }
+                                                Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                                            }
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                                                Text("Total Spent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text("${currency}${String.format("%.2f", totalSpent)}", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = contrastColor)
                                             }
                                         }
                                     }
@@ -743,6 +866,8 @@ fun PreordersScreen(
                                 val statusColor = when (item.preorder.status.lowercase()) {
                                     "upcoming" -> Color(0xFF64748B)
                                     "preordered" -> Color(0xFF2563EB)
+                                    "forwarded" -> Color(0xFF0EA5E9)
+                                    "in suite" -> Color(0xFFD97706)
                                     "released" -> Color(0xFFF97316)
                                     "shipped" -> Color(0xFF8B5CF6)
                                     "received" -> Color(0xFF10B981)
@@ -893,7 +1018,7 @@ fun PreordersScreen(
                                         text = dateHeader,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.tertiary,
+                                        color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(top = 8.dp)
                                     )
                                 }
@@ -932,7 +1057,7 @@ fun PreordersScreen(
                                         text = monthHeader,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.tertiary,
+                                        color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(top = 8.dp)
                                     )
                                 }
@@ -971,7 +1096,7 @@ fun PreordersScreen(
                                         text = dateHeader,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 14.sp,
-                                        color = MaterialTheme.colorScheme.tertiary,
+                                        color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(top = 8.dp)
                                     )
                                 }
@@ -1036,9 +1161,42 @@ fun PreorderItemRow(
         )
     }
 
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val forwardingServices by viewModel.forwardingServicesState.collectAsState()
+    val allPackages by viewModel.allPackagesState.collectAsState()
+
+    val preorderAddress = remember(item.preorder.shippingAddressId, userAddresses) {
+        userAddresses.find { it.id == item.preorder.shippingAddressId }
+    }
+    val forwardingService = remember(preorderAddress, forwardingServices) {
+        preorderAddress?.forwardingServiceId?.let { fsId -> forwardingServices.find { it.id == fsId } }
+    }
+    val packageItem = remember(allPackages, item.preorder.id) {
+        allPackages.find { it.originTable == "preorders" && it.originId == item.preorder.id }
+    }
+
+    val curStatus = item.preorder.status.lowercase().trim()
+    val isStoredAtForwarder = forwardingService != null &&
+        curStatus !in listOf("shipped", "received") &&
+        packageItem?.forwarderShippedDate == null &&
+        (curStatus == "in suite" || packageItem?.forwarderReceivedDate != null)
+
+    val effectiveReceivedDate = packageItem?.forwarderReceivedDate ?: if (curStatus == "in suite") System.currentTimeMillis() else null
+
+    val hasForwardingAddress = remember(item.preorder.shippingAddressId, userAddresses, item.preorder.forwardShippingPrice, item.preorder.forwardTaxPrice) {
+        (userAddresses.find { it.id == item.preorder.shippingAddressId }?.forwardingServiceId != null) ||
+            item.preorder.forwardShippingPrice != null ||
+            item.preorder.forwardTaxPrice != null
+    }
+
+    val currentItem by rememberUpdatedState(item)
+    val currentUserAddresses by rememberUpdatedState(userAddresses)
+
     val accentColor = when (item.preorder.status.lowercase()) {
         "upcoming" -> Color(0xFF64748B) // Grey
         "preordered" -> Color(0xFF2563EB) // Blue
+        "forwarded" -> Color(0xFF0EA5E9) // Sky Blue
+        "in suite" -> Color(0xFFD97706) // Amber
         "released" -> Color(0xFFF97316) // Orange
         "shipped" -> Color(0xFF8B5CF6) // Purple
         "received" -> Color(0xFF10B981) // Green
@@ -1046,67 +1204,121 @@ fun PreorderItemRow(
     }
 
     val currentStatus = item.preorder.status.lowercase()
-    val canSwipeRight = currentStatus in listOf("upcoming", "released", "preordered", "shipped")
+    val canSwipeRight = currentStatus in if (hasForwardingAddress) {
+        listOf("upcoming", "released", "preordered", "forwarded", "in suite", "shipped")
+    } else {
+        listOf("upcoming", "released", "preordered", "shipped")
+    }
     val canSwipeLeft = true
     val density = LocalDensity.current
     val thresholdPx = remember(density) { with(density) { 48.dp.toPx() } }
 
-    key(item.preorder.id, item.preorder.status) {
+    key(item.preorder.id, item.preorder.status, item.preorder.shippingAddressId) {
         val dismissState = rememberSwipeToDismissBoxState(
             positionalThreshold = { totalDistance -> thresholdPx.coerceAtMost(totalDistance * 0.35f) },
             confirmValueChange = { dismissValue ->
-                if (dismissValue == SwipeToDismissBoxValue.StartToEnd && canSwipeRight) {
-                    val nextStatus = when (currentStatus) {
+                val currentPreorder = currentItem.preorder
+                val curStatus = currentPreorder.status.lowercase().trim()
+                val isFwdAddress = currentUserAddresses.find { it.id == currentPreorder.shippingAddressId }?.forwardingServiceId != null
+                val canSwipeRightNow = curStatus in if (isFwdAddress) {
+                    listOf("upcoming", "released", "preordered", "forwarded", "in suite", "shipped")
+                } else {
+                    listOf("upcoming", "released", "preordered", "shipped")
+                }
+
+                if (dismissValue == SwipeToDismissBoxValue.StartToEnd && canSwipeRightNow) {
+                    val nextStatus = when (curStatus) {
                         "upcoming", "released" -> "Preordered"
-                        "preordered" -> "Shipped"
+                        "preordered" -> if (isFwdAddress) "Forwarded" else "Shipped"
+                        "forwarded" -> "In Suite"
+                        "in suite" -> "Shipped"
                         "shipped" -> "Received"
-                        else -> item.preorder.status
+                        else -> currentPreorder.status
                     }
-                    if (nextStatus != item.preorder.status) {
-                        val newPreorder = item.preorder.copy(status = nextStatus)
-                        val msg = "${item.preorder.bookTitle}: Status changed to $nextStatus"
+                    if (nextStatus != currentPreorder.status) {
+                        val newPreorder = currentPreorder.copy(
+                            status = nextStatus,
+                            shippingAddressId = currentPreorder.shippingAddressId
+                        )
+                        val msg = "${currentPreorder.bookTitle}: Status changed to $nextStatus"
                         if (onStateChanged != null) {
-                            onStateChanged(item.preorder, newPreorder, msg)
+                            onStateChanged(currentPreorder, newPreorder, msg)
                         } else {
                             viewModel.updatePreorder(newPreorder)
                         }
                     }
                     false
                 } else if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                    when (currentStatus) {
+                    when (curStatus) {
                         "received" -> {
-                            val newPreorder = item.preorder.copy(status = "Shipped")
-                            val msg = "${item.preorder.bookTitle}: Status changed to Shipped"
+                            val newPreorder = currentPreorder.copy(
+                                status = "Shipped",
+                                shippingAddressId = currentPreorder.shippingAddressId
+                            )
+                            val msg = "${currentPreorder.bookTitle}: Status changed to Shipped"
                             if (onStateChanged != null) {
-                                onStateChanged(item.preorder, newPreorder, msg)
+                                onStateChanged(currentPreorder, newPreorder, msg)
                             } else {
                                 viewModel.updatePreorder(newPreorder)
                             }
                             false
                         }
                         "shipped" -> {
-                            val newPreorder = item.preorder.copy(status = "Preordered")
-                            val msg = "${item.preorder.bookTitle}: Status changed to Preordered"
+                            val prevStatus = if (isFwdAddress) "In Suite" else "Preordered"
+                            val newPreorder = currentPreorder.copy(
+                                status = prevStatus,
+                                shippingAddressId = currentPreorder.shippingAddressId
+                            )
+                            val msg = "${currentPreorder.bookTitle}: Status changed to $prevStatus"
                             if (onStateChanged != null) {
-                                onStateChanged(item.preorder, newPreorder, msg)
+                                onStateChanged(currentPreorder, newPreorder, msg)
+                            } else {
+                                viewModel.updatePreorder(newPreorder)
+                            }
+                            false
+                        }
+                        "in suite" -> {
+                            val newPreorder = currentPreorder.copy(
+                                status = "Forwarded",
+                                shippingAddressId = currentPreorder.shippingAddressId
+                            )
+                            val msg = "${currentPreorder.bookTitle}: Status changed to Forwarded"
+                            if (onStateChanged != null) {
+                                onStateChanged(currentPreorder, newPreorder, msg)
+                            } else {
+                                viewModel.updatePreorder(newPreorder)
+                            }
+                            false
+                        }
+                        "forwarded" -> {
+                            val newPreorder = currentPreorder.copy(
+                                status = "Preordered",
+                                shippingAddressId = currentPreorder.shippingAddressId
+                            )
+                            val msg = "${currentPreorder.bookTitle}: Status changed to Preordered"
+                            if (onStateChanged != null) {
+                                onStateChanged(currentPreorder, newPreorder, msg)
                             } else {
                                 viewModel.updatePreorder(newPreorder)
                             }
                             false
                         }
                         "preordered" -> {
-                            val prevStatus = if (System.currentTimeMillis() >= item.preorder.rangedSaleDateEnd) "Released" else "Upcoming"
-                            val newPreorder = item.preorder.copy(status = prevStatus)
-                            val msg = "${item.preorder.bookTitle}: Status changed to $prevStatus"
+                            val prevStatus = if (System.currentTimeMillis() >= currentPreorder.rangedSaleDateEnd) "Released" else "Upcoming"
+                            val newPreorder = currentPreorder.copy(
+                                status = prevStatus,
+                                shippingAddressId = currentPreorder.shippingAddressId
+                            )
+                            val msg = "${currentPreorder.bookTitle}: Status changed to $prevStatus"
                             if (onStateChanged != null) {
-                                onStateChanged(item.preorder, newPreorder, msg)
+                                onStateChanged(currentPreorder, newPreorder, msg)
                             } else {
                                 viewModel.updatePreorder(newPreorder)
                             }
                             false
                         }
                         else -> {
-                            onDeleted(item.preorder)
+                            onDeleted(currentPreorder)
                             true
                         }
                     }
@@ -1121,6 +1333,12 @@ fun PreorderItemRow(
             enableDismissFromEndToStart = canSwipeLeft,
             enableDismissFromStartToEnd = canSwipeRight,
             backgroundContent = {
+                val currentPreorder = currentItem.preorder
+                val curStatus = currentPreorder.status.lowercase().trim()
+                val isFwdAddress = (currentUserAddresses.find { it.id == currentPreorder.shippingAddressId }?.forwardingServiceId != null) ||
+                    currentPreorder.forwardShippingPrice != null ||
+                    currentPreorder.forwardTaxPrice != null
+
                 val direction = dismissState.dismissDirection
                 val target = dismissState.targetValue
                 val current = dismissState.currentValue
@@ -1135,17 +1353,21 @@ fun PreorderItemRow(
 
                 val color = when {
                     isStartToEnd -> {
-                        when (currentStatus) {
+                        when (curStatus) {
                             "upcoming", "released" -> Color(0xFF3B82F6).copy(alpha = 0.15f) // Blue
-                            "preordered" -> Color(0xFF8B5CF6).copy(alpha = 0.15f) // Purple
+                            "preordered" -> if (isFwdAddress) Color(0xFF0EA5E9).copy(alpha = 0.15f) else Color(0xFF8B5CF6).copy(alpha = 0.15f)
+                            "forwarded" -> Color(0xFFD97706).copy(alpha = 0.15f) // Amber
+                            "in suite" -> Color(0xFF8B5CF6).copy(alpha = 0.15f) // Purple
                             "shipped" -> Color(0xFF10B981).copy(alpha = 0.15f) // Green
                             else -> Color.Transparent
                         }
                     }
                     isEndToStart -> {
-                        when (currentStatus) {
+                        when (curStatus) {
                             "received" -> Color(0xFF8B5CF6).copy(alpha = 0.15f)
-                            "shipped" -> Color(0xFF3B82F6).copy(alpha = 0.15f)
+                            "shipped" -> if (isFwdAddress) Color(0xFFD97706).copy(alpha = 0.15f) else Color(0xFF3B82F6).copy(alpha = 0.15f)
+                            "in suite" -> Color(0xFF0EA5E9).copy(alpha = 0.15f)
+                            "forwarded" -> Color(0xFF3B82F6).copy(alpha = 0.15f)
                             "preordered" -> Color(0xFFF97316).copy(alpha = 0.15f)
                             else -> Color(0xFFEF4444).copy(alpha = 0.15f) // Red for delete
                         }
@@ -1159,17 +1381,21 @@ fun PreorderItemRow(
                 }
                 val icon = when {
                     isStartToEnd -> {
-                        when (currentStatus) {
+                        when (curStatus) {
                             "upcoming", "released" -> ImageVector.vectorResource(R.drawable.ic_shopping_bag_speed)
-                            "preordered" -> Icons.Default.LocalShipping
+                            "preordered" -> if (isFwdAddress) Icons.Default.AltRoute else Icons.Default.LocalShipping
+                            "forwarded" -> Icons.Default.Warehouse
+                            "in suite" -> Icons.Default.LocalShipping
                             "shipped" -> Icons.Default.CheckCircle
                             else -> null
                         }
                     }
                     isEndToStart -> {
-                        when (currentStatus) {
+                        when (curStatus) {
                             "received" -> Icons.Default.LocalShipping
-                            "shipped" -> ImageVector.vectorResource(R.drawable.ic_shopping_bag_speed)
+                            "shipped" -> if (isFwdAddress) Icons.Default.Warehouse else ImageVector.vectorResource(R.drawable.ic_shopping_bag_speed)
+                            "in suite" -> Icons.Default.AltRoute
+                            "forwarded" -> ImageVector.vectorResource(R.drawable.ic_shopping_bag_speed)
                             "preordered" -> Icons.AutoMirrored.Filled.Undo
                             else -> Icons.Default.Delete
                         }
@@ -1178,17 +1404,21 @@ fun PreorderItemRow(
                 }
                 val iconTint = when {
                     isStartToEnd -> {
-                        when (currentStatus) {
+                        when (curStatus) {
                             "upcoming", "released" -> Color(0xFF3B82F6)
-                            "preordered" -> Color(0xFF8B5CF6)
+                            "preordered" -> if (isFwdAddress) Color(0xFF0EA5E9) else Color(0xFF8B5CF6)
+                            "forwarded" -> Color(0xFFD97706)
+                            "in suite" -> Color(0xFF8B5CF6)
                             "shipped" -> Color(0xFF10B981)
                             else -> Color.Transparent
                         }
                     }
                     isEndToStart -> {
-                        when (currentStatus) {
+                        when (curStatus) {
                             "received" -> Color(0xFF8B5CF6)
-                            "shipped" -> Color(0xFF3B82F6)
+                            "shipped" -> if (isFwdAddress) Color(0xFFD97706) else Color(0xFF3B82F6)
+                            "in suite" -> Color(0xFF0EA5E9)
+                            "forwarded" -> Color(0xFF3B82F6)
                             "preordered" -> Color(0xFFF97316)
                             else -> Color(0xFFEF4444)
                         }
@@ -1226,6 +1456,8 @@ fun PreorderItemRow(
                     containerColor = when (item.preorder.status.lowercase()) {
                         "upcoming" -> Color(0xFF64748B).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "preordered" -> Color(0xFF2563EB).copy(alpha = if (isDark) 0.12f else 0.06f)
+                        "forwarded" -> Color(0xFF0EA5E9).copy(alpha = if (isDark) 0.12f else 0.06f)
+                        "in suite" -> Color(0xFFD97706).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "released" -> Color(0xFFF97316).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "shipped" -> Color(0xFF8B5CF6).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "received" -> Color(0xFF10B981).copy(alpha = if (isDark) 0.12f else 0.06f)
@@ -1296,6 +1528,14 @@ fun PreorderItemRow(
                                 )
                             }
                         }
+
+                        if (isStoredAtForwarder) {
+                            com.example.ui.components.StorageCountdownPill(
+                                forwarderReceivedDate = effectiveReceivedDate,
+                                storageDays = forwardingService?.storageDays,
+                                modifier = Modifier.align(Alignment.BottomCenter)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(10.dp))
@@ -1345,6 +1585,8 @@ fun PreorderItemRow(
                         val statusContainerColor = when (item.preorder.status.lowercase()) {
                             "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
                             "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+                            "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
+                            "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
                             "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
                             "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
                             "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
@@ -1353,6 +1595,8 @@ fun PreorderItemRow(
                         val statusOnContainerColor = when (item.preorder.status.lowercase()) {
                             "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
                             "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+                            "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+                            "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
                             "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
                             "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
                             "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
@@ -1360,6 +1604,8 @@ fun PreorderItemRow(
                         }
                         val statusIcon = when (item.preorder.status.lowercase()) {
                             "upcoming", "preordered" -> Icons.Default.ShoppingBag
+                            "forwarded" -> Icons.Default.AltRoute
+                            "in suite" -> Icons.Default.Warehouse
                             "released" -> Icons.Default.NewReleases
                             "shipped" -> Icons.Default.LocalShipping
                             "received" -> Icons.Default.CheckCircle
@@ -1494,9 +1740,11 @@ fun AddPreorderDialog(
     val currency = userState?.currency ?: "$"
     val userAddresses by viewModel.userAddressesState.collectAsState()
     val forwardingServices by viewModel.forwardingServicesState.collectAsState()
-    var selectedShippingAddressId by remember { mutableStateOf<Int?>(null) }
+    val defaultAddrId = remember(userAddresses) { userAddresses.find { it.isDefault }?.id }
+    var selectedShippingAddressId by remember(defaultAddrId) { mutableStateOf(defaultAddrId) }
     var selectedCurrency by remember { mutableStateOf(userState?.currency ?: "$") }
     var basePriceStr by remember { mutableStateOf("") }
+    var discountedAmountStr by remember { mutableStateOf("") }
     var shippingPriceStr by remember { mutableStateOf("") }
     var taxPriceStr by remember { mutableStateOf("") }
     var forwardShippingPriceStr by remember { mutableStateOf("") }
@@ -1522,6 +1770,22 @@ fun AddPreorderDialog(
     val initialTargetDate = if (saleDateEnd > 0L) saleDateEnd else saleDateStart
     var status by remember { mutableStateOf(if (initialTargetDate > System.currentTimeMillis()) "Upcoming" else "Released") }
     
+    val isForwardingAddress = remember(selectedShippingAddressId, userAddresses) {
+        userAddresses.find { it.id == selectedShippingAddressId }?.forwardingServiceId != null
+    }
+    val availableStatuses = remember(isForwardingAddress) {
+        if (isForwardingAddress) {
+            listOf("Upcoming", "Released", "Preordered", "Forwarded", "In Suite", "Shipped", "Received")
+        } else {
+            listOf("Upcoming", "Released", "Preordered", "Shipped", "Received")
+        }
+    }
+    LaunchedEffect(isForwardingAddress) {
+        if (!isForwardingAddress && status in listOf("Forwarded", "In Suite")) {
+            status = "Preordered"
+        }
+    }
+
     LaunchedEffect(saleDateStart, saleDateEnd) {
         val targetDate = if (saleDateEnd > 0L) saleDateEnd else saleDateStart
         status = if (targetDate > System.currentTimeMillis()) "Upcoming" else "Released"
@@ -1648,7 +1912,7 @@ fun AddPreorderDialog(
                                         Text(status, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     }
                                     DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                                        listOf("Upcoming", "Released", "Preordered", "Shipped", "Received").forEach { st ->
+                                        availableStatuses.forEach { st ->
                                             DropdownMenuItem(
                                                 text = { Text(st) },
                                                 onClick = {
@@ -1752,6 +2016,8 @@ fun AddPreorderDialog(
                                     priceStr = it
                                 }
                             },
+                            discountedAmountStr = discountedAmountStr,
+                            onDiscountedAmountChange = { discountedAmountStr = it },
                             shippingPriceStr = shippingPriceStr,
                             onShippingPriceChange = { shippingPriceStr = it },
                             taxPriceStr = taxPriceStr,
@@ -1792,6 +2058,7 @@ fun AddPreorderDialog(
                             shippingAddressId = selectedShippingAddressId,
                             currency = selectedCurrency,
                             basePrice = parsedBase,
+                            discountedAmount = discountedAmountStr.toDoubleOrNull(),
                             shippingPrice = shippingPriceStr.toDoubleOrNull(),
                             taxPrice = taxPriceStr.toDoubleOrNull(),
                             forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
@@ -1825,20 +2092,36 @@ fun EditPreorderDialog(
     val currency = userState?.currency ?: "$"
     val userAddresses by viewModel.userAddressesState.collectAsState()
     val forwardingServices by viewModel.forwardingServicesState.collectAsState()
-    var selectedShippingAddressId by remember { mutableStateOf<Int?>(pr.shippingAddressId) }
-    var selectedCurrency by remember { mutableStateOf(pr.currency ?: (userState?.currency ?: "$")) }
-    var basePriceStr by remember { mutableStateOf(pr.basePrice?.toString() ?: "") }
-    var shippingPriceStr by remember { mutableStateOf(pr.shippingPrice?.toString() ?: "") }
-    var taxPriceStr by remember { mutableStateOf(pr.taxPrice?.toString() ?: "") }
-    var forwardShippingPriceStr by remember { mutableStateOf(pr.forwardShippingPrice?.toString() ?: "") }
-    var forwardTaxPriceStr by remember { mutableStateOf(pr.forwardTaxPrice?.toString() ?: "") }
+    var selectedShippingAddressId by remember(pr.id, pr.shippingAddressId) { mutableStateOf<Int?>(pr.shippingAddressId) }
+    var selectedCurrency by remember(pr.id, pr.currency) { mutableStateOf(pr.currency ?: (userState?.currency ?: "$")) }
+    var basePriceStr by remember(pr.id, pr.basePrice) { mutableStateOf(pr.basePrice?.toString() ?: "") }
+    var discountedAmountStr by remember(pr.id, pr.discountedAmount) { mutableStateOf(pr.discountedAmount?.toString() ?: "") }
+    var shippingPriceStr by remember(pr.id, pr.shippingPrice) { mutableStateOf(pr.shippingPrice?.toString() ?: "") }
+    var taxPriceStr by remember(pr.id, pr.taxPrice) { mutableStateOf(pr.taxPrice?.toString() ?: "") }
+    var forwardShippingPriceStr by remember(pr.id, pr.forwardShippingPrice) { mutableStateOf(pr.forwardShippingPrice?.toString() ?: "") }
+    var forwardTaxPriceStr by remember(pr.id, pr.forwardTaxPrice) { mutableStateOf(pr.forwardTaxPrice?.toString() ?: "") }
 
-    var selectedBookstoreId by remember { mutableStateOf(pr.bookstoreId) }
-    var bookTitle by remember { mutableStateOf(pr.bookTitle) }
-    var bookAuthor by remember { mutableStateOf(pr.bookAuthor) }
-    var description by remember { mutableStateOf(pr.description) }
-    var priceStr by remember { mutableStateOf(pr.price.toString()) }
-    var status by remember { mutableStateOf(pr.status) }
+    var selectedBookstoreId by remember(pr.id, pr.bookstoreId) { mutableStateOf(pr.bookstoreId) }
+    var bookTitle by remember(pr.id, pr.bookTitle) { mutableStateOf(pr.bookTitle) }
+    var bookAuthor by remember(pr.id, pr.bookAuthor) { mutableStateOf(pr.bookAuthor) }
+    var description by remember(pr.id, pr.description) { mutableStateOf(pr.description) }
+    var priceStr by remember(pr.id, pr.price) { mutableStateOf(pr.price.toString()) }
+    var status by remember(pr.id, pr.status) { mutableStateOf(pr.status) }
+    val isForwardingAddress = remember(selectedShippingAddressId, userAddresses) {
+        userAddresses.find { it.id == selectedShippingAddressId }?.forwardingServiceId != null
+    }
+    val availableStatuses = remember(isForwardingAddress) {
+        if (isForwardingAddress) {
+            listOf("Upcoming", "Released", "Preordered", "Forwarded", "In Suite", "Shipped", "Received")
+        } else {
+            listOf("Upcoming", "Released", "Preordered", "Shipped", "Received")
+        }
+    }
+    LaunchedEffect(isForwardingAddress, userAddresses.isNotEmpty()) {
+        if (userAddresses.isNotEmpty() && !isForwardingAddress && status in listOf("Forwarded", "In Suite")) {
+            status = "Preordered"
+        }
+    }
     var imageUrl by remember { mutableStateOf(pr.picturePath ?: "") }
     var rating by remember { mutableStateOf(pr.rating) }
     var reminderEnabled by remember { mutableStateOf(pr.reminderEnabled) }
@@ -1854,10 +2137,34 @@ fun EditPreorderDialog(
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
 
     var selectedTab by remember { mutableStateOf(0) }
+    var showPackageDialog by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Edit Preorder", fontWeight = FontWeight.Bold) },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Edit Preorder",
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { showPackageDialog = true },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_package_2),
+                        contentDescription = "Package Details",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        },
         text = {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
@@ -1967,7 +2274,7 @@ fun EditPreorderDialog(
                                         Text(status, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     }
                                     DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                                        listOf("Upcoming", "Released", "Preordered", "Shipped", "Received").forEach { st ->
+                                        availableStatuses.forEach { st ->
                                             DropdownMenuItem(
                                                 text = { Text(st) },
                                                 onClick = {
@@ -2071,6 +2378,8 @@ fun EditPreorderDialog(
                                     priceStr = it
                                 }
                             },
+                            discountedAmountStr = discountedAmountStr,
+                            onDiscountedAmountChange = { discountedAmountStr = it },
                             shippingPriceStr = shippingPriceStr,
                             onShippingPriceChange = { shippingPriceStr = it },
                             taxPriceStr = taxPriceStr,
@@ -2123,6 +2432,7 @@ fun EditPreorderDialog(
                                     shippingAddressId = selectedShippingAddressId,
                                     currency = selectedCurrency,
                                     basePrice = parsedBase,
+                                    discountedAmount = discountedAmountStr.toDoubleOrNull(),
                                     shippingPrice = shippingPriceStr.toDoubleOrNull(),
                                     taxPrice = taxPriceStr.toDoubleOrNull(),
                                     forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
@@ -2141,117 +2451,113 @@ fun EditPreorderDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+
+    if (showPackageDialog) {
+        PackageDetailsDialog(
+            originTable = "preorders",
+            originId = pr.id,
+            viewModel = viewModel,
+            hasForwardingAddress = isForwardingAddress,
+            onDismiss = { showPackageDialog = false }
+        )
+    }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PreorderFilterDialog(
     viewModel: BookishViewModel,
     bookstores: List<Bookstore>,
     onDismiss: () -> Unit
 ) {
+    val initialStoreIds by viewModel.preorderFilterBookstores.collectAsState()
+    val initialStatuses by viewModel.preorderFilterStatuses.collectAsState()
+    val initialAuthor by viewModel.preorderFilterAuthor.collectAsState()
+    val initialBook by viewModel.preorderFilterBook.collectAsState()
+
+    var selectedStoreIds by remember(initialStoreIds) { mutableStateOf(initialStoreIds) }
+    var selectedStatuses by remember(initialStatuses) { mutableStateOf(initialStatuses) }
+    var authorText by remember(initialAuthor) { mutableStateOf(initialAuthor ?: "") }
+    var bookText by remember(initialBook) { mutableStateOf(initialBook ?: "") }
+
+    val userAddresses by viewModel.userAddressesState.collectAsState()
+    val hasAnyForwardingAddress = remember(userAddresses) {
+        userAddresses.any { it.forwardingServiceId != null }
+    }
+    val statusFilterItems = remember(hasAnyForwardingAddress) {
+        if (hasAnyForwardingAddress) {
+            listOf("Upcoming", "Released", "Preordered", "Forwarded", "In Suite", "Shipped", "Received")
+        } else {
+            listOf("Upcoming", "Released", "Preordered", "Shipped", "Received")
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
         title = { Text("Filter Preorders", fontWeight = FontWeight.Bold) },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Bookstore Filter
-                val currentStoreId by viewModel.preorderFilterBookstore.collectAsState()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Bookstore: ", modifier = Modifier.weight(1f))
-                    var expandedStore by remember { mutableStateOf(false) }
-                    Box {
-                        OutlinedButton(onClick = { expandedStore = true }) {
-                            Text(bookstores.find { it.id == currentStoreId }?.name ?: "All")
-                        }
-                        DropdownMenu(expanded = expandedStore, onDismissRequest = { expandedStore = false }) {
-                            DropdownMenuItem(
-                                text = { Text("All") },
-                                onClick = {
-                                    viewModel.preorderFilterBookstore.value = null
-                                    expandedStore = false
-                                }
-                            )
-                            bookstores.forEach { store ->
-                                DropdownMenuItem(
-                                    text = { Text(store.name) },
-                                    onClick = {
-                                        viewModel.preorderFilterBookstore.value = store.id
-                                        expandedStore = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
+                MultiSelectChipGroup(
+                    title = "Status",
+                    items = statusFilterItems,
+                    selectedItems = selectedStatuses,
+                    onSelectionChanged = { selectedStatuses = it },
+                    labelProvider = { it }
+                )
 
-                // Status Filter
-                val currentStatus by viewModel.preorderFilterStatus.collectAsState()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Status: ", modifier = Modifier.weight(1f))
-                    var expandedStatus by remember { mutableStateOf(false) }
-                    Box {
-                        OutlinedButton(onClick = { expandedStatus = true }) {
-                            Text(currentStatus ?: "All")
-                        }
-                        DropdownMenu(expanded = expandedStatus, onDismissRequest = { expandedStatus = false }) {
-                            DropdownMenuItem(
-                                text = { Text("All") },
-                                onClick = {
-                                    viewModel.preorderFilterStatus.value = null
-                                    expandedStatus = false
-                                }
-                            )
-                            listOf("Upcoming", "Released", "Preordered", "Shipped", "Received").forEach { st ->
-                                DropdownMenuItem(
-                                    text = { Text(st) },
-                                    onClick = {
-                                        viewModel.preorderFilterStatus.value = st
-                                        expandedStatus = false
-                                    }
-                                )
-                            }
-                        }
-                    }
+                if (bookstores.isNotEmpty()) {
+                    MultiSelectChipGroup(
+                        title = "Bookstore",
+                        items = bookstores.map { it.id },
+                        selectedItems = selectedStoreIds,
+                        onSelectionChanged = { selectedStoreIds = it },
+                        labelProvider = { id -> bookstores.find { it.id == id }?.name ?: "" }
+                    )
                 }
-
-                // Freeform Author / Book Filters
-                var authorText by remember { mutableStateOf(viewModel.preorderFilterAuthor.value ?: "") }
-                var bookText by remember { mutableStateOf(viewModel.preorderFilterBook.value ?: "") }
 
                 OutlinedTextField(
                     value = authorText,
-                    onValueChange = {
-                        authorText = it
-                        viewModel.preorderFilterAuthor.value = if (it.isBlank()) null else it
-                    },
+                    onValueChange = { authorText = it },
                     label = { Text("Filter by Author Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = bookText,
-                    onValueChange = {
-                        bookText = it
-                        viewModel.preorderFilterBook.value = if (it.isBlank()) null else it
-                    },
+                    onValueChange = { bookText = it },
                     label = { Text("Filter by Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) {
+            Button(
+                onClick = {
+                    viewModel.preorderFilterBookstores.value = selectedStoreIds
+                    viewModel.preorderFilterStatuses.value = selectedStatuses
+                    viewModel.preorderFilterAuthor.value = if (authorText.isBlank()) null else authorText
+                    viewModel.preorderFilterBook.value = if (bookText.isBlank()) null else bookText
+                    onDismiss()
+                }
+            ) {
                 Text("Apply")
             }
         },
         dismissButton = {
             TextButton(
                 onClick = {
-                    viewModel.preorderFilterBookstore.value = null
-                    viewModel.preorderFilterStatus.value = null
+                    viewModel.preorderFilterBookstores.value = emptySet()
+                    viewModel.preorderFilterStatuses.value = emptySet()
                     viewModel.preorderFilterAuthor.value = null
                     viewModel.preorderFilterBook.value = null
                     onDismiss()

@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
+import coil.compose.AsyncImage
+import com.example.ui.components.ImageViewerDialog
 import com.example.data.Bookstore
 import com.example.data.ForwardingService
 import com.example.data.SubscriptionType
@@ -78,6 +81,7 @@ fun ProfileScreen(
     val forwardingServices by viewModel.forwardingServicesState.collectAsState()
     var showAddAddressDialog by remember { mutableStateOf(false) }
     var editingAddress by remember { mutableStateOf<UserAddress?>(null) }
+    var previewImageUrl by remember { mutableStateOf<String?>(null) }
 
     fun autoSave(
         username: String = editUsername,
@@ -465,6 +469,7 @@ fun ProfileScreen(
                                 for (address in userAddresses) {
                                     val linkedService = forwardingServices.find { it.id == address.forwardingServiceId }
                                     val isDark = isSystemInDarkTheme()
+                                    val hasPicture = linkedService != null && !linkedService.profilePic.isNullOrEmpty() && linkedService.profilePic != "ic_launcher_foreground"
 
                                     Card(
                                         modifier = Modifier
@@ -479,13 +484,47 @@ fun ProfileScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(IntrinsicSize.Min)
-                                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            // Left Column: Address information
+                                            // Left: Forwarding service picture or local shipping icon
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(42.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                                    .then(
+                                                        if (hasPicture) {
+                                                            Modifier.clickable { previewImageUrl = linkedService?.profilePic }
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    ),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                if (hasPicture) {
+                                                    AsyncImage(
+                                                        model = linkedService!!.profilePic,
+                                                        contentDescription = "${linkedService.name} Picture",
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        imageVector = Icons.Default.LocalShipping,
+                                                        contentDescription = linkedService?.name ?: "Shipping",
+                                                        tint = if (linkedService != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.width(10.dp))
+
+                                            // Middle Column: Address information
                                             Column(
                                                 modifier = Modifier.weight(1f),
-                                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                                verticalArrangement = Arrangement.spacedBy(1.dp)
                                             ) {
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically,
@@ -494,7 +533,8 @@ fun ProfileScreen(
                                                     Text(
                                                         text = address.streetAddress1,
                                                         fontWeight = FontWeight.Bold,
-                                                        fontSize = 15.sp
+                                                        fontSize = 14.5.sp,
+                                                        lineHeight = 18.sp
                                                     )
                                                     if (address.isDefault) {
                                                         Surface(
@@ -504,9 +544,9 @@ fun ProfileScreen(
                                                             Text(
                                                                 text = "DEFAULT",
                                                                 color = MaterialTheme.colorScheme.onPrimary,
-                                                                fontSize = 9.5.sp,
+                                                                fontSize = 9.sp,
                                                                 fontWeight = FontWeight.Bold,
-                                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                                             )
                                                         }
                                                     }
@@ -515,30 +555,37 @@ fun ProfileScreen(
                                                 if (address.streetAddress2.isNotBlank()) {
                                                     Text(
                                                         text = address.streetAddress2,
-                                                        fontSize = 13.sp,
+                                                        fontSize = 12.5.sp,
+                                                        lineHeight = 16.sp,
                                                         color = MaterialTheme.colorScheme.onSurface
                                                     )
                                                 }
 
-                                                val locationLine = buildString {
-                                                    append(address.city)
-                                                    if (address.stateProvinceRegion.isNotBlank()) {
-                                                        append(", ")
-                                                        append(address.stateProvinceRegion)
-                                                    }
+                                                if (address.city.isNotBlank()) {
+                                                    Text(
+                                                        text = address.city,
+                                                        fontSize = 12.sp,
+                                                        lineHeight = 15.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+
+                                                val regionZipLine = buildString {
+                                                    append(address.stateProvinceRegion)
                                                     if (address.postalCode.isNotBlank()) {
-                                                        append(" ")
+                                                        if (isNotEmpty()) append(" ")
                                                         append(address.postalCode)
                                                     }
                                                     if (address.country.isNotBlank()) {
-                                                        append(", ")
+                                                        if (isNotEmpty()) append(", ")
                                                         append(address.country)
                                                     }
                                                 }
-                                                if (locationLine.isNotBlank()) {
+                                                if (regionZipLine.isNotBlank()) {
                                                     Text(
-                                                        text = locationLine,
+                                                        text = regionZipLine,
                                                         fontSize = 12.sp,
+                                                        lineHeight = 15.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
@@ -1323,6 +1370,13 @@ fun ProfileScreen(
                 }
             )
         }
+
+        previewImageUrl?.let { url ->
+            ImageViewerDialog(
+                imageUrl = url,
+                onDismiss = { previewImageUrl = null }
+            )
+        }
     }
 }
 
@@ -1677,6 +1731,7 @@ private fun AddressFormDialog(
     onSave: (UserAddress) -> Unit,
     onDelete: ((UserAddress) -> Unit)? = null
 ) {
+    val context = LocalContext.current
     var streetAddress1 by remember { mutableStateOf(initialAddress?.streetAddress1 ?: "") }
     var streetAddress2 by remember { mutableStateOf(initialAddress?.streetAddress2 ?: "") }
     var city by remember { mutableStateOf(initialAddress?.city ?: "") }
@@ -1686,9 +1741,34 @@ private fun AddressFormDialog(
     var selectedForwardingServiceId by remember { mutableStateOf(initialAddress?.forwardingServiceId) }
     var isDefault by remember { mutableStateOf(initialAddress?.isDefault ?: false) }
 
+    var street1Error by remember { mutableStateOf(false) }
+    var cityError by remember { mutableStateOf(false) }
+    var postalCodeError by remember { mutableStateOf(false) }
+    var countryError by remember { mutableStateOf(false) }
+
     var expandedForwardingDropdown by remember { mutableStateOf(false) }
-    var validationError by remember { mutableStateOf<String?>(null) }
+    var expandedCountryDropdown by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    val allCountries = remember {
+        val isoCountries = Locale.getISOCountries()
+            .map { Locale("", it).displayCountry }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sorted()
+        if (isoCountries.isNotEmpty()) isoCountries else listOf(
+            "Australia", "Austria", "Belgium", "Brazil", "Canada", "China", "Denmark",
+            "Finland", "France", "Germany", "Hong Kong", "Ireland", "Italy", "Japan",
+            "Mexico", "Netherlands", "New Zealand", "Norway", "Poland", "Portugal",
+            "Singapore", "South Korea", "Spain", "Sweden", "Switzerland", "Taiwan",
+            "United Kingdom", "United States"
+        )
+    }
+
+    val filteredCountries = remember(country, allCountries) {
+        if (country.isBlank()) allCountries
+        else allCountries.filter { it.contains(country, ignoreCase = true) }
+    }
 
     val selectedForwardingService = forwardingServices.find { it.id == selectedForwardingServiceId }
 
@@ -1719,6 +1799,7 @@ private fun AddressFormDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .imePadding()
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -1774,11 +1855,20 @@ private fun AddressFormDialog(
                     value = streetAddress1,
                     onValueChange = {
                         streetAddress1 = it
-                        validationError = null
+                        if (street1Error && it.isNotBlank()) {
+                            street1Error = false
+                        }
                     },
                     label = { Text("Street Address 1 *") },
                     placeholder = { Text("e.g. 123 Main St") },
                     leadingIcon = { Icon(Icons.Default.Home, contentDescription = null) },
+                    isError = street1Error,
+                    supportingText = if (street1Error) {
+                        { Text("Street address is mandatory", color = MaterialTheme.colorScheme.error) }
+                    } else null,
+                    trailingIcon = if (street1Error) {
+                        { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                    } else null,
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1803,11 +1893,20 @@ private fun AddressFormDialog(
                     value = city,
                     onValueChange = {
                         city = it
-                        validationError = null
+                        if (cityError && it.isNotBlank()) {
+                            cityError = false
+                        }
                     },
                     label = { Text("City *") },
                     placeholder = { Text("City") },
                     leadingIcon = { Icon(Icons.Default.LocationCity, contentDescription = null) },
+                    isError = cityError,
+                    supportingText = if (cityError) {
+                        { Text("City is mandatory", color = MaterialTheme.colorScheme.error) }
+                    } else null,
+                    trailingIcon = if (cityError) {
+                        { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                    } else null,
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1830,28 +1929,96 @@ private fun AddressFormDialog(
                 // Postal Code
                 OutlinedTextField(
                     value = postalCode,
-                    onValueChange = { postalCode = it },
-                    label = { Text("Postal / ZIP") },
+                    onValueChange = {
+                        postalCode = it
+                        if (postalCodeError && it.isNotBlank()) {
+                            postalCodeError = false
+                        }
+                    },
+                    label = { Text("Postal / ZIP *") },
                     placeholder = { Text("Postal Code") },
                     leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                    isError = postalCodeError,
+                    supportingText = if (postalCodeError) {
+                        { Text("Postal / ZIP code is mandatory", color = MaterialTheme.colorScheme.error) }
+                    } else null,
+                    trailingIcon = if (postalCodeError) {
+                        { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                    } else null,
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("address_form_postal")
                 )
 
-                // Country
-                OutlinedTextField(
-                    value = country,
-                    onValueChange = { country = it },
-                    label = { Text("Country") },
-                    placeholder = { Text("Country") },
-                    leadingIcon = { Icon(Icons.Default.Public, contentDescription = null) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("address_form_country")
-                )
+                // Country with Dropdown Menu
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = country,
+                        onValueChange = {
+                            country = it
+                            expandedCountryDropdown = true
+                            if (countryError && it.isNotBlank()) {
+                                countryError = false
+                            }
+                        },
+                        label = { Text("Country *") },
+                        placeholder = { Text("Select or type country") },
+                        leadingIcon = { Icon(Icons.Default.Public, contentDescription = null) },
+                        isError = countryError,
+                        supportingText = if (countryError) {
+                            { Text("Country is mandatory", color = MaterialTheme.colorScheme.error) }
+                        } else null,
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (countryError) {
+                                    Icon(
+                                        Icons.Default.Error,
+                                        contentDescription = "Error",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(end = 4.dp)
+                                    )
+                                }
+                                IconButton(onClick = { expandedCountryDropdown = !expandedCountryDropdown }) {
+                                    Icon(
+                                        imageVector = if (expandedCountryDropdown) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                        contentDescription = "Select country"
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("address_form_country")
+                    )
+                    DropdownMenu(
+                        expanded = expandedCountryDropdown,
+                        onDismissRequest = { expandedCountryDropdown = false },
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .heightIn(max = 280.dp)
+                    ) {
+                        if (filteredCountries.isEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("No matching country found", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = {}
+                            )
+                        } else {
+                            filteredCountries.take(50).forEach { item ->
+                                DropdownMenuItem(
+                                    text = { Text(item) },
+                                    leadingIcon = { Icon(Icons.Default.Place, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                    onClick = {
+                                        country = item
+                                        expandedCountryDropdown = false
+                                        countryError = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
 
                 // Default Address Switch
                 Row(
@@ -1886,15 +2053,6 @@ private fun AddressFormDialog(
                         modifier = Modifier.testTag("address_form_default_switch")
                     )
                 }
-
-                if (validationError != null) {
-                    Text(
-                        text = validationError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
             }
         },
         confirmButton = {
@@ -1911,12 +2069,17 @@ private fun AddressFormDialog(
 
                 Button(
                     onClick = {
-                        if (streetAddress1.isBlank()) {
-                            validationError = "Please enter the street address"
-                            return@Button
-                        }
-                        if (city.isBlank()) {
-                            validationError = "Please enter the city"
+                        val hasStreetError = streetAddress1.isBlank()
+                        val hasCityError = city.isBlank()
+                        val hasPostalError = postalCode.isBlank()
+                        val hasCountryError = country.isBlank()
+
+                        if (hasStreetError || hasCityError || hasPostalError || hasCountryError) {
+                            street1Error = hasStreetError
+                            cityError = hasCityError
+                            postalCodeError = hasPostalError
+                            countryError = hasCountryError
+                            Toast.makeText(context, "Please fill in all mandatory fields", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
                         onSave(

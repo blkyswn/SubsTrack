@@ -51,6 +51,17 @@ class ReminderReceiver : BroadcastReceiver() {
             } else {
                 "Your preorder is releasing soon!"
             }
+        } else if (type == "forwarding_storage") {
+            smallIconRes = com.example.R.drawable.ic_package_2
+            notificationTitle = "Storage Alert: $title"
+            val daysLeft = intent.getIntExtra("daysLeft", 0)
+            notificationText = if (daysLeft == 0) {
+                if (book.isNotEmpty()) "Storage expires today for '$book' at $title!" else "Storage expires today at $title!"
+            } else if (daysLeft == 1) {
+                if (book.isNotEmpty()) "1 day of storage left for '$book' at $title!" else "1 day of storage left at $title!"
+            } else {
+                if (book.isNotEmpty()) "$daysLeft days of storage left for '$book' at $title!" else "$daysLeft days of storage left at $title!"
+            }
         } else {
             smallIconRes = com.example.R.drawable.ic_subscriptions_auto_stories
             notificationTitle = "Subscription Renewal: $title"
@@ -240,6 +251,77 @@ object ReminderScheduler {
             }
         } catch (e: Exception) {
             Log.e("ReminderScheduler", "Failed to cancel sub alarm", e)
+        }
+    }
+
+    fun scheduleForwardingStorageReminder(
+        context: Context,
+        packageId: Int,
+        serviceName: String,
+        bookTitle: String,
+        limitDate: Long,
+        daysLeftOffset: Int,
+        hour: Int,
+        minute: Int
+    ) {
+        try {
+            var targetTimeMs = calculateReminderTime(limitDate, daysLeftOffset, hour, minute)
+            if (targetTimeMs <= System.currentTimeMillis()) {
+                if (limitDate >= System.currentTimeMillis() - 24 * 60 * 60 * 1000L) {
+                    targetTimeMs = System.currentTimeMillis() + 1000L
+                } else {
+                    return
+                }
+            }
+
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(context, ReminderReceiver::class.java).apply {
+                action = "com.example.ACTION_REMINDER"
+                putExtra("type", "forwarding_storage")
+                putExtra("id", packageId)
+                putExtra("title", serviceName)
+                putExtra("book", bookTitle)
+                putExtra("daysLeft", daysLeftOffset)
+                putExtra("date", limitDate)
+            }
+
+            val requestCode = 300000 + packageId
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, targetTimeMs, pendingIntent)
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, targetTimeMs, pendingIntent)
+            }
+            Log.d("ReminderScheduler", "Scheduled storage reminder for $serviceName ($bookTitle) at $targetTimeMs")
+        } catch (e: Exception) {
+            Log.e("ReminderScheduler", "Failed to schedule storage alarm", e)
+        }
+    }
+
+    fun cancelForwardingStorageReminder(context: Context, packageId: Int) {
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(context, ReminderReceiver::class.java).apply {
+                action = "com.example.ACTION_REMINDER"
+            }
+            val requestCode = 300000 + packageId
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pendingIntent != null) {
+                alarmManager.cancel(pendingIntent)
+            }
+        } catch (e: Exception) {
+            Log.e("ReminderScheduler", "Failed to cancel storage alarm", e)
         }
     }
 

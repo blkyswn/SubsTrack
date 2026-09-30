@@ -52,7 +52,12 @@ data class ForwardingService(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val name: String,
     val website: String,
-    val profilePic: String?
+    val profilePic: String?,
+    val storageDays: Int? = null,
+    val reminderEnabled: Boolean = false,
+    val reminderDDayOffset: Int = 0,
+    val reminderHour: Int = 8,
+    val reminderMinute: Int = 0
 )
 
 @Entity(
@@ -69,6 +74,32 @@ data class ForwardingService(
 data class ForwardingServiceContact(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val forwardingServiceId: Int,
+    val contactType: String, // "Website", "Email", "Phone", or custom
+    val contactValue: String
+)
+
+@Entity(tableName = "shipping_companies")
+data class ShippingCompany(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val website: String,
+    val profilePic: String?
+)
+
+@Entity(
+    tableName = "shipping_company_contacts",
+    foreignKeys = [
+        ForeignKey(
+            entity = ShippingCompany::class,
+            parentColumns = ["id"],
+            childColumns = ["shippingCompanyId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ]
+)
+data class ShippingCompanyContact(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val shippingCompanyId: Int,
     val contactType: String, // "Website", "Email", "Phone", or custom
     val contactValue: String
 )
@@ -194,6 +225,7 @@ data class SubscriptionType(
     val shippingAddressId: Int? = null,
     val currency: String? = null,
     val basePrice: Double? = null,
+    val discountedAmount: Double? = null,
     val shippingPrice: Double? = null,
     val taxPrice: Double? = null,
     val forwardShippingPrice: Double? = null,
@@ -260,7 +292,7 @@ data class ScheduledSubscription(
     val bookAuthor: String,
     val description: String,
     val dueDate: Long, // timestamp
-    val status: String, // Upcoming, Skipped, Renewed, Shipped, Received
+    val status: String, // Upcoming, Skipped, Renewed, Forwarded, In Suit, Shipped, Received
     val isSkipped: Boolean = false,
     val picturePath: String? = null,
     val rating: Double = 0.0
@@ -297,7 +329,7 @@ data class Preorder(
     val price: Double,
     val rangedSaleDateStart: Long, // timestamp
     val rangedSaleDateEnd: Long, // timestamp
-    val status: String, // Upcoming, Released, Preordered, Shipped, Received
+    val status: String, // Upcoming, Released, Preordered, Forwarded, In Suit, Shipped, Received
     val reminderEnabled: Boolean = false,
     val reminderDDayOffset: Int = 0, // 0 to 5 (D-Day, D-1, ..., D-5)
     val reminderHour: Int = 8,
@@ -306,8 +338,30 @@ data class Preorder(
     val shippingAddressId: Int? = null,
     val currency: String? = null,
     val basePrice: Double? = null,
+    val discountedAmount: Double? = null,
     val shippingPrice: Double? = null,
     val taxPrice: Double? = null,
     val forwardShippingPrice: Double? = null,
     val forwardTaxPrice: Double? = null
+)
+
+@Entity(
+    tableName = "packages",
+    indices = [
+        Index(value = ["originTable", "originId"], unique = true)
+    ]
+)
+data class PackageItem(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val originTable: String, // "preorders" or "scheduled_subs"
+    val originId: Int, // id of preorder or scheduled sub
+    val purchaseDate: Long? = null, // timestamp
+    val storeShippingDate: Long? = null, // timestamp
+    val storeShippingCompany: String? = null,
+    val storeTrackingNumber: String? = null,
+    val forwarderReceivedDate: Long? = null, // timestamp
+    val forwarderShippingCompany: String? = null,
+    val forwarderTrackingNumber: String? = null,
+    val forwarderShippedDate: Long? = null, // timestamp
+    val receivedDate: Long? = null // timestamp
 )

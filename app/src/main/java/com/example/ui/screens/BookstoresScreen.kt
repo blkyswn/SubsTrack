@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +31,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,10 +40,13 @@ import coil.compose.AsyncImage
 import com.example.ui.components.InteractiveImagePicker
 import com.example.ui.components.ImageOptionsDialog
 import com.example.ui.components.ImageViewerDialog
+import com.example.ui.components.InlineReminderSelector
 import com.example.data.Bookstore
 import com.example.data.BookstoreContact
 import com.example.data.ForwardingService
 import com.example.data.ForwardingServiceContact
+import com.example.data.ShippingCompany
+import com.example.data.ShippingCompanyContact
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.ui.viewmodel.BookishViewModel
 import kotlinx.coroutines.launch
@@ -52,13 +57,16 @@ fun BookstoresScreen(
     viewModel: BookishViewModel,
     modifier: Modifier = Modifier
 ) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) } // 0: Bookstores, 1: Forwarding Services
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) } // 0: Bookstores, 1: Forwarding Services, 2: Shipping Companies
 
     val bookstores by viewModel.bookstoresState.collectAsState()
     val allBookstoreContacts by viewModel.bookstoreContactsState.collectAsState()
 
     val forwardingServices by viewModel.forwardingServicesState.collectAsState()
     val allForwardingServiceContacts by viewModel.forwardingServiceContactsState.collectAsState()
+
+    val shippingCompanies by viewModel.shippingCompaniesState.collectAsState()
+    val allShippingCompanyContacts by viewModel.shippingCompanyContactsState.collectAsState()
 
     val context = LocalContext.current
 
@@ -72,6 +80,12 @@ fun BookstoresScreen(
     var showAddForwardingServiceDialog by remember { mutableStateOf(false) }
     var selectedForwardingService by remember { mutableStateOf<ForwardingService?>(null) }
     var showEditForwardingServiceDialog by remember { mutableStateOf(false) }
+
+    // Shipping Companies Dialog States
+    var showAddShippingCompanyDialog by remember { mutableStateOf(false) }
+    var selectedShippingCompany by remember { mutableStateOf<ShippingCompany?>(null) }
+    var showDetailShippingCompanyDialog by remember { mutableStateOf(false) }
+    var showEditShippingCompanyDialog by remember { mutableStateOf(false) }
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
@@ -109,6 +123,21 @@ fun BookstoresScreen(
         }
     }
 
+    val onDeleteShippingCompany: (ShippingCompany) -> Unit = { company ->
+        viewModel.deleteShippingCompany(company)
+        coroutineScope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = snackbarHostState.showSnackbar(
+                message = "Deleted shipping company: ${company.name}",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.restoreShippingCompany(company)
+            }
+        }
+    }
+
     val filteredBookstores = remember(bookstores, allBookstoreContacts, searchQuery) {
         if (searchQuery.isBlank()) {
             bookstores
@@ -133,6 +162,18 @@ fun BookstoresScreen(
         }
     }
 
+    val filteredShippingCompanies = remember(shippingCompanies, allShippingCompanyContacts, searchQuery) {
+        if (searchQuery.isBlank()) {
+            shippingCompanies
+        } else {
+            shippingCompanies.filter { company ->
+                company.name.contains(searchQuery, ignoreCase = true) ||
+                        company.website.contains(searchQuery, ignoreCase = true) ||
+                        allShippingCompanyContacts.any { it.shippingCompanyId == company.id && it.contactValue.contains(searchQuery, ignoreCase = true) }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             Column {
@@ -144,7 +185,11 @@ fun BookstoresScreen(
                                 onValueChange = { searchQuery = it },
                                 placeholder = {
                                     Text(
-                                        if (selectedTab == 0) "Search bookstores..." else "Search forwarding services...",
+                                        when (selectedTab) {
+                                            0 -> "Search bookstores..."
+                                            1 -> "Search forwarding services..."
+                                            else -> "Search shipping companies..."
+                                        },
                                         fontSize = 16.sp
                                     )
                                 },
@@ -159,7 +204,13 @@ fun BookstoresScreen(
                                 textStyle = LocalTextStyle.current.copy(fontSize = 16.sp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag(if (selectedTab == 0) "bookstores_search_input" else "forwarding_services_search_input"),
+                                    .testTag(
+                                        when (selectedTab) {
+                                            0 -> "bookstores_search_input"
+                                            1 -> "forwarding_services_search_input"
+                                            else -> "shipping_companies_search_input"
+                                        }
+                                    ),
                                 trailingIcon = {
                                     if (searchQuery.isNotEmpty()) {
                                         IconButton(onClick = { searchQuery = "" }) {
@@ -189,17 +240,27 @@ fun BookstoresScreen(
                             }
                             IconButton(
                                 onClick = {
-                                    if (selectedTab == 0) {
-                                        showAddBookstoreDialog = true
-                                    } else {
-                                        showAddForwardingServiceDialog = true
+                                    when (selectedTab) {
+                                        0 -> showAddBookstoreDialog = true
+                                        1 -> showAddForwardingServiceDialog = true
+                                        else -> showAddShippingCompanyDialog = true
                                     }
                                 },
-                                modifier = Modifier.testTag(if (selectedTab == 0) "add_bookstore" else "add_forwarding_service")
+                                modifier = Modifier.testTag(
+                                    when (selectedTab) {
+                                        0 -> "add_bookstore"
+                                        1 -> "add_forwarding_service"
+                                        else -> "add_shipping_company"
+                                    }
+                                )
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Add,
-                                    contentDescription = if (selectedTab == 0) "Add Bookstore" else "Add Forwarding Service"
+                                    contentDescription = when (selectedTab) {
+                                        0 -> "Add Bookstore"
+                                        1 -> "Add Forwarding Service"
+                                        else -> "Add Shipping Company"
+                                    }
                                 )
                             }
                         }
@@ -217,8 +278,17 @@ fun BookstoresScreen(
                             selectedTab = 0
                             searchQuery = ""
                         },
-                        text = { Text("Bookstores", fontWeight = FontWeight.Bold) },
-                        icon = { Icon(Icons.Default.Storefront, contentDescription = "Bookstores Tab") },
+                        text = {
+                            Text(
+                                text = "Bookstores",
+                                color = if (selectedTab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                softWrap = true
+                            )
+                        },
+                        icon = { Icon(Icons.Default.Storefront, contentDescription = "Bookstores Tab", modifier = Modifier.size(20.dp)) },
                         modifier = Modifier.testTag("tab_bookstores")
                     )
                     Tab(
@@ -227,9 +297,37 @@ fun BookstoresScreen(
                             selectedTab = 1
                             searchQuery = ""
                         },
-                        text = { Text("Forwarding Services", fontWeight = FontWeight.Bold) },
-                        icon = { Icon(Icons.Default.LocalShipping, contentDescription = "Forwarding Services Tab") },
+                        text = {
+                            Text(
+                                text = "Forwarding Services",
+                                color = if (selectedTab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                softWrap = true
+                            )
+                        },
+                        icon = { Icon(Icons.Default.AltRoute, contentDescription = "Forwarding Services Tab", modifier = Modifier.size(20.dp)) },
                         modifier = Modifier.testTag("tab_forwarding_services")
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = {
+                            selectedTab = 2
+                            searchQuery = ""
+                        },
+                        text = {
+                            Text(
+                                text = "Shipping Companies",
+                                color = if (selectedTab == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                softWrap = true
+                            )
+                        },
+                        icon = { Icon(Icons.Default.LocalShipping, contentDescription = "Shipping Companies Tab", modifier = Modifier.size(20.dp)) },
+                        modifier = Modifier.testTag("tab_shipping_companies")
                     )
                 }
             }
@@ -388,7 +486,7 @@ fun BookstoresScreen(
                     }
                 }
             }
-        } else {
+        } else if (selectedTab == 1) {
             // FORWARDING SERVICES TAB
             if (forwardingServices.isEmpty()) {
                 Box(
@@ -399,7 +497,7 @@ fun BookstoresScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            imageVector = Icons.Default.LocalShipping,
+                            imageVector = Icons.Default.AltRoute,
                             contentDescription = null,
                             modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
@@ -539,12 +637,164 @@ fun BookstoresScreen(
                     }
                 }
             }
+        } else {
+            // SHIPPING COMPANIES TAB
+            if (shippingCompanies.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.LocalShipping,
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("No shipping companies registered yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        TextButton(onClick = { showAddShippingCompanyDialog = true }) {
+                            Text("Add Your First Shipping Company")
+                        }
+                    }
+                }
+            } else {
+                val groupedShippingCompanies = remember(filteredShippingCompanies) {
+                    filteredShippingCompanies
+                        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+                        .groupBy { it.name.firstOrNull()?.uppercaseChar() ?: '#' }
+                }
+
+                if (filteredShippingCompanies.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(64.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("No matching shipping companies found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            TextButton(onClick = { searchQuery = "" }) {
+                                Text("Clear Search")
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                            .padding(horizontal = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
+                    ) {
+                        groupedShippingCompanies.forEach { (initial, companies) ->
+                            item {
+                                Text(
+                                    text = initial.toString(),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp)
+                                )
+                            }
+                            items(companies, key = { it.id }) { company ->
+                                val dismissState = rememberSwipeToDismissBoxState(
+                                    confirmValueChange = { dismissValue ->
+                                        when (dismissValue) {
+                                            SwipeToDismissBoxValue.StartToEnd -> {
+                                                onDeleteShippingCompany(company)
+                                                true
+                                            }
+                                            SwipeToDismissBoxValue.EndToStart -> {
+                                                selectedShippingCompany = company
+                                                showEditShippingCompanyDialog = true
+                                                false
+                                            }
+                                            else -> false
+                                        }
+                                    }
+                                )
+
+                                SwipeToDismissBox(
+                                    state = dismissState,
+                                    backgroundContent = {
+                                        val color = when (dismissState.dismissDirection) {
+                                            SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.errorContainer
+                                            SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.secondaryContainer
+                                            else -> Color.Transparent
+                                        }
+                                        val alignment = when (dismissState.dismissDirection) {
+                                            SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
+                                            SwipeToDismissBoxValue.EndToStart -> Alignment.CenterEnd
+                                            else -> Alignment.Center
+                                        }
+                                        val icon = when (dismissState.dismissDirection) {
+                                            SwipeToDismissBoxValue.StartToEnd -> Icons.Default.Delete
+                                            SwipeToDismissBoxValue.EndToStart -> Icons.Default.Edit
+                                            else -> null
+                                        }
+                                        val iconTint = when (dismissState.dismissDirection) {
+                                            SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.onErrorContainer
+                                            SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.onSecondaryContainer
+                                            else -> Color.Transparent
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(vertical = 4.dp)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(color)
+                                                .padding(horizontal = 20.dp),
+                                            contentAlignment = alignment
+                                        ) {
+                                            icon?.let {
+                                                Icon(
+                                                    imageVector = it,
+                                                    contentDescription = null,
+                                                    tint = iconTint
+                                                )
+                                            }
+                                        }
+                                    },
+                                    enableDismissFromStartToEnd = true,
+                                    enableDismissFromEndToStart = true
+                                ) {
+                                    ShippingCompanyListItem(
+                                        company = company,
+                                        onClick = {
+                                            selectedShippingCompany = company
+                                            showDetailShippingCompanyDialog = true
+                                        },
+                                        onImageUpdated = { newPath ->
+                                            viewModel.updateShippingCompany(company.copy(profilePic = newPath))
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Add Bookstore Dialog
         if (showAddBookstoreDialog) {
             var name by remember { mutableStateOf("") }
             var imageUrl by remember { mutableStateOf("") }
+            var nameError by remember { mutableStateOf(false) }
             var contacts by remember {
                 mutableStateOf(
                     listOf(
@@ -564,6 +814,7 @@ fun BookstoresScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .imePadding()
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -575,8 +826,21 @@ fun BookstoresScreen(
 
                         OutlinedTextField(
                             value = name,
-                            onValueChange = { name = it },
-                            label = { Text("Bookstore Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            onValueChange = {
+                                name = it
+                                if (nameError && it.isNotBlank()) {
+                                    nameError = false
+                                }
+                            },
+                            label = { Text("Bookstore Name *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            isError = nameError,
+                            supportingText = if (nameError) {
+                                { Text("Bookstore name is mandatory", color = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            trailingIcon = if (nameError) {
+                                { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("add_bookstore_name")
                         )
 
@@ -601,21 +865,24 @@ fun BookstoresScreen(
                 confirmButton = {
                     Button(
                         onClick = {
-                            if (name.isNotBlank()) {
-                                val validContacts = contacts
-                                    .filter { it.value.isNotBlank() }
-                                    .map { BookstoreContact(bookstoreId = 0, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
-                                val primaryWebsite = validContacts
-                                    .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
-                                    ?.contactValue ?: ""
-                                viewModel.addBookstore(
-                                    name = name.trim(),
-                                    website = primaryWebsite,
-                                    profilePic = imageUrl.ifEmpty { null },
-                                    contacts = validContacts
-                                )
-                                showAddBookstoreDialog = false
+                            if (name.isBlank()) {
+                                nameError = true
+                                Toast.makeText(context, "Please enter a bookstore name", Toast.LENGTH_SHORT).show()
+                                return@Button
                             }
+                            val validContacts = contacts
+                                .filter { it.value.isNotBlank() }
+                                .map { BookstoreContact(bookstoreId = 0, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
+                            val primaryWebsite = validContacts
+                                .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
+                                ?.contactValue ?: ""
+                            viewModel.addBookstore(
+                                name = name.trim(),
+                                website = primaryWebsite,
+                                profilePic = imageUrl.ifEmpty { null },
+                                contacts = validContacts
+                            )
+                            showAddBookstoreDialog = false
                         },
                         modifier = Modifier.testTag("confirm_add_bookstore")
                     ) {
@@ -839,6 +1106,7 @@ fun BookstoresScreen(
             val storeContacts = allBookstoreContacts.filter { it.bookstoreId == store.id }
             var editName by remember(store.id) { mutableStateOf(store.name) }
             var editImageUrl by remember(store.id) { mutableStateOf(store.profilePic ?: "") }
+            var editNameError by remember(store.id) { mutableStateOf(false) }
             var editContacts by remember(store.id, storeContacts) {
                 val initialList = mutableListOf<ContactDraft>()
                 if (storeContacts.isNotEmpty()) {
@@ -868,6 +1136,7 @@ fun BookstoresScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .imePadding()
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -879,8 +1148,21 @@ fun BookstoresScreen(
 
                         OutlinedTextField(
                             value = editName,
-                            onValueChange = { editName = it },
-                            label = { Text("Bookstore Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            onValueChange = {
+                                editName = it
+                                if (editNameError && it.isNotBlank()) {
+                                    editNameError = false
+                                }
+                            },
+                            label = { Text("Bookstore Name *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            isError = editNameError,
+                            supportingText = if (editNameError) {
+                                { Text("Bookstore name is mandatory", color = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            trailingIcon = if (editNameError) {
+                                { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("edit_bookstore_name")
                         )
 
@@ -918,24 +1200,27 @@ fun BookstoresScreen(
 
                         Button(
                             onClick = {
-                                if (editName.isNotBlank()) {
-                                    val validContacts = editContacts
-                                        .filter { it.value.isNotBlank() }
-                                        .map { BookstoreContact(bookstoreId = store.id, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
-                                    val primaryWebsite = validContacts
-                                        .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
-                                        ?.contactValue ?: store.website
-                                    viewModel.updateBookstore(
-                                        store.copy(
-                                            name = editName.trim(),
-                                            website = primaryWebsite,
-                                            profilePic = editImageUrl.ifEmpty { null }
-                                        ),
-                                        contacts = validContacts
-                                    )
-                                    showEditBookstoreDialog = false
-                                    selectedBookstore = null
+                                if (editName.isBlank()) {
+                                    editNameError = true
+                                    Toast.makeText(context, "Please enter a bookstore name", Toast.LENGTH_SHORT).show()
+                                    return@Button
                                 }
+                                val validContacts = editContacts
+                                    .filter { it.value.isNotBlank() }
+                                    .map { BookstoreContact(bookstoreId = store.id, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
+                                val primaryWebsite = validContacts
+                                    .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
+                                    ?.contactValue ?: store.website
+                                viewModel.updateBookstore(
+                                    store.copy(
+                                        name = editName.trim(),
+                                        website = primaryWebsite,
+                                        profilePic = editImageUrl.ifEmpty { null }
+                                    ),
+                                    contacts = validContacts
+                                )
+                                showEditBookstoreDialog = false
+                                selectedBookstore = null
                             },
                             modifier = Modifier.testTag("save_bookstore_btn")
                         ) {
@@ -959,6 +1244,12 @@ fun BookstoresScreen(
         if (showAddForwardingServiceDialog) {
             var name by remember { mutableStateOf("") }
             var imageUrl by remember { mutableStateOf("") }
+            var storageDaysText by remember { mutableStateOf("") }
+            var reminderEnabled by remember { mutableStateOf(false) }
+            var reminderDDayOffset by remember { mutableStateOf(0) }
+            var reminderHour by remember { mutableStateOf(8) }
+            var reminderMinute by remember { mutableStateOf(0) }
+            var nameError by remember { mutableStateOf(false) }
             var contacts by remember {
                 mutableStateOf(
                     listOf(
@@ -978,6 +1269,7 @@ fun BookstoresScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .imePadding()
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -988,10 +1280,91 @@ fun BookstoresScreen(
 
                         OutlinedTextField(
                             value = name,
-                            onValueChange = { name = it },
-                            label = { Text("Forwarding Service Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            onValueChange = {
+                                name = it
+                                if (nameError && it.isNotBlank()) {
+                                    nameError = false
+                                }
+                            },
+                            label = { Text("Forwarding Service Name *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("e.g. Stackry, Buyee, Tenso") },
+                            isError = nameError,
+                            supportingText = if (nameError) {
+                                { Text("Forwarding service name is mandatory", color = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            trailingIcon = if (nameError) {
+                                { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("add_forwarding_service_name")
                         )
+
+                        OutlinedTextField(
+                            value = storageDaysText,
+                            onValueChange = { input ->
+                                if (input.all { it.isDigit() }) {
+                                    storageDaysText = input
+                                }
+                            },
+                            label = { Text("Storage Days", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("e.g. 30, 45, 60") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Storage Days",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("add_forwarding_service_storage_days")
+                        )
+
+                        // Reminder Notification Section
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.NotificationsActive,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Reminder Notification",
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = reminderEnabled,
+                                    onCheckedChange = { reminderEnabled = it }
+                                )
+                            }
+
+                            if (reminderEnabled) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                InlineReminderSelector(
+                                    reminderDDayOffset = reminderDDayOffset,
+                                    onDDayOffsetChange = { reminderDDayOffset = it },
+                                    reminderHour = reminderHour,
+                                    onHourChange = { reminderHour = it },
+                                    reminderMinute = reminderMinute,
+                                    onMinuteChange = { reminderMinute = it },
+                                    dDayLabelFormatter = { dday ->
+                                        if (dday == 0) "Last day" else if (dday == 1) "1 day left" else "$dday days left"
+                                    },
+                                    dayColumnHeader = "Days Left"
+                                )
+                            }
+                        }
 
                         BookstoreContactsSection(
                             contacts = contacts,
@@ -1013,21 +1386,29 @@ fun BookstoresScreen(
                 confirmButton = {
                     Button(
                         onClick = {
-                            if (name.isNotBlank()) {
-                                val validContacts = contacts
-                                    .filter { it.value.isNotBlank() }
-                                    .map { ForwardingServiceContact(forwardingServiceId = 0, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
-                                val primaryWebsite = validContacts
-                                    .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
-                                    ?.contactValue ?: ""
-                                viewModel.addForwardingService(
-                                    name = name.trim(),
-                                    website = primaryWebsite,
-                                    profilePic = imageUrl.ifEmpty { null },
-                                    contacts = validContacts
-                                )
-                                showAddForwardingServiceDialog = false
+                            if (name.isBlank()) {
+                                nameError = true
+                                Toast.makeText(context, "Please enter a forwarding service name", Toast.LENGTH_SHORT).show()
+                                return@Button
                             }
+                            val validContacts = contacts
+                                .filter { it.value.isNotBlank() }
+                                .map { ForwardingServiceContact(forwardingServiceId = 0, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
+                            val primaryWebsite = validContacts
+                                .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
+                                ?.contactValue ?: ""
+                            viewModel.addForwardingService(
+                                name = name.trim(),
+                                website = primaryWebsite,
+                                profilePic = imageUrl.ifEmpty { null },
+                                storageDays = storageDaysText.trim().toIntOrNull(),
+                                contacts = validContacts,
+                                reminderEnabled = reminderEnabled,
+                                reminderDDayOffset = reminderDDayOffset,
+                                reminderHour = reminderHour,
+                                reminderMinute = reminderMinute
+                            )
+                            showAddForwardingServiceDialog = false
                         },
                         modifier = Modifier.testTag("confirm_add_forwarding_service")
                     ) {
@@ -1052,6 +1433,12 @@ fun BookstoresScreen(
             val serviceContacts = allForwardingServiceContacts.filter { it.forwardingServiceId == service.id }
             var editName by remember(service.id) { mutableStateOf(service.name) }
             var editImageUrl by remember(service.id) { mutableStateOf(service.profilePic ?: "") }
+            var editStorageDaysText by remember(service.id) { mutableStateOf(service.storageDays?.toString() ?: "") }
+            var editReminderEnabled by remember(service.id) { mutableStateOf(service.reminderEnabled) }
+            var editReminderDDayOffset by remember(service.id) { mutableStateOf(service.reminderDDayOffset) }
+            var editReminderHour by remember(service.id) { mutableStateOf(service.reminderHour) }
+            var editReminderMinute by remember(service.id) { mutableStateOf(service.reminderMinute) }
+            var editNameError by remember(service.id) { mutableStateOf(false) }
             var editContacts by remember(service.id, serviceContacts) {
                 val initialList = mutableListOf<ContactDraft>()
                 if (serviceContacts.isNotEmpty()) {
@@ -1080,6 +1467,7 @@ fun BookstoresScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .imePadding()
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -1090,10 +1478,90 @@ fun BookstoresScreen(
 
                         OutlinedTextField(
                             value = editName,
-                            onValueChange = { editName = it },
-                            label = { Text("Forwarding Service Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            onValueChange = {
+                                editName = it
+                                if (editNameError && it.isNotBlank()) {
+                                    editNameError = false
+                                }
+                            },
+                            label = { Text("Forwarding Service Name *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            isError = editNameError,
+                            supportingText = if (editNameError) {
+                                { Text("Forwarding service name is mandatory", color = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            trailingIcon = if (editNameError) {
+                                { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("edit_forwarding_service_name")
                         )
+
+                        OutlinedTextField(
+                            value = editStorageDaysText,
+                            onValueChange = { input ->
+                                if (input.all { it.isDigit() }) {
+                                    editStorageDaysText = input
+                                }
+                            },
+                            label = { Text("Storage Days", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("e.g. 30, 45, 60") },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Storage Days",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("edit_forwarding_service_storage_days")
+                        )
+
+                        // Reminder Notification Section
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.NotificationsActive,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Reminder Notification",
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = editReminderEnabled,
+                                    onCheckedChange = { editReminderEnabled = it }
+                                )
+                            }
+
+                            if (editReminderEnabled) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                InlineReminderSelector(
+                                    reminderDDayOffset = editReminderDDayOffset,
+                                    onDDayOffsetChange = { editReminderDDayOffset = it },
+                                    reminderHour = editReminderHour,
+                                    onHourChange = { editReminderHour = it },
+                                    reminderMinute = editReminderMinute,
+                                    onMinuteChange = { editReminderMinute = it },
+                                    dDayLabelFormatter = { dday ->
+                                        if (dday == 0) "Last day" else if (dday == 1) "1 day left" else "$dday days left"
+                                    },
+                                    dayColumnHeader = "Days Left"
+                                )
+                            }
+                        }
 
                         BookstoreContactsSection(
                             contacts = editContacts,
@@ -1128,24 +1596,32 @@ fun BookstoresScreen(
 
                         Button(
                             onClick = {
-                                if (editName.isNotBlank()) {
-                                    val validContacts = editContacts
-                                        .filter { it.value.isNotBlank() }
-                                        .map { ForwardingServiceContact(forwardingServiceId = service.id, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
-                                    val primaryWebsite = validContacts
-                                        .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
-                                        ?.contactValue ?: service.website
-                                    viewModel.updateForwardingService(
-                                        service.copy(
-                                            name = editName.trim(),
-                                            website = primaryWebsite,
-                                            profilePic = editImageUrl.ifEmpty { null }
-                                        ),
-                                        contacts = validContacts
-                                    )
-                                    showEditForwardingServiceDialog = false
-                                    selectedForwardingService = null
+                                if (editName.isBlank()) {
+                                    editNameError = true
+                                    Toast.makeText(context, "Please enter a forwarding service name", Toast.LENGTH_SHORT).show()
+                                    return@Button
                                 }
+                                val validContacts = editContacts
+                                    .filter { it.value.isNotBlank() }
+                                    .map { ForwardingServiceContact(forwardingServiceId = service.id, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
+                                val primaryWebsite = validContacts
+                                    .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
+                                    ?.contactValue ?: service.website
+                                viewModel.updateForwardingService(
+                                    service.copy(
+                                        name = editName.trim(),
+                                        website = primaryWebsite,
+                                        profilePic = editImageUrl.ifEmpty { null },
+                                        storageDays = editStorageDaysText.trim().toIntOrNull(),
+                                        reminderEnabled = editReminderEnabled,
+                                        reminderDDayOffset = editReminderDDayOffset,
+                                        reminderHour = editReminderHour,
+                                        reminderMinute = editReminderMinute
+                                    ),
+                                    contacts = validContacts
+                                )
+                                showEditForwardingServiceDialog = false
+                                selectedForwardingService = null
                             },
                             modifier = Modifier.testTag("save_forwarding_service_btn")
                         ) {
@@ -1157,6 +1633,453 @@ fun BookstoresScreen(
                     TextButton(
                         onClick = {
                             showEditForwardingServiceDialog = false
+                        }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        // Details Popup Card Dialog for Shipping Company
+        if (showDetailShippingCompanyDialog && selectedShippingCompany != null) {
+            val company = selectedShippingCompany!!
+            val companyContacts = allShippingCompanyContacts.filter { it.shippingCompanyId == company.id }
+
+            AlertDialog(
+                onDismissRequest = { showDetailShippingCompanyDialog = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!company.profilePic.isNullOrEmpty() && company.profilePic != "ic_launcher_foreground") {
+                                AsyncImage(
+                                    model = company.profilePic,
+                                    contentDescription = "${company.name} Logo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                val initial = (company.name.firstOrNull { it.isLetterOrDigit() } ?: 'S').uppercaseChar().toString()
+                                Text(
+                                    text = initial,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        Text(company.name, fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (companyContacts.isNotEmpty()) {
+                            companyContacts.forEach { contact ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            when (contact.contactType.lowercase()) {
+                                                "website" -> {
+                                                    try {
+                                                        val url = if (contact.contactValue.startsWith("http://") || contact.contactValue.startsWith("https://")) {
+                                                            contact.contactValue
+                                                        } else {
+                                                            "https://${contact.contactValue}"
+                                                        }
+                                                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                        context.startActivity(browserIntent)
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                    }
+                                                }
+                                                "email" -> {
+                                                    try {
+                                                        val emailIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${contact.contactValue}"))
+                                                        context.startActivity(emailIntent)
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                    }
+                                                }
+                                                "phone" -> {
+                                                    try {
+                                                        val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${contact.contactValue}"))
+                                                        context.startActivity(dialIntent)
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        .padding(vertical = 4.dp, horizontal = 2.dp)
+                                ) {
+                                    val icon = when (contact.contactType.lowercase()) {
+                                        "website" -> Icons.Default.Language
+                                        "email" -> Icons.Default.Email
+                                        "phone" -> Icons.Default.Phone
+                                        else -> Icons.Default.ContactMail
+                                    }
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = contact.contactType,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = contact.contactType,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = contact.contactValue,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    if (contact.contactType.lowercase() in listOf("website", "email", "phone")) {
+                                        Icon(
+                                            imageVector = Icons.Default.OpenInNew,
+                                            contentDescription = "Open",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (company.website.isNotEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        try {
+                                            val url = if (company.website.startsWith("http://") || company.website.startsWith("https://")) {
+                                                company.website
+                                            } else {
+                                                "https://${company.website}"
+                                            }
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            context.startActivity(browserIntent)
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+                                    .padding(vertical = 4.dp, horizontal = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Language,
+                                    contentDescription = "Website",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Website",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = company.website,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.OpenInNew,
+                                    contentDescription = "Open",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "No contact details saved",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showDetailShippingCompanyDialog = false
+                            showEditShippingCompanyDialog = true
+                        }
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Text("Edit Details")
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDetailShippingCompanyDialog = false }) { Text("Close") }
+                }
+            )
+        }
+
+        // Add Shipping Company Dialog
+        if (showAddShippingCompanyDialog) {
+            var name by remember { mutableStateOf("") }
+            var imageUrl by remember { mutableStateOf("") }
+            var nameError by remember { mutableStateOf(false) }
+            var contacts by remember {
+                mutableStateOf(
+                    listOf(
+                        ContactDraft(type = "Website", value = ""),
+                        ContactDraft(type = "Email", value = ""),
+                        ContactDraft(type = "Phone", value = "")
+                    )
+                )
+            }
+
+            AlertDialog(
+                onDismissRequest = {
+                    showAddShippingCompanyDialog = false
+                },
+                title = { Text("Add Shipping Company", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .imePadding()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ShippingCompanyImagePicker(
+                            imageUrl = imageUrl,
+                            onImageSelected = { imageUrl = it }
+                        )
+
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = {
+                                name = it
+                                if (nameError && it.isNotBlank()) {
+                                    nameError = false
+                                }
+                            },
+                            label = { Text("Shipping Company Name *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("e.g. DHL, FedEx, UPS") },
+                            isError = nameError,
+                            supportingText = if (nameError) {
+                                { Text("Shipping company name is mandatory", color = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            trailingIcon = if (nameError) {
+                                { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("add_shipping_company_name")
+                        )
+
+                        BookstoreContactsSection(
+                            contacts = contacts,
+                            onUpdateValue = { id, newVal ->
+                                contacts = contacts.map { if (it.id == id) it.copy(value = newVal) else it }
+                            },
+                            onUpdateType = { id, newType ->
+                                contacts = contacts.map { if (it.id == id) it.copy(type = newType) else it }
+                            },
+                            onRemoveContact = { id ->
+                                contacts = contacts.filter { it.id != id }
+                            },
+                            onAddContact = { type ->
+                                contacts = contacts + ContactDraft(type = type, value = "")
+                            }
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (name.isBlank()) {
+                                nameError = true
+                                Toast.makeText(context, "Please enter a shipping company name", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            val validContacts = contacts
+                                .filter { it.value.isNotBlank() }
+                                .map { ShippingCompanyContact(shippingCompanyId = 0, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
+                            val primaryWebsite = validContacts
+                                .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
+                                ?.contactValue ?: ""
+                            viewModel.addShippingCompany(
+                                name = name.trim(),
+                                website = primaryWebsite,
+                                profilePic = imageUrl.ifEmpty { null },
+                                contacts = validContacts
+                            )
+                            showAddShippingCompanyDialog = false
+                        },
+                        modifier = Modifier.testTag("confirm_add_shipping_company")
+                    ) {
+                        Text("Add")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showAddShippingCompanyDialog = false
+                        }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        // Edit Shipping Company Dialog
+        if (showEditShippingCompanyDialog && selectedShippingCompany != null) {
+            val company = selectedShippingCompany!!
+            val companyContacts = allShippingCompanyContacts.filter { it.shippingCompanyId == company.id }
+            var editName by remember(company.id) { mutableStateOf(company.name) }
+            var editImageUrl by remember(company.id) { mutableStateOf(company.profilePic ?: "") }
+            var editNameError by remember(company.id) { mutableStateOf(false) }
+            var editContacts by remember(company.id, companyContacts) {
+                val initialList = mutableListOf<ContactDraft>()
+                if (companyContacts.isNotEmpty()) {
+                    companyContacts.forEach { initialList.add(ContactDraft(type = it.contactType, value = it.contactValue)) }
+                } else if (company.website.isNotEmpty()) {
+                    initialList.add(ContactDraft(type = "Website", value = company.website))
+                }
+                if (!initialList.any { it.type.equals("Website", ignoreCase = true) }) {
+                    initialList.add(0, ContactDraft(type = "Website", value = ""))
+                }
+                if (!initialList.any { it.type.equals("Email", ignoreCase = true) }) {
+                    initialList.add(ContactDraft(type = "Email", value = ""))
+                }
+                if (!initialList.any { it.type.equals("Phone", ignoreCase = true) }) {
+                    initialList.add(ContactDraft(type = "Phone", value = ""))
+                }
+                mutableStateOf(initialList.toList())
+            }
+
+            AlertDialog(
+                onDismissRequest = {
+                    showEditShippingCompanyDialog = false
+                },
+                title = { Text("Edit Shipping Company", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .imePadding()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ShippingCompanyImagePicker(
+                            imageUrl = editImageUrl,
+                            onImageSelected = { editImageUrl = it }
+                        )
+
+                        OutlinedTextField(
+                            value = editName,
+                            onValueChange = {
+                                editName = it
+                                if (editNameError && it.isNotBlank()) {
+                                    editNameError = false
+                                }
+                            },
+                            label = { Text("Shipping Company Name *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            isError = editNameError,
+                            supportingText = if (editNameError) {
+                                { Text("Shipping company name is mandatory", color = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            trailingIcon = if (editNameError) {
+                                { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
+                            } else null,
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("edit_shipping_company_name")
+                        )
+
+                        BookstoreContactsSection(
+                            contacts = editContacts,
+                            onUpdateValue = { id, newVal ->
+                                editContacts = editContacts.map { if (it.id == id) it.copy(value = newVal) else it }
+                            },
+                            onUpdateType = { id, newType ->
+                                editContacts = editContacts.map { if (it.id == id) it.copy(type = newType) else it }
+                            },
+                            onRemoveContact = { id ->
+                                editContacts = editContacts.filter { it.id != id }
+                            },
+                            onAddContact = { type ->
+                                editContacts = editContacts + ContactDraft(type = type, value = "")
+                            }
+                        )
+                    }
+                },
+                confirmButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                onDeleteShippingCompany(company)
+                                showEditShippingCompanyDialog = false
+                                selectedShippingCompany = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.testTag("delete_shipping_company_btn")
+                        ) {
+                            Text("Delete")
+                        }
+
+                        Button(
+                            onClick = {
+                                if (editName.isBlank()) {
+                                    editNameError = true
+                                    Toast.makeText(context, "Please enter a shipping company name", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                val validContacts = editContacts
+                                    .filter { it.value.isNotBlank() }
+                                    .map { ShippingCompanyContact(shippingCompanyId = company.id, contactType = it.type.ifBlank { "Other" }, contactValue = it.value.trim()) }
+                                val primaryWebsite = validContacts
+                                    .firstOrNull { it.contactType.equals("Website", ignoreCase = true) }
+                                    ?.contactValue ?: company.website
+                                viewModel.updateShippingCompany(
+                                    company.copy(
+                                        name = editName.trim(),
+                                        website = primaryWebsite,
+                                        profilePic = editImageUrl.ifEmpty { null }
+                                    ),
+                                    contacts = validContacts
+                                )
+                                showEditShippingCompanyDialog = false
+                                selectedShippingCompany = null
+                            },
+                            modifier = Modifier.testTag("save_shipping_company_btn")
+                        ) {
+                            Text("Save")
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showEditShippingCompanyDialog = false
                         }
                     ) {
                         Text("Cancel")
@@ -1654,6 +2577,26 @@ fun ForwardingServiceListItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (service.storageDays != null) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Schedule,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.secondary
+                        )
+                        Text(
+                            text = "${service.storageDays} storage days",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -1683,4 +2626,148 @@ fun ForwardingServiceListItem(
         }
     }
 }
+
+@Composable
+fun ShippingCompanyImagePicker(
+    imageUrl: String,
+    onImageSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    InteractiveImagePicker(
+        imageUrl = imageUrl,
+        onImageSelected = onImageSelected,
+        modifier = modifier,
+        defaultIcon = Icons.Default.LocalShipping,
+        contentDescription = "Shipping Company Image"
+    )
+}
+
+@Composable
+fun ShippingCompanyListItem(
+    company: ShippingCompany,
+    onClick: () -> Unit,
+    onImageUpdated: ((String?) -> Unit)? = null
+) {
+    val context = LocalContext.current
+    var showViewerDialog by remember { mutableStateOf(false) }
+
+    if (showViewerDialog && !company.profilePic.isNullOrEmpty() && company.profilePic != "ic_launcher_foreground") {
+        ImageViewerDialog(
+            imageUrl = company.profilePic!!,
+            onDismiss = { showViewerDialog = false }
+        )
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 4.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+        ),
+        border = BorderStroke(
+            width = 1.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Asymmetric Left Indicator Bar
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            // Icon Avatar Box
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                    .clickable {
+                        if (!company.profilePic.isNullOrEmpty() && company.profilePic != "ic_launcher_foreground") {
+                            showViewerDialog = true
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                if (!company.profilePic.isNullOrEmpty() && company.profilePic != "ic_launcher_foreground") {
+                    AsyncImage(
+                        model = company.profilePic,
+                        contentDescription = "${company.name} Logo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    val initial = (company.name.firstOrNull { it.isLetterOrDigit() } ?: 'S').uppercaseChar().toString()
+                    Text(
+                        text = initial,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            // Company Info
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = company.name,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = company.website.ifEmpty { "No website link saved" },
+                    fontSize = 12.sp,
+                    color = if (company.website.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Trailing Chevron / Action button
+            IconButton(
+                onClick = {
+                    if (company.website.isNotEmpty()) {
+                        try {
+                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(company.website))
+                            context.startActivity(browserIntent)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    } else {
+                        onClick()
+                    }
+                }
+            ) {
+                Icon(
+                    imageVector = if (company.website.isNotEmpty()) Icons.Default.OpenInNew else Icons.Default.ChevronRight,
+                    contentDescription = if (company.website.isNotEmpty()) "Open Website" else "View Details",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
 

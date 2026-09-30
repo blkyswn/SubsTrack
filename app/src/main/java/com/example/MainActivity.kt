@@ -119,8 +119,9 @@ fun BookishApp(viewModel: BookishViewModel) {
 
                 navItems.forEach { item ->
                     val isHome = item.route == "home"
+                    val isSelected = currentRoute == item.route || (isHome && currentRoute == "upcoming_calendar")
                     NavigationBarItem(
-                        selected = currentRoute == item.route,
+                        selected = isSelected,
                         onClick = {
                             if (item.route == "preorders") {
                                 viewModel.preorderIsCalendarView.value = false
@@ -131,7 +132,22 @@ fun BookishApp(viewModel: BookishViewModel) {
                                     viewModel.subSelectedTab.value = 0
                                 }
                             }
-                            if (currentRoute != item.route) {
+                            if (currentRoute == "upcoming_calendar") {
+                                viewModel.resetHomeScreenToTop()
+                                navController.popBackStack()
+                            }
+                            if (isHome) {
+                                viewModel.resetHomeScreenToTop()
+                                if (currentRoute != "home" && currentRoute != "upcoming_calendar") {
+                                    navController.navigate("home") {
+                                        popUpTo(navController.graph.startDestinationId) {
+                                            saveState = false
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = false
+                                    }
+                                }
+                            } else if (currentRoute != item.route) {
                                 navController.navigate(item.route) {
                                     popUpTo(navController.graph.startDestinationId) {
                                         saveState = true
@@ -187,7 +203,16 @@ fun BookishApp(viewModel: BookishViewModel) {
                             launchSingleTop = true
                             restoreState = true
                         }
+                    },
+                    onNavigateToUpcomingCalendar = {
+                        navController.navigate("upcoming_calendar")
                     }
+                )
+            }
+            composable("upcoming_calendar") {
+                UpcomingCalendarScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable("subscriptions") {

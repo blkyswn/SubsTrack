@@ -52,6 +52,8 @@ fun OtherFormTabContent(
     onCurrencyChange: (String) -> Unit,
     basePriceStr: String,
     onBasePriceChange: (String) -> Unit,
+    discountedAmountStr: String = "",
+    onDiscountedAmountChange: (String) -> Unit = {},
     shippingPriceStr: String,
     onShippingPriceChange: (String) -> Unit,
     taxPriceStr: String,
@@ -334,7 +336,7 @@ fun OtherFormTabContent(
             }
         }
 
-        // --- 2. Currency & Base Price ---
+        // --- 2. Currency (on top) ---
         val matchedCurrency = remember(selectedCurrency) {
             CURRENCY_LIST.firstOrNull { it.first == selectedCurrency }
         }
@@ -345,83 +347,84 @@ fun OtherFormTabContent(
             selectedCurrency
         }
 
+        // Currency Dropdown on top
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = currencyLabel,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Currency", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("other_tab_currency_dropdown"),
+                leadingIcon = {
+                    Icon(Icons.Default.Payments, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                },
+                trailingIcon = {
+                    IconButton(onClick = { expandedCurrencyDropdown = !expandedCurrencyDropdown }) {
+                        Icon(
+                            imageVector = if (expandedCurrencyDropdown) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                            contentDescription = "Select currency"
+                        )
+                    }
+                },
+                singleLine = true
+            )
+
+            // Clickable overlay so tapping anywhere opens the dropdown
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable { expandedCurrencyDropdown = true }
+            )
+
+            DropdownMenu(
+                expanded = expandedCurrencyDropdown,
+                onDismissRequest = { expandedCurrencyDropdown = false },
+                properties = PopupProperties(focusable = true),
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .heightIn(max = 260.dp)
+            ) {
+                CURRENCY_LIST.forEach { (symbol, description) ->
+                    val isSelected = selectedCurrency == symbol
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "$symbol — $description",
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 13.5.sp
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        onClick = {
+                            onCurrencyChange(symbol)
+                            expandedCurrencyDropdown = false
+                        }
+                    )
+                }
+            }
+        }
+
+        // --- 3. Base Price & Discounted Amount (discounted amount to the right of base price) ---
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Currency Dropdown
-            Box(modifier = Modifier.weight(1f)) {
-                OutlinedTextField(
-                    value = currencyLabel,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Currency", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("other_tab_currency_dropdown"),
-                    leadingIcon = {
-                        Icon(Icons.Default.Payments, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = { expandedCurrencyDropdown = !expandedCurrencyDropdown }) {
-                            Icon(
-                                imageVector = if (expandedCurrencyDropdown) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                                contentDescription = "Select currency"
-                            )
-                        }
-                    },
-                    singleLine = true
-                )
-
-                // Clickable overlay so tapping anywhere opens the dropdown
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .clickable { expandedCurrencyDropdown = true }
-                )
-
-                DropdownMenu(
-                    expanded = expandedCurrencyDropdown,
-                    onDismissRequest = { expandedCurrencyDropdown = false },
-                    properties = PopupProperties(focusable = true),
-                    modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .heightIn(max = 260.dp)
-                ) {
-                    CURRENCY_LIST.forEach { (symbol, description) ->
-                        val isSelected = selectedCurrency == symbol
-                        DropdownMenuItem(
-                            text = {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "$symbol — $description",
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = 13.5.sp
-                                    )
-                                    if (isSelected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            },
-                            onClick = {
-                                onCurrencyChange(symbol)
-                                expandedCurrencyDropdown = false
-                            }
-                        )
-                    }
-                }
-            }
-
             // Base Price
             OutlinedTextField(
                 value = basePriceStr,
@@ -435,6 +438,21 @@ fun OtherFormTabContent(
                 modifier = Modifier
                     .weight(1f)
                     .testTag("other_tab_base_price")
+            )
+
+            // Discounted Amount (to the right of base price)
+            OutlinedTextField(
+                value = discountedAmountStr,
+                onValueChange = { onDiscountedAmountChange(it.filter { c -> c.isDigit() || c == '.' }) },
+                label = { Text("Discounted Amount", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = {
+                    Text(selectedCurrency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("other_tab_discounted_amount")
             )
         }
 
@@ -544,42 +562,57 @@ fun OtherFormTabContent(
 
         // --- 5. Total Price Summary ---
         val calculatedTotal = remember(
-            basePriceStr, shippingPriceStr, taxPriceStr,
+            basePriceStr, discountedAmountStr, shippingPriceStr, taxPriceStr,
             forwardShippingPriceStr, forwardTaxPriceStr, hasForwardingService
         ) {
             val base = basePriceStr.toDoubleOrNull() ?: 0.0
+            val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
+            val effectiveBase = if (base > 0.0) (base - discount).coerceAtLeast(0.0) else discount
             val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
             val tax = taxPriceStr.toDoubleOrNull() ?: 0.0
             val forwardShipping = if (hasForwardingService) forwardShippingPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
             val forwardTax = if (hasForwardingService) forwardTaxPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
-            base + shipping + tax + forwardShipping + forwardTax
+            effectiveBase + shipping + tax + forwardShipping + forwardTax
         }
 
-        if (calculatedTotal > 0.0) {
+        if (calculatedTotal > 0.0 || basePriceStr.isNotBlank() || discountedAmountStr.isNotBlank()) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text(
-                        text = "Total Price Breakdown",
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "$selectedCurrency${String.format(Locale.US, "%.2f", calculatedTotal)}",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Total Price Breakdown",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "$selectedCurrency${String.format(Locale.US, "%.2f", calculatedTotal)}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    val discountVal = discountedAmountStr.toDoubleOrNull()
+                    if (discountVal != null && discountVal > 0.0) {
+                        Text(
+                            text = "Includes discount: -$selectedCurrency${String.format(Locale.US, "%.2f", discountVal)}",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }

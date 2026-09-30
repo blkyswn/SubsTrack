@@ -30,7 +30,9 @@ fun InlineReminderSelector(
     onHourChange: (Int) -> Unit,
     reminderMinute: Int,
     onMinuteChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    dDayLabelFormatter: ((Int) -> String)? = null,
+    dayColumnHeader: String? = null
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -60,7 +62,8 @@ fun InlineReminderSelector(
                 Spacer(modifier = Modifier.width(6.dp))
                 val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
                 val ddayLabel = if (reminderDDayOffset != null) {
-                    if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
+                    if (dDayLabelFormatter != null) dDayLabelFormatter(reminderDDayOffset)
+                    else if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
                 } else null
 
                 val headerText = if (ddayLabel != null) "Alert on $ddayLabel at $timeLabel" else "Delivery Time: $timeLabel"
@@ -83,7 +86,7 @@ fun InlineReminderSelector(
                 if (reminderDDayOffset != null && onDDayOffsetChange != null) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "Alert Day",
+                            text = dayColumnHeader ?: (if (dDayLabelFormatter != null) "Days Left" else "Alert Day"),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -93,8 +96,11 @@ fun InlineReminderSelector(
                             items = (0..7).toList(),
                             selectedItem = reminderDDayOffset,
                             onItemSelected = onDDayOffsetChange,
-                            modifier = Modifier.width(95.dp),
-                            label = { dday -> if (dday == 0) "D-Day" else "$dday days before" }
+                            modifier = Modifier.width(if (dDayLabelFormatter != null) 100.dp else 95.dp),
+                            label = { dday ->
+                                if (dDayLabelFormatter != null) dDayLabelFormatter(dday)
+                                else if (dday == 0) "D-Day" else "$dday days before"
+                            }
                         )
                     }
 
