@@ -4,7 +4,6 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
-import com.squareup.moshi.JsonClass
 
 @Entity(tableName = "users")
 data class User(
@@ -106,7 +105,6 @@ data class ShippingCompanyContact(
     val contactValue: String
 )
 
-@JsonClass(generateAdapter = true)
 @Entity(
     tableName = "user_addresses",
     foreignKeys = [
