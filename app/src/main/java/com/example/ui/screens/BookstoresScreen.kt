@@ -1696,8 +1696,8 @@ fun BookstoresScreen(
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(8.dp))
                                         .clickable {
-                                            when (contact.contactType.lowercase()) {
-                                                "website" -> {
+                                            when (contact.contactType.lowercase().trim()) {
+                                                "website", "tracking url" -> {
                                                     try {
                                                         val url = if (contact.contactValue.startsWith("http://") || contact.contactValue.startsWith("https://")) {
                                                             contact.contactValue
@@ -1730,8 +1730,9 @@ fun BookstoresScreen(
                                         }
                                         .padding(vertical = 4.dp, horizontal = 2.dp)
                                 ) {
-                                    val icon = when (contact.contactType.lowercase()) {
+                                    val icon = when (contact.contactType.lowercase().trim()) {
                                         "website" -> Icons.Default.Language
+                                        "tracking url" -> Icons.Default.TravelExplore
                                         "email" -> Icons.Default.Email
                                         "phone" -> Icons.Default.Phone
                                         else -> Icons.Default.ContactMail
@@ -1755,7 +1756,7 @@ fun BookstoresScreen(
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
-                                    if (contact.contactType.lowercase() in listOf("website", "email", "phone")) {
+                                    if (contact.contactType.lowercase().trim() in listOf("website", "tracking url", "email", "phone")) {
                                         Icon(
                                             imageVector = Icons.Default.OpenInNew,
                                             contentDescription = "Open",
@@ -1850,6 +1851,7 @@ fun BookstoresScreen(
                 mutableStateOf(
                     listOf(
                         ContactDraft(type = "Website", value = ""),
+                        ContactDraft(type = "Tracking URL", value = ""),
                         ContactDraft(type = "Email", value = ""),
                         ContactDraft(type = "Phone", value = "")
                     )
@@ -1908,7 +1910,8 @@ fun BookstoresScreen(
                             },
                             onAddContact = { type ->
                                 contacts = contacts + ContactDraft(type = type, value = "")
-                            }
+                            },
+                            allowTrackingUrl = true
                         )
                     }
                 },
@@ -1967,6 +1970,9 @@ fun BookstoresScreen(
                 }
                 if (!initialList.any { it.type.equals("Website", ignoreCase = true) }) {
                     initialList.add(0, ContactDraft(type = "Website", value = ""))
+                }
+                if (!initialList.any { it.type.equals("Tracking URL", ignoreCase = true) }) {
+                    initialList.add(ContactDraft(type = "Tracking URL", value = ""))
                 }
                 if (!initialList.any { it.type.equals("Email", ignoreCase = true) }) {
                     initialList.add(ContactDraft(type = "Email", value = ""))
@@ -2028,7 +2034,8 @@ fun BookstoresScreen(
                             },
                             onAddContact = { type ->
                                 editContacts = editContacts + ContactDraft(type = type, value = "")
-                            }
+                            },
+                            allowTrackingUrl = true
                         )
                     }
                 },
@@ -2102,7 +2109,8 @@ fun BookstoreContactsSection(
     onUpdateValue: (id: String, value: String) -> Unit,
     onUpdateType: (id: String, type: String) -> Unit,
     onRemoveContact: (id: String) -> Unit,
-    onAddContact: (type: String) -> Unit
+    onAddContact: (type: String) -> Unit,
+    allowTrackingUrl: Boolean = false
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -2154,7 +2162,55 @@ fun BookstoreContactsSection(
             Text("Add website")
         }
 
-        // 2. Email Fields
+        // 2. Tracking URL Fields (if allowTrackingUrl is enabled)
+        if (allowTrackingUrl) {
+            val trackingContacts = contacts.filter { it.type.equals("Tracking URL", ignoreCase = true) }
+            trackingContacts.forEach { item ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = item.value,
+                        onValueChange = { onUpdateValue(item.id, it) },
+                        label = { Text("Tracking URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        placeholder = { Text("https://...") },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.TravelExplore,
+                                contentDescription = "Tracking URL",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("contact_field_tracking_url_${item.id}")
+                    )
+                    IconButton(
+                        onClick = { onRemoveContact(item.id) },
+                        modifier = Modifier.testTag("remove_tracking_url_${item.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Remove tracking URL",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            TextButton(
+                onClick = { onAddContact("Tracking URL") },
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                modifier = Modifier.testTag("add_tracking_url_btn")
+            ) {
+                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Add tracking URL")
+            }
+        }
+
+        // 3. Email Fields
         val emailContacts = contacts.filter { it.type.equals("Email", ignoreCase = true) }
         emailContacts.forEach { item ->
             Row(
@@ -2200,7 +2256,7 @@ fun BookstoreContactsSection(
             Text("Add email")
         }
 
-        // 3. Phone Fields
+        // 4. Phone Fields
         val phoneContacts = contacts.filter { it.type.equals("Phone", ignoreCase = true) }
         phoneContacts.forEach { item ->
             Row(
@@ -2246,11 +2302,12 @@ fun BookstoreContactsSection(
             Text("Add phone")
         }
 
-        // 4. Other / Custom Fields
+        // 5. Other / Custom Fields
         val otherContacts = contacts.filter {
             !it.type.equals("Website", ignoreCase = true) &&
             !it.type.equals("Email", ignoreCase = true) &&
-            !it.type.equals("Phone", ignoreCase = true)
+            !it.type.equals("Phone", ignoreCase = true) &&
+            !(allowTrackingUrl && it.type.equals("Tracking URL", ignoreCase = true))
         }
         otherContacts.forEach { item ->
             Row(

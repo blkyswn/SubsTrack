@@ -1,5 +1,6 @@
 package com.example.data
 
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -843,8 +844,299 @@ class BookishRepository(private val database: BookishDatabase) {
         return packageDao.insert(packageItem)
     }
 
+    suspend fun importSpreadsheetData(
+        data: com.example.utils.ExcelImportData,
+        @Suppress("UNUSED_PARAMETER") replaceExisting: Boolean = false
+    ): com.example.utils.ImportResult {
+        return try {
+            database.withTransaction {
+                // ALWAYS add and NEVER remove previous data in the database
+
+                // 1. User Profile: Update empty/new settings, preserving existing profile
+                data.user?.let { importedUser ->
+                    val currentUser = userDao.getUser().firstOrNull()
+                    if (currentUser == null) {
+                        userDao.insertOrUpdate(importedUser.copy(id = 1))
+                    } else {
+                        userDao.insertOrUpdate(
+                            currentUser.copy(
+                                username = if (currentUser.username.isBlank()) importedUser.username else currentUser.username,
+                                currency = if (currentUser.currency.isBlank()) importedUser.currency else currentUser.currency,
+                                language = if (currentUser.language.isBlank()) importedUser.language else currentUser.language,
+                                profilePic = currentUser.profilePic ?: importedUser.profilePic,
+                                country = if (currentUser.country.isBlank()) importedUser.country else currentUser.country,
+                                defaultTrackingUrl = if (currentUser.defaultTrackingUrl.isBlank()) importedUser.defaultTrackingUrl else currentUser.defaultTrackingUrl,
+                                appFolder = if (currentUser.appFolder.isBlank()) importedUser.appFolder else currentUser.appFolder
+                            )
+                        )
+                    }
+                }
+
+                // Load existing records to check duplicity without comparing IDs
+                val existingBookstores = bookstoreDao.getAllBookstoresList().toMutableList()
+                val existingBookstoreContacts = bookstoreContactDao.getAllContactsList().toMutableList()
+                val existingForwardingServices = forwardingServiceDao.getAllForwardingServicesList().toMutableList()
+                val existingForwardingContacts = forwardingServiceContactDao.getAllContactsList().toMutableList()
+                val existingShippingCompanies = shippingCompanyDao.getAllShippingCompaniesList().toMutableList()
+                val existingShippingContacts = shippingCompanyContactDao.getAllContactsList().toMutableList()
+                val existingAddresses = userAddressDao.getAllUserAddressesList().toMutableList()
+                val existingSubscriptions = subscriptionTypeDao.getAllSubscriptionTypesList().toMutableList()
+                val existingSkipMethods = subscriptionSkipMethodDao.getAllSubscriptionSkipMethodsList().toMutableList()
+                val existingSubscriptionSkips = subscriptionSkipDao.getAllSubscriptionSkipsList().toMutableList()
+                val existingScheduled = scheduledSubscriptionDao.getAllScheduledSubscriptionsList().toMutableList()
+                val existingPreorders = preorderDao.getAllPreordersList().toMutableList()
+                val existingPackages = packageDao.getAllPackagesList().toMutableList()
+
+                val bookstoreIdMap = mutableMapOf<Int, Int>()
+                val forwardingServiceIdMap = mutableMapOf<Int, Int>()
+                val shippingCompanyIdMap = mutableMapOf<Int, Int>()
+                val addressIdMap = mutableMapOf<Int, Int>()
+                val subscriptionIdMap = mutableMapOf<Int, Int>()
+                val scheduledIdMap = mutableMapOf<Int, Int>()
+                val preorderIdMap = mutableMapOf<Int, Int>()
+
+                var addedBookstores = 0
+                var addedSubscriptions = 0
+                var addedScheduled = 0
+                var addedPreorders = 0
+
+                // 2. Bookstores: check duplicity by name (ignoring ID)
+                for (b in data.bookstores) {
+                    val duplicate = existingBookstores.firstOrNull { existing ->
+                        existing.name.trim().equals(b.name.trim(), ignoreCase = true)
+                    }
+                    if (duplicate != null) {
+                        bookstoreIdMap[b.id] = duplicate.id
+                    } else {
+                        val insertedId = bookstoreDao.insert(b.copy(id = 0)).toInt()
+                        val newStore = b.copy(id = insertedId)
+                        existingBookstores.add(newStore)
+                        bookstoreIdMap[b.id] = insertedId
+                        addedBookstores++
+                    }
+                }
+
+                // 3. Bookstore Contacts: check duplicity by store, type, value
+                for (bc in data.bookstoreContacts) {
+                    val resolvedStoreId = bookstoreIdMap[bc.bookstoreId] ?: bc.bookstoreId
+                    val duplicate = existingBookstoreContacts.firstOrNull { existing ->
+                        existing.bookstoreId == resolvedStoreId &&
+                        existing.contactType.trim().equals(bc.contactType.trim(), ignoreCase = true) &&
+                        existing.contactValue.trim().equals(bc.contactValue.trim(), ignoreCase = true)
+                    }
+                    if (duplicate == null) {
+                        val insertedId = bookstoreContactDao.insert(bc.copy(id = 0, bookstoreId = resolvedStoreId)).toInt()
+                        existingBookstoreContacts.add(bc.copy(id = insertedId, bookstoreId = resolvedStoreId))
+                    }
+                }
+
+                // 4. Forwarding Services: check duplicity by name
+                for (fs in data.forwardingServices) {
+                    val duplicate = existingForwardingServices.firstOrNull { existing ->
+                        existing.name.trim().equals(fs.name.trim(), ignoreCase = true)
+                    }
+                    if (duplicate != null) {
+                        forwardingServiceIdMap[fs.id] = duplicate.id
+                    } else {
+                        val insertedId = forwardingServiceDao.insert(fs.copy(id = 0)).toInt()
+                        val newFs = fs.copy(id = insertedId)
+                        existingForwardingServices.add(newFs)
+                        forwardingServiceIdMap[fs.id] = insertedId
+                    }
+                }
+
+                // 5. Forwarding Contacts
+                for (fsc in data.forwardingServiceContacts) {
+                    val resolvedFsId = forwardingServiceIdMap[fsc.forwardingServiceId] ?: fsc.forwardingServiceId
+                    val duplicate = existingForwardingContacts.firstOrNull { existing ->
+                        existing.forwardingServiceId == resolvedFsId &&
+                        existing.contactType.trim().equals(fsc.contactType.trim(), ignoreCase = true) &&
+                        existing.contactValue.trim().equals(fsc.contactValue.trim(), ignoreCase = true)
+                    }
+                    if (duplicate == null) {
+                        val insertedId = forwardingServiceContactDao.insert(fsc.copy(id = 0, forwardingServiceId = resolvedFsId)).toInt()
+                        existingForwardingContacts.add(fsc.copy(id = insertedId, forwardingServiceId = resolvedFsId))
+                    }
+                }
+
+                // 6. Shipping Companies: check duplicity by name
+                for (sc in data.shippingCompanies) {
+                    val duplicate = existingShippingCompanies.firstOrNull { existing ->
+                        existing.name.trim().equals(sc.name.trim(), ignoreCase = true)
+                    }
+                    if (duplicate != null) {
+                        shippingCompanyIdMap[sc.id] = duplicate.id
+                    } else {
+                        val insertedId = shippingCompanyDao.insert(sc.copy(id = 0)).toInt()
+                        val newSc = sc.copy(id = insertedId)
+                        existingShippingCompanies.add(newSc)
+                        shippingCompanyIdMap[sc.id] = insertedId
+                    }
+                }
+
+                // 7. Shipping Contacts
+                for (scc in data.shippingCompanyContacts) {
+                    val resolvedScId = shippingCompanyIdMap[scc.shippingCompanyId] ?: scc.shippingCompanyId
+                    val duplicate = existingShippingContacts.firstOrNull { existing ->
+                        existing.shippingCompanyId == resolvedScId &&
+                        existing.contactType.trim().equals(scc.contactType.trim(), ignoreCase = true) &&
+                        existing.contactValue.trim().equals(scc.contactValue.trim(), ignoreCase = true)
+                    }
+                    if (duplicate == null) {
+                        val insertedId = shippingCompanyContactDao.insert(scc.copy(id = 0, shippingCompanyId = resolvedScId)).toInt()
+                        existingShippingContacts.add(scc.copy(id = insertedId, shippingCompanyId = resolvedScId))
+                    }
+                }
+
+                // 8. User Addresses: check duplicity by streetAddress1, city, state, postalCode, country
+                for (addr in data.userAddresses) {
+                    val resolvedFsId = addr.forwardingServiceId?.let { forwardingServiceIdMap[it] ?: it }
+                    val duplicate = existingAddresses.firstOrNull { existing ->
+                        existing.streetAddress1.trim().equals(addr.streetAddress1.trim(), ignoreCase = true) &&
+                        existing.city.trim().equals(addr.city.trim(), ignoreCase = true) &&
+                        existing.postalCode.trim().equals(addr.postalCode.trim(), ignoreCase = true) &&
+                        existing.country.trim().equals(addr.country.trim(), ignoreCase = true)
+                    }
+                    if (duplicate != null) {
+                        addressIdMap[addr.id] = duplicate.id
+                    } else {
+                        val insertedId = userAddressDao.insert(addr.copy(id = 0, forwardingServiceId = resolvedFsId)).toInt()
+                        val newAddr = addr.copy(id = insertedId, forwardingServiceId = resolvedFsId)
+                        existingAddresses.add(newAddr)
+                        addressIdMap[addr.id] = insertedId
+                    }
+                }
+
+                // 9. Subscriptions: check duplicity by bookstoreId, title, frequency
+                for (sub in data.subscriptions) {
+                    val resolvedStoreId = bookstoreIdMap[sub.bookstoreId] ?: sub.bookstoreId
+                    val resolvedAddrId = sub.shippingAddressId?.let { addressIdMap[it] ?: it }
+                    val duplicate = existingSubscriptions.firstOrNull { existing ->
+                        existing.bookstoreId == resolvedStoreId &&
+                        existing.title.trim().equals(sub.title.trim(), ignoreCase = true) &&
+                        existing.frequency.trim().equals(sub.frequency.trim(), ignoreCase = true)
+                    }
+                    if (duplicate != null) {
+                        subscriptionIdMap[sub.id] = duplicate.id
+                    } else {
+                        val insertedId = subscriptionTypeDao.insert(
+                            sub.copy(id = 0, bookstoreId = resolvedStoreId, shippingAddressId = resolvedAddrId)
+                        ).toInt()
+                        val newSub = sub.copy(id = insertedId, bookstoreId = resolvedStoreId, shippingAddressId = resolvedAddrId)
+                        existingSubscriptions.add(newSub)
+                        subscriptionIdMap[sub.id] = insertedId
+                        addedSubscriptions++
+                    }
+                }
+
+                // 10. Skip Methods
+                for (sm in data.subscriptionSkipMethods) {
+                    val resolvedSubId = subscriptionIdMap[sm.subscriptionTypeId] ?: sm.subscriptionTypeId
+                    val duplicate = existingSkipMethods.firstOrNull { existing ->
+                        existing.subscriptionTypeId == resolvedSubId &&
+                        existing.skipMethodType.trim().equals(sm.skipMethodType.trim(), ignoreCase = true) &&
+                        existing.skipMethodValue.trim().equals(sm.skipMethodValue.trim(), ignoreCase = true)
+                    }
+                    if (duplicate == null) {
+                        val insertedId = subscriptionSkipMethodDao.insert(sm.copy(id = 0, subscriptionTypeId = resolvedSubId)).toInt()
+                        existingSkipMethods.add(sm.copy(id = insertedId, subscriptionTypeId = resolvedSubId))
+                    }
+                }
+
+                // 11. Subscription Skips
+                for (sk in data.subscriptionSkips) {
+                    val resolvedSubId = subscriptionIdMap[sk.subscriptionTypeId] ?: sk.subscriptionTypeId
+                    val duplicate = existingSubscriptionSkips.firstOrNull { existing ->
+                        existing.subscriptionTypeId == resolvedSubId &&
+                        existing.skipStartDate == sk.skipStartDate &&
+                        existing.skipEndDate == sk.skipEndDate
+                    }
+                    if (duplicate == null) {
+                        val insertedId = subscriptionSkipDao.insert(sk.copy(id = 0, subscriptionTypeId = resolvedSubId)).toInt()
+                        existingSubscriptionSkips.add(sk.copy(id = insertedId, subscriptionTypeId = resolvedSubId))
+                    }
+                }
+
+                // 12. Scheduled Subscriptions: check duplicity by subId, bookTitle, dueDate
+                for (sch in data.scheduledSubscriptions) {
+                    val resolvedSubId = subscriptionIdMap[sch.subscriptionTypeId] ?: sch.subscriptionTypeId
+                    val duplicate = existingScheduled.firstOrNull { existing ->
+                        existing.subscriptionTypeId == resolvedSubId &&
+                        existing.bookTitle.trim().equals(sch.bookTitle.trim(), ignoreCase = true) &&
+                        (existing.dueDate == sch.dueDate || kotlin.math.abs(existing.dueDate - sch.dueDate) < 86400000L)
+                    }
+                    if (duplicate != null) {
+                        scheduledIdMap[sch.id] = duplicate.id
+                    } else {
+                        val insertedId = scheduledSubscriptionDao.insert(
+                            sch.copy(id = 0, subscriptionTypeId = resolvedSubId)
+                        ).toInt()
+                        existingScheduled.add(sch.copy(id = insertedId, subscriptionTypeId = resolvedSubId))
+                        scheduledIdMap[sch.id] = insertedId
+                        addedScheduled++
+                    }
+                }
+
+                // 13. Preorders: check duplicity by bookstoreId, bookTitle, bookAuthor
+                for (pr in data.preorders) {
+                    val resolvedStoreId = bookstoreIdMap[pr.bookstoreId] ?: pr.bookstoreId
+                    val resolvedAddrId = pr.shippingAddressId?.let { addressIdMap[it] ?: it }
+                    val duplicate = existingPreorders.firstOrNull { existing ->
+                        existing.bookstoreId == resolvedStoreId &&
+                        existing.bookTitle.trim().equals(pr.bookTitle.trim(), ignoreCase = true) &&
+                        existing.bookAuthor.trim().equals(pr.bookAuthor.trim(), ignoreCase = true)
+                    }
+                    if (duplicate != null) {
+                        preorderIdMap[pr.id] = duplicate.id
+                    } else {
+                        val insertedId = preorderDao.insert(
+                            pr.copy(id = 0, bookstoreId = resolvedStoreId, shippingAddressId = resolvedAddrId)
+                        ).toInt()
+                        existingPreorders.add(pr.copy(id = insertedId, bookstoreId = resolvedStoreId, shippingAddressId = resolvedAddrId))
+                        preorderIdMap[pr.id] = insertedId
+                        addedPreorders++
+                    }
+                }
+
+                // 14. Packages: check duplicity by originTable, originId OR tracking number
+                for (pkg in data.packages) {
+                    val resolvedOriginId = if (pkg.originTable == "preorders") {
+                        preorderIdMap[pkg.originId] ?: pkg.originId
+                    } else {
+                        scheduledIdMap[pkg.originId] ?: pkg.originId
+                    }
+                    val duplicate = existingPackages.firstOrNull { existing ->
+                        (existing.originTable == pkg.originTable && existing.originId == resolvedOriginId) ||
+                        (!pkg.storeTrackingNumber.isNullOrBlank() && existing.storeTrackingNumber == pkg.storeTrackingNumber) ||
+                        (!pkg.forwarderTrackingNumber.isNullOrBlank() && existing.forwarderTrackingNumber == pkg.forwarderTrackingNumber)
+                    }
+                    if (duplicate == null) {
+                        val insertedId = packageDao.insert(pkg.copy(id = 0, originId = resolvedOriginId)).toInt()
+                        existingPackages.add(pkg.copy(id = insertedId, originId = resolvedOriginId))
+                    }
+                }
+
+                com.example.utils.ImportResult(
+                    success = true,
+                    message = "Import completed successfully (added $addedBookstores bookstores, $addedSubscriptions subscriptions, $addedPreorders preorders, $addedScheduled deliveries without duplicates)",
+                    bookstoresCount = addedBookstores,
+                    subscriptionsCount = addedSubscriptions,
+                    preordersCount = addedPreorders,
+                    addressesCount = data.userAddresses.size,
+                    packagesCount = data.packages.size
+                )
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("BookishRepository", "Error during spreadsheet import", e)
+            com.example.utils.ImportResult(
+                success = false,
+                message = "Import failed: ${e.localizedMessage ?: "Unknown error"}"
+            )
+        }
+    }
+
     // Prepopulate database with rich realistic sample data if empty
-    suspend fun checkAndPrepopulate() {
+    suspend fun checkAndPrepopulate(defaultAppFolder: String = "") {
         val bookstores = bookstoreDao.getAllBookstores().first()
         if (bookstores.isEmpty()) {
             // 1. Create Default User
@@ -856,7 +1148,8 @@ class BookishRepository(private val database: BookishDatabase) {
                 language = "English",
                 defaultScheduledSubCount = 6,
                 themeMode = "system",
-                country = "United States"
+                country = "United States",
+                appFolder = defaultAppFolder
             )
             userDao.insertOrUpdate(defaultUser)
 
@@ -1094,10 +1387,13 @@ class BookishRepository(private val database: BookishDatabase) {
 
             shippingCompanyContactDao.insertAll(listOf(
                 ShippingCompanyContact(shippingCompanyId = sc1Id, contactType = "Website", contactValue = "https://www.dhl.com"),
+                ShippingCompanyContact(shippingCompanyId = sc1Id, contactType = "Tracking URL", contactValue = "https://www.dhl.com/en/express/tracking.html?AWB="),
                 ShippingCompanyContact(shippingCompanyId = sc1Id, contactType = "Phone", contactValue = "+1-800-225-5345"),
                 ShippingCompanyContact(shippingCompanyId = sc2Id, contactType = "Website", contactValue = "https://www.fedex.com"),
+                ShippingCompanyContact(shippingCompanyId = sc2Id, contactType = "Tracking URL", contactValue = "https://www.fedex.com/fedextrack/?trknbr="),
                 ShippingCompanyContact(shippingCompanyId = sc2Id, contactType = "Phone", contactValue = "+1-800-463-3339"),
                 ShippingCompanyContact(shippingCompanyId = sc3Id, contactType = "Website", contactValue = "https://www.ups.com"),
+                ShippingCompanyContact(shippingCompanyId = sc3Id, contactType = "Tracking URL", contactValue = "https://www.ups.com/track?tracknum="),
                 ShippingCompanyContact(shippingCompanyId = sc3Id, contactType = "Phone", contactValue = "+1-800-742-5877")
             ))
         }

@@ -766,10 +766,10 @@ fun HomeScreen(
                         }
                     }
                 } else {
-                    val pageCount = subscriptions.size
+                    val pageCount = subscriptions.size.coerceAtLeast(1)
                     val heroPagerState = rememberPagerState(pageCount = { pageCount })
                     val safeIndex = heroPagerState.currentPage.coerceIn(0, pageCount - 1)
-                    val currentSubItem = subscriptions[safeIndex]
+                    val currentSubItem = subscriptions.getOrNull(safeIndex) ?: subscriptions.firstOrNull() ?: return@item
 
                     Card(
                         modifier = Modifier
@@ -852,7 +852,7 @@ fun HomeScreen(
                                 state = heroPagerState,
                                 modifier = Modifier.fillMaxWidth()
                             ) { pageIdx ->
-                                val item = subscriptions[pageIdx]
+                                val item = subscriptions.getOrNull(pageIdx) ?: return@HorizontalPager
                                 val now = System.currentTimeMillis()
                                 val subSkips = allSkips.filter { it.subscriptionTypeId == item.subscription.id }
                                 val activeRegister = subSkips.firstOrNull { skip ->
@@ -894,24 +894,32 @@ fun HomeScreen(
                                 }
 
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(IntrinsicSize.Min),
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
-                                            .fillMaxHeight()
+                                            .defaultMinSize(minHeight = 64.dp)
                                             .clip(RoundedCornerShape(16.dp))
                                             .background(contrastColor.copy(alpha = 0.05f))
                                             .border(BorderStroke(1.dp, contrastColor.copy(alpha = 0.15f)), RoundedCornerShape(16.dp))
-                                            .padding(horizontal = 9.dp, vertical = 7.dp)
+                                            .padding(horizontal = 9.dp, vertical = 10.dp)
                                     ) {
-                                        Column {
-                                            Text("Skips Available", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Spacer(modifier = Modifier.height(1.dp))
-                                            Text(skipsText, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                "Skips Available",
+                                                fontSize = 11.sp,
+                                                lineHeight = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                skipsText,
+                                                fontSize = 13.sp,
+                                                lineHeight = 15.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
                                             if (skipType != null && !skipType.equals("Unlimited", ignoreCase = true) && !skipType.equals("None", ignoreCase = true)) {
                                                 val skipEndDate = activeRegister?.skipEndDate ?: run {
                                                     when (skipType) {
@@ -937,10 +945,10 @@ fun HomeScreen(
                                                 if (skipEndDate != null) {
                                                     val diffMs = skipEndDate - now
                                                     val daysUntilSkipsRenew = kotlin.math.ceil(diffMs.toDouble() / (1000 * 60 * 60 * 24)).toLong().coerceAtLeast(0)
-                                                    Spacer(modifier = Modifier.height(1.dp))
                                                     Text(
                                                         text = "Skips renew in $daysUntilSkipsRenew days",
                                                         fontSize = 10.sp,
+                                                        lineHeight = 11.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                                                     )
                                                 }
@@ -951,7 +959,7 @@ fun HomeScreen(
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
-                                            .fillMaxHeight()
+                                            .defaultMinSize(minHeight = 64.dp)
                                             .clip(RoundedCornerShape(16.dp))
                                             .background(
                                                 if (isNextSkipped) MaterialTheme.colorScheme.error.copy(alpha = 0.05f)
@@ -965,14 +973,19 @@ fun HomeScreen(
                                                 ),
                                                 RoundedCornerShape(16.dp)
                                             )
-                                            .padding(horizontal = 9.dp, vertical = 7.dp)
+                                            .padding(horizontal = 9.dp, vertical = 10.dp)
                                     ) {
-                                        Column {
-                                            Text("Next Renewal", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Spacer(modifier = Modifier.height(1.dp))
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                "Next Renewal",
+                                                fontSize = 11.sp,
+                                                lineHeight = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                             Text(
                                                 renewalText,
                                                 fontSize = 13.sp,
+                                                lineHeight = 15.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (isNextSkipped) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.secondary
                                             )

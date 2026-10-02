@@ -1,8 +1,11 @@
 package com.example.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -10,19 +13,26 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.res.painterResource
 import com.example.R
 import com.example.data.PackageItem
 import com.example.ui.viewmodel.BookishViewModel
+import com.example.utils.TrackingUtils
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PackageDetailsDialog(
     originTable: String, // "preorders" or "scheduled_subs"
@@ -74,6 +84,31 @@ fun PackageDetailsDialog(
     }
 
     val shippingCompanies by viewModel.shippingCompaniesState.collectAsState()
+    val allShippingCompanyContacts by viewModel.shippingCompanyContactsState.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val coroutineScope = rememberCoroutineScope()
+
+    val storeCompanyMatch = shippingCompanies.find { it.name.equals(storeShippingCompany.trim(), ignoreCase = true) }
+    val storeCompanyTrackingUrl = storeCompanyMatch?.let { c ->
+        allShippingCompanyContacts.find { it.shippingCompanyId == c.id && it.contactType.equals("Tracking URL", ignoreCase = true) }?.contactValue?.trim()
+    }
+    val defaultTrackingUrl = userState?.defaultTrackingUrl?.trim()?.takeIf { it.isNotBlank() }
+    val effectiveStoreTrackingUrl = if (!storeCompanyTrackingUrl.isNullOrBlank()) {
+        storeCompanyTrackingUrl
+    } else {
+        defaultTrackingUrl
+    }
+
+    val fwdCompanyMatch = shippingCompanies.find { it.name.equals(forwarderShippingCompany.trim(), ignoreCase = true) }
+    val fwdCompanyTrackingUrl = fwdCompanyMatch?.let { c ->
+        allShippingCompanyContacts.find { it.shippingCompanyId == c.id && it.contactType.equals("Tracking URL", ignoreCase = true) }?.contactValue?.trim()
+    }
+    val effectiveFwdTrackingUrl = if (!fwdCompanyTrackingUrl.isNullOrBlank()) {
+        fwdCompanyTrackingUrl
+    } else {
+        defaultTrackingUrl
+    }
 
     var showDatePickerTarget by remember { mutableStateOf<String?>(null) }
 
@@ -192,21 +227,110 @@ fun PackageDetailsDialog(
                 }
 
                 item {
-                    OutlinedTextField(
-                        value = storeTrackingNumber,
-                        onValueChange = { storeTrackingNumber = it },
-                        label = { Text("Store Tracking Number") },
-                        placeholder = { Text("e.g. TRK123456789") },
+                    val storeHelperText = if (storeCompanyMatch != null && !storeCompanyTrackingUrl.isNullOrBlank()) {
+                        "Open Tracking URL (${storeCompanyMatch.name})"
+                    } else if (storeCompanyMatch != null) {
+                        "Open Tracking URL (${storeCompanyMatch.name} - Default)"
+                    } else {
+                        "Open Default Tracking URL"
+                    }
+                    val showStoreTrackingBtn = !effectiveStoreTrackingUrl.isNullOrBlank() && storeTrackingNumber.isNotBlank()
+                    val storeDestinationUrl = remember(effectiveStoreTrackingUrl, storeTrackingNumber) {
+                        if (!effectiveStoreTrackingUrl.isNullOrBlank() && storeTrackingNumber.isNotBlank()) {
+                            buildTrackingUrl(effectiveStoreTrackingUrl, storeTrackingNumber)
+                        } else ""
+                    }
+
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        trailingIcon = {
-                            if (storeTrackingNumber.isNotEmpty()) {
-                                IconButton(onClick = { storeTrackingNumber = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = storeTrackingNumber,
+                            onValueChange = { storeTrackingNumber = it },
+                            label = { Text("Store Tracking Number") },
+                            placeholder = { Text("e.g. TRK123456789") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("store_tracking_number_field"),
+                            singleLine = true,
+                            trailingIcon = {
+                                if (storeTrackingNumber.isNotEmpty()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(
+                                            onClick = {
+                                                clipboardManager.setText(AnnotatedString(storeTrackingNumber))
+                                                Toast.makeText(context, "Tracking number copied to clipboard", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.testTag("copy_store_tracking_btn")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContentCopy,
+                                                contentDescription = "Copy tracking number",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = { storeTrackingNumber = "" },
+                                            modifier = Modifier.testTag("clear_store_tracking_btn")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Clear",
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        )
+
+                        if (showStoreTrackingBtn) {
+                            val tooltipState = rememberTooltipState()
+                            TooltipBox(
+                                positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                                tooltip = {
+                                    PlainTooltip {
+                                        Text(storeHelperText)
+                                    }
+                                },
+                                state = tooltipState
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .combinedClickable(
+                                            onClick = {
+                                                try {
+                                                    val fullUrl = if (storeDestinationUrl.startsWith("http://") || storeDestinationUrl.startsWith("https://")) storeDestinationUrl else "https://$storeDestinationUrl"
+                                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(fullUrl))
+                                                    context.startActivity(intent)
+                                                } catch (e: Exception) {
+                                                    e.printStackTrace()
+                                                }
+                                            },
+                                            onLongClick = {
+                                                coroutineScope.launch {
+                                                    tooltipState.show()
+                                                }
+                                            }
+                                        )
+                                        .testTag("open_store_tracking_url_btn"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.TravelExplore,
+                                        contentDescription = storeHelperText,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(26.dp)
+                                    )
                                 }
                             }
                         }
-                    )
+                    }
                 }
 
                 // Section 2: Forwarder Information (Only if address belongs to a forwarding service)
@@ -295,21 +419,110 @@ fun PackageDetailsDialog(
                     }
 
                     item {
-                        OutlinedTextField(
-                            value = forwarderTrackingNumber,
-                            onValueChange = { forwarderTrackingNumber = it },
-                            label = { Text("Forwarder Tracking Number") },
-                            placeholder = { Text("e.g. FWD987654321") },
+                        val fwdHelperText = if (fwdCompanyMatch != null && !fwdCompanyTrackingUrl.isNullOrBlank()) {
+                            "Open Tracking URL (${fwdCompanyMatch.name})"
+                        } else if (fwdCompanyMatch != null) {
+                            "Open Tracking URL (${fwdCompanyMatch.name} - Default)"
+                        } else {
+                            "Open Default Tracking URL"
+                        }
+                        val showFwdTrackingBtn = !effectiveFwdTrackingUrl.isNullOrBlank() && forwarderTrackingNumber.isNotBlank()
+                        val fwdDestinationUrl = remember(effectiveFwdTrackingUrl, forwarderTrackingNumber) {
+                            if (!effectiveFwdTrackingUrl.isNullOrBlank() && forwarderTrackingNumber.isNotBlank()) {
+                                buildTrackingUrl(effectiveFwdTrackingUrl, forwarderTrackingNumber)
+                            } else ""
+                        }
+
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            trailingIcon = {
-                                if (forwarderTrackingNumber.isNotEmpty()) {
-                                    IconButton(onClick = { forwarderTrackingNumber = "" }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear")
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = forwarderTrackingNumber,
+                                onValueChange = { forwarderTrackingNumber = it },
+                                label = { Text("Forwarder Tracking Number") },
+                                placeholder = { Text("e.g. FWD987654321") },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("forwarder_tracking_number_field"),
+                                singleLine = true,
+                                trailingIcon = {
+                                    if (forwarderTrackingNumber.isNotEmpty()) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(
+                                                onClick = {
+                                                    clipboardManager.setText(AnnotatedString(forwarderTrackingNumber))
+                                                    Toast.makeText(context, "Tracking number copied to clipboard", Toast.LENGTH_SHORT).show()
+                                                },
+                                                modifier = Modifier.testTag("copy_forwarder_tracking_btn")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentCopy,
+                                                    contentDescription = "Copy forwarder tracking number",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { forwarderTrackingNumber = "" },
+                                                modifier = Modifier.testTag("clear_forwarder_tracking_btn")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Clear",
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+
+                            if (showFwdTrackingBtn) {
+                                val tooltipState = rememberTooltipState()
+                                TooltipBox(
+                                    positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                                    tooltip = {
+                                        PlainTooltip {
+                                            Text(fwdHelperText)
+                                        }
+                                    },
+                                    state = tooltipState
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(CircleShape)
+                                            .combinedClickable(
+                                                onClick = {
+                                                    try {
+                                                        val fullUrl = if (fwdDestinationUrl.startsWith("http://") || fwdDestinationUrl.startsWith("https://")) fwdDestinationUrl else "https://$fwdDestinationUrl"
+                                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(fullUrl))
+                                                        context.startActivity(intent)
+                                                    } catch (e: Exception) {
+                                                        e.printStackTrace()
+                                                    }
+                                                },
+                                                onLongClick = {
+                                                    coroutineScope.launch {
+                                                        tooltipState.show()
+                                                    }
+                                                }
+                                            )
+                                            .testTag("open_forwarder_tracking_url_btn"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.TravelExplore,
+                                            contentDescription = fwdHelperText,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(26.dp)
+                                        )
                                     }
                                 }
                             }
-                        )
+                        }
                     }
                 }
 
@@ -494,3 +707,6 @@ private fun PackageDatePickerDialog(
         DatePicker(state = datePickerState)
     }
 }
+
+private fun buildTrackingUrl(baseUrl: String, trackingNumber: String): String =
+    TrackingUtils.buildTrackingUrl(baseUrl, trackingNumber)

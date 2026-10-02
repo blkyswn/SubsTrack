@@ -3,14 +3,20 @@ package com.example.ui.viewmodel
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
 import com.example.utils.ExcelExporter
+import com.example.utils.ExcelImporter
+import com.example.utils.ExcelImportData
+import com.example.utils.AppFolderManager
+import android.widget.Toast
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -18,6 +24,10 @@ import java.util.*
 class BookishViewModel(application: Application) : AndroidViewModel(application) {
     private val database = BookishDatabase.getDatabase(application)
     val repository = BookishRepository(database)
+
+    init {
+        AppFolderManager.init(application)
+    }
 
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
@@ -132,10 +142,24 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     init {
+        val defaultFolder = AppFolderManager.getDefaultAppFolder(application)
+        viewModelScope.launch {
+            repository.userFlow.collect { user ->
+                if (user != null) {
+                    if (user.appFolder.isBlank()) {
+                        repository.saveUser(user.copy(appFolder = defaultFolder))
+                        AppFolderManager.setAppFolderPath(application, defaultFolder)
+                    } else {
+                        AppFolderManager.setAppFolderPath(application, user.appFolder)
+                    }
+                }
+            }
+        }
+
         // Run prepopulate check and background reconciliation safely on IO dispatcher
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                repository.checkAndPrepopulate()
+                repository.checkAndPrepopulate(defaultFolder)
                 checkAndGenerateActiveSubscriptions()
                 reconcileStatuses()
             } catch (e: Exception) {
@@ -294,9 +318,63 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // --- Database CRUD Actions ---
-    fun updateProfile(username: String, currency: String, language: String, profilePic: String?, defaultScheduledSubCount: Int = 6, themeMode: String = "system", themeCombo: String = "default", dateFormat: String = "yyyy-MM-dd", displayAmounts: Boolean = false, country: String = "") {
+    fun updateProfile(
+        username: String,
+        currency: String,
+        language: String,
+        profilePic: String?,
+        defaultScheduledSubCount: Int = 6,
+        themeMode: String = "system",
+        themeCombo: String = "default",
+        dateFormat: String = "yyyy-MM-dd",
+        displayAmounts: Boolean = false,
+        country: String = "",
+        defaultTrackingUrl: String = "",
+        appFolder: String? = null
+    ) {
         viewModelScope.launch {
-            repository.saveUser(User(id = 1, username = username, currency = currency, language = language, profilePic = profilePic, defaultScheduledSubCount = defaultScheduledSubCount, themeMode = themeMode, themeCombo = themeCombo, dateFormat = dateFormat, displayAmounts = displayAmounts, country = country))
+            val currentAppFolder = appFolder?.ifBlank { null }
+                ?: userState.value?.appFolder?.ifBlank { null }
+                ?: AppFolderManager.appFolderUri.value
+                ?: AppFolderManager.getDefaultAppFolder(getApplication())
+
+            repository.saveUser(
+                User(
+                    id = 1,
+                    username = username,
+                    currency = currency,
+                    language = language,
+                    profilePic = profilePic,
+                    defaultScheduledSubCount = defaultScheduledSubCount,
+                    themeMode = themeMode,
+                    themeCombo = themeCombo,
+                    dateFormat = dateFormat,
+                    displayAmounts = displayAmounts,
+                    country = country,
+                    defaultTrackingUrl = defaultTrackingUrl,
+                    appFolder = currentAppFolder
+                )
+            )
+            AppFolderManager.setAppFolderPath(getApplication(), currentAppFolder)
+        }
+    }
+
+    fun updateAppFolder(pathOrUri: String) {
+        viewModelScope.launch {
+            val finalPath = if (pathOrUri.isBlank()) {
+                AppFolderManager.getDefaultAppFolder(getApplication())
+            } else {
+                pathOrUri
+            }
+            val currentUser = userState.value ?: repository.userFlow.firstOrNull() ?: User(
+                id = 1,
+                username = "Eleanor Vance",
+                profilePic = "avatar_classic",
+                currency = "$",
+                language = "English"
+            )
+            repository.saveUser(currentUser.copy(appFolder = finalPath))
+            AppFolderManager.setAppFolderPath(getApplication(), finalPath)
         }
     }
 
@@ -1236,7 +1314,28 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                 preorders = rawPreordersState.value,
                 packages = allPackagesState.value
             )
-            shareExportFile(context, "bookish_library_export.xls", xmlString, "application/vnd.ms-excel")
+
+            val timestamp = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date())
+            val fileName = "bookish_library_export_${timestamp}.xls"
+
+            // Save to configured App Folder if available
+            var savedFolderNotice: String? = null
+            if (AppFolderManager.appFolderUri.value != null) {
+                val saved = withContext(Dispatchers.IO) {
+                    AppFolderManager.saveFileToAppFolder(
+                        context,
+                        fileName,
+                        "application/vnd.ms-excel",
+                        xmlString.toByteArray(Charsets.UTF_8)
+                    )
+                }
+                if (saved != null) {
+                    savedFolderNotice = "Saved to ${AppFolderManager.appFolderDisplayPath.value ?: "App Folder"}/$fileName"
+                    Toast.makeText(context, savedFolderNotice, Toast.LENGTH_LONG).show()
+                }
+            }
+
+            shareExportFile(context, fileName, xmlString, "application/vnd.ms-excel")
         }
     }
 
@@ -1261,6 +1360,200 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    // --- DATABASE SNAPSHOT BACKUP & RESTORE ---
+    val isDbOperationInProgress = MutableStateFlow(false)
+    val dbOperationMessage = MutableStateFlow<String?>(null)
+
+    fun backupDatabaseSnapshot(context: Context) {
+        viewModelScope.launch {
+            isDbOperationInProgress.value = true
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    BookishDatabase.createSnapshotBytes(context)
+                }
+                if (bytes == null || bytes.isEmpty()) {
+                    dbOperationMessage.value = "Failed to create database snapshot: Database is empty or inaccessible."
+                    return@launch
+                }
+
+                val timestamp = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date())
+                val fileName = "bookish_database_backup_${timestamp}.db"
+
+                var savedFolderLocation: String? = null
+                if (AppFolderManager.appFolderUri.value != null) {
+                    val savedUri = withContext(Dispatchers.IO) {
+                        AppFolderManager.saveFileToAppFolder(
+                            context,
+                            fileName,
+                            "application/vnd.sqlite3",
+                            bytes
+                        )
+                    }
+                    if (savedUri != null) {
+                        savedFolderLocation = AppFolderManager.appFolderDisplayPath.value ?: "App Folder"
+                    }
+                }
+
+                // Prepare file in cache for sharing
+                val cacheFile = File(context.cacheDir, fileName)
+                withContext(Dispatchers.IO) {
+                    cacheFile.writeBytes(bytes)
+                }
+
+                val message = if (savedFolderLocation != null) {
+                    "Database snapshot successfully created and saved to $savedFolderLocation/$fileName"
+                } else {
+                    "Database snapshot created ($fileName).\n\nTip: You can select a dedicated App Folder in Profile Settings to automatically store all backups on your phone storage."
+                }
+                dbOperationMessage.value = message
+
+                shareDatabaseSnapshotFile(context, fileName, cacheFile)
+            } catch (e: Exception) {
+                android.util.Log.e("BookishViewModel", "Error creating database snapshot", e)
+                dbOperationMessage.value = "Error creating database snapshot: ${e.localizedMessage ?: "Unknown error"}"
+            } finally {
+                isDbOperationInProgress.value = false
+            }
+        }
+    }
+
+    private fun shareDatabaseSnapshotFile(context: Context, fileName: String, file: File) {
+        try {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/vnd.sqlite3"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Bookish Database Snapshot")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(intent, "Share or save database snapshot via")
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun restoreDatabaseSnapshot(context: Context, uri: Uri) {
+        viewModelScope.launch {
+            isDbOperationInProgress.value = true
+            try {
+                var preRestoreBackupNotice: String? = null
+                withContext(Dispatchers.IO) {
+                    // 1. Create a backup file of the current database before loading the new one
+                    val currentSnapshotBytes = BookishDatabase.createSnapshotBytes(context)
+                    if (currentSnapshotBytes != null && currentSnapshotBytes.isNotEmpty()) {
+                        val timestamp = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date())
+                        val preBackupFileName = "bookish_pre_restore_backup_${timestamp}.db"
+
+                        // If App Folder is configured, save the pre-restore backup there
+                        if (AppFolderManager.appFolderUri.value != null) {
+                            val savedUri = AppFolderManager.saveFileToAppFolder(
+                                context,
+                                preBackupFileName,
+                                "application/vnd.sqlite3",
+                                currentSnapshotBytes
+                            )
+                            if (savedUri != null) {
+                                preRestoreBackupNotice = "A pre-restore backup of your previous database was saved to ${AppFolderManager.appFolderDisplayPath.value ?: "App Folder"}/$preBackupFileName"
+                            }
+                        }
+
+                        // Also save a safety copy in app's files directory
+                        val backupDir = File(context.filesDir, "backups").apply { if (!exists()) mkdirs() }
+                        val localBackup = File(backupDir, preBackupFileName)
+                        localBackup.writeBytes(currentSnapshotBytes)
+                        if (preRestoreBackupNotice == null) {
+                            preRestoreBackupNotice = "A pre-restore safety backup of your previous database was created ($preBackupFileName)."
+                        }
+                    }
+
+                    // 2. Load the selected database file into the app
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                        ?: throw IllegalArgumentException("Could not open selected database file.")
+                    inputStream.use { stream ->
+                        BookishDatabase.restoreDatabaseSnapshot(context, stream)
+                    }
+                }
+                val backupMsg = if (preRestoreBackupNotice != null) "\n\n$preRestoreBackupNotice" else ""
+                dbOperationMessage.value = "Database restored successfully! All books, subscriptions, preorders, and settings have been loaded.$backupMsg"
+            } catch (e: Exception) {
+                android.util.Log.e("BookishViewModel", "Error restoring database snapshot", e)
+                dbOperationMessage.value = "Error restoring database: ${e.localizedMessage ?: "Invalid or corrupted SQLite file"}"
+            } finally {
+                isDbOperationInProgress.value = false
+            }
+        }
+    }
+
+    fun clearDbOperationMessage() {
+        dbOperationMessage.value = null
+    }
+
+    // --- CSV / EXCEL IMPORTING ---
+    val importPreviewData = MutableStateFlow<ExcelImportData?>(null)
+    val isImporting = MutableStateFlow(false)
+    val importResultMessage = MutableStateFlow<String?>(null)
+
+    fun prepareSpreadsheetImport(context: Context, uri: Uri) {
+        viewModelScope.launch {
+            try {
+                isImporting.value = true
+                val inputStream = context.contentResolver.openInputStream(uri)
+                if (inputStream == null) {
+                    importResultMessage.value = "Failed to open selected file."
+                    isImporting.value = false
+                    return@launch
+                }
+                val userFormat = userState.value?.dateFormat ?: "yyyy-MM-dd"
+                val parsed = withContext(Dispatchers.IO) {
+                    inputStream.use { stream ->
+                        ExcelImporter.parseWorkbook(stream, userFormat)
+                    }
+                }
+                if (parsed.totalCount == 0 && parsed.user == null) {
+                    importResultMessage.value = "No valid Bookish data found in this spreadsheet."
+                } else {
+                    importPreviewData.value = parsed
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("BookishViewModel", "Error parsing import file", e)
+                importResultMessage.value = "Error parsing spreadsheet: ${e.localizedMessage ?: "Invalid format"}"
+            } finally {
+                isImporting.value = false
+            }
+        }
+    }
+
+    fun executeImport(replaceExisting: Boolean) {
+        val data = importPreviewData.value ?: return
+        viewModelScope.launch {
+            isImporting.value = true
+            val result = withContext(Dispatchers.IO) {
+                repository.importSpreadsheetData(data, replaceExisting)
+            }
+            importPreviewData.value = null
+            isImporting.value = false
+            importResultMessage.value = if (result.success) {
+                "Import successful! Loaded ${result.bookstoresCount} bookstores, ${result.subscriptionsCount} subscriptions, ${result.preordersCount} preorders, ${result.addressesCount} addresses, and ${result.packagesCount} packages."
+            } else {
+                result.message
+            }
+        }
+    }
+
+    fun clearImportPreview() {
+        importPreviewData.value = null
+    }
+
+    fun clearImportResultMessage() {
+        importResultMessage.value = null
     }
 
     // Packages

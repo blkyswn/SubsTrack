@@ -18,7 +18,9 @@ data class User(
     val themeCombo: String = "default",
     val dateFormat: String = "yyyy-MM-dd",
     val displayAmounts: Boolean = false,
-    val country: String = ""
+    val country: String = "",
+    val defaultTrackingUrl: String = "",
+    val appFolder: String = ""
 )
 
 @Entity(tableName = "bookstores")

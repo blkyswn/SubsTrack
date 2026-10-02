@@ -17,6 +17,9 @@ interface BookstoreDao {
     @Query("SELECT * FROM bookstores ORDER BY name ASC")
     fun getAllBookstores(): Flow<List<Bookstore>>
 
+    @Query("SELECT * FROM bookstores")
+    suspend fun getAllBookstoresList(): List<Bookstore>
+
     @Query("SELECT * FROM bookstores WHERE id = :id LIMIT 1")
     suspend fun getBookstoreById(id: Int): Bookstore?
 
@@ -28,6 +31,9 @@ interface BookstoreDao {
 
     @Delete
     suspend fun delete(bookstore: Bookstore)
+
+    @Query("DELETE FROM bookstores")
+    suspend fun deleteAllBookstores()
 }
 
 @Dao
@@ -40,6 +46,9 @@ interface BookstoreContactDao {
 
     @Query("SELECT * FROM bookstore_contacts")
     fun getAllContacts(): Flow<List<BookstoreContact>>
+
+    @Query("SELECT * FROM bookstore_contacts")
+    suspend fun getAllContactsList(): List<BookstoreContact>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(contact: BookstoreContact): Long
@@ -62,6 +71,9 @@ interface ForwardingServiceDao {
     @Query("SELECT * FROM forwarding_services ORDER BY name ASC")
     fun getAllForwardingServices(): Flow<List<ForwardingService>>
 
+    @Query("SELECT * FROM forwarding_services")
+    suspend fun getAllForwardingServicesList(): List<ForwardingService>
+
     @Query("SELECT * FROM forwarding_services WHERE id = :id LIMIT 1")
     suspend fun getForwardingServiceById(id: Int): ForwardingService?
 
@@ -73,6 +85,9 @@ interface ForwardingServiceDao {
 
     @Delete
     suspend fun delete(forwardingService: ForwardingService)
+
+    @Query("DELETE FROM forwarding_services")
+    suspend fun deleteAllForwardingServices()
 }
 
 @Dao
@@ -85,6 +100,9 @@ interface ForwardingServiceContactDao {
 
     @Query("SELECT * FROM forwarding_service_contacts")
     fun getAllContacts(): Flow<List<ForwardingServiceContact>>
+
+    @Query("SELECT * FROM forwarding_service_contacts")
+    suspend fun getAllContactsList(): List<ForwardingServiceContact>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(contact: ForwardingServiceContact): Long
@@ -121,12 +139,18 @@ interface SubscriptionTypeDao {
 
     @Delete
     suspend fun delete(subscriptionType: SubscriptionType)
+
+    @Query("DELETE FROM subscription_types")
+    suspend fun deleteAllSubscriptionTypes()
 }
 
 @Dao
 interface ScheduledSubscriptionDao {
     @Query("SELECT * FROM scheduled_subscriptions ORDER BY dueDate ASC")
     fun getAllScheduledSubscriptions(): Flow<List<ScheduledSubscription>>
+
+    @Query("SELECT * FROM scheduled_subscriptions")
+    suspend fun getAllScheduledSubscriptionsList(): List<ScheduledSubscription>
 
     @Query("SELECT * FROM scheduled_subscriptions WHERE subscriptionTypeId = :subTypeId")
     suspend fun getScheduledSubscriptionsForType(subTypeId: Int): List<ScheduledSubscription>
@@ -151,12 +175,18 @@ interface ScheduledSubscriptionDao {
 
     @Query("DELETE FROM scheduled_subscriptions WHERE subscriptionTypeId = :subTypeId")
     suspend fun deleteScheduledSubsForType(subTypeId: Int)
+
+    @Query("DELETE FROM scheduled_subscriptions")
+    suspend fun deleteAllScheduledSubscriptions()
 }
 
 @Dao
 interface PreorderDao {
     @Query("SELECT * FROM preorders ORDER BY rangedSaleDateStart ASC")
     fun getAllPreorders(): Flow<List<Preorder>>
+
+    @Query("SELECT * FROM preorders")
+    suspend fun getAllPreordersList(): List<Preorder>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(preorder: Preorder): Long
@@ -169,12 +199,18 @@ interface PreorderDao {
 
     @Delete
     suspend fun delete(preorder: Preorder)
+
+    @Query("DELETE FROM preorders")
+    suspend fun deleteAllPreorders()
 }
 
 @Dao
 interface SubscriptionSkipDao {
     @Query("SELECT * FROM subscription_skips ORDER BY id ASC")
     fun getAllSubscriptionSkips(): Flow<List<SubscriptionSkip>>
+
+    @Query("SELECT * FROM subscription_skips")
+    suspend fun getAllSubscriptionSkipsList(): List<SubscriptionSkip>
 
     @Query("SELECT * FROM subscription_skips WHERE subscriptionTypeId = :subTypeId LIMIT 1")
     suspend fun getSkipForSubscriptionType(subTypeId: Int): SubscriptionSkip?
@@ -203,6 +239,9 @@ interface SubscriptionSkipMethodDao {
     @Query("SELECT * FROM subscription_skip_methods ORDER BY skipMethodOrder ASC")
     fun getAllSubscriptionSkipMethods(): Flow<List<SubscriptionSkipMethod>>
 
+    @Query("SELECT * FROM subscription_skip_methods")
+    suspend fun getAllSubscriptionSkipMethodsList(): List<SubscriptionSkipMethod>
+
     @Query("SELECT * FROM subscription_skip_methods WHERE subscriptionTypeId = :subscriptionTypeId ORDER BY skipMethodOrder ASC")
     fun getSkipMethodsForSubscriptionType(subscriptionTypeId: Int): Flow<List<SubscriptionSkipMethod>>
 
@@ -230,6 +269,9 @@ interface UserAddressDao {
     @Query("SELECT * FROM user_addresses ORDER BY isDefault DESC, id DESC")
     fun getAllUserAddresses(): Flow<List<UserAddress>>
 
+    @Query("SELECT * FROM user_addresses")
+    suspend fun getAllUserAddressesList(): List<UserAddress>
+
     @Query("SELECT * FROM user_addresses WHERE id = :id LIMIT 1")
     suspend fun getAddressById(id: Int): UserAddress?
 
@@ -242,6 +284,9 @@ interface UserAddressDao {
     @Delete
     suspend fun delete(address: UserAddress)
 
+    @Query("DELETE FROM user_addresses")
+    suspend fun deleteAllAddresses()
+
     @Query("UPDATE user_addresses SET isDefault = 0 WHERE id != :exceptId")
     suspend fun clearOtherDefaults(exceptId: Int)
 }
@@ -250,6 +295,9 @@ interface UserAddressDao {
 interface ShippingCompanyDao {
     @Query("SELECT * FROM shipping_companies ORDER BY name ASC")
     fun getAllShippingCompanies(): Flow<List<ShippingCompany>>
+
+    @Query("SELECT * FROM shipping_companies")
+    suspend fun getAllShippingCompaniesList(): List<ShippingCompany>
 
     @Query("SELECT * FROM shipping_companies WHERE id = :id LIMIT 1")
     suspend fun getShippingCompanyById(id: Int): ShippingCompany?
@@ -262,6 +310,9 @@ interface ShippingCompanyDao {
 
     @Delete
     suspend fun delete(shippingCompany: ShippingCompany)
+
+    @Query("DELETE FROM shipping_companies")
+    suspend fun deleteAllShippingCompanies()
 }
 
 @Dao
@@ -274,6 +325,9 @@ interface ShippingCompanyContactDao {
 
     @Query("SELECT * FROM shipping_company_contacts")
     fun getAllContacts(): Flow<List<ShippingCompanyContact>>
+
+    @Query("SELECT * FROM shipping_company_contacts")
+    suspend fun getAllContactsList(): List<ShippingCompanyContact>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(contact: ShippingCompanyContact): Long
@@ -302,6 +356,9 @@ interface PackageDao {
     @Query("SELECT * FROM packages")
     fun getAllPackages(): Flow<List<PackageItem>>
 
+    @Query("SELECT * FROM packages")
+    suspend fun getAllPackagesList(): List<PackageItem>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(packageItem: PackageItem): Long
 
@@ -310,6 +367,9 @@ interface PackageDao {
 
     @Delete
     suspend fun delete(packageItem: PackageItem)
+
+    @Query("DELETE FROM packages")
+    suspend fun deleteAllPackages()
 
     @Query("DELETE FROM packages WHERE originTable = :originTable AND originId = :originId")
     suspend fun deleteByOrigin(originTable: String, originId: Int)

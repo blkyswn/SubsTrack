@@ -4,6 +4,7 @@ import com.example.ui.components.InlineReminderSelector
 import com.example.ui.components.MultiSelectChipGroup
 import com.example.ui.components.OtherFormTabContent
 import com.example.ui.components.PackageDetailsDialog
+import com.example.ui.components.PackageTrackingQuickButton
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.res.painterResource
 
@@ -2151,6 +2152,11 @@ fun EditPreorderDialog(
                     text = "Edit Preorder",
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
+                )
+                PackageTrackingQuickButton(
+                    originTable = "preorders",
+                    originId = pr.id,
+                    viewModel = viewModel
                 )
                 IconButton(
                     onClick = { showPackageDialog = true },

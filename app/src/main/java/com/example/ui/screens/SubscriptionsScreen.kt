@@ -4,6 +4,7 @@ import com.example.ui.components.InlineReminderSelector
 import com.example.ui.components.MultiSelectChipGroup
 import com.example.ui.components.OtherFormTabContent
 import com.example.ui.components.PackageDetailsDialog
+import com.example.ui.components.PackageTrackingQuickButton
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.res.painterResource
 import com.example.R
@@ -4837,6 +4838,11 @@ fun EditScheduledSubscriptionDialog(
                     text = "Edit Scheduled Subscription",
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
+                )
+                PackageTrackingQuickButton(
+                    originTable = "scheduled_subs",
+                    originId = sc.id,
+                    viewModel = viewModel
                 )
                 IconButton(
                     onClick = { showPackageDialog = true },

@@ -78,6 +78,10 @@ object ExcelExporter {
     <Cell><Data ss:Type="String">${escapeXml(user.username)}</Data></Cell>
    </Row>
    <Row>
+    <Cell><Data ss:Type="String">Profile Picture</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(user.profilePic ?: "")}</Data></Cell>
+   </Row>
+   <Row>
     <Cell><Data ss:Type="String">Preferred Currency</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(user.currency)}</Data></Cell>
    </Row>
@@ -90,8 +94,28 @@ object ExcelExporter {
     <Cell><Data ss:Type="String">${escapeXml(user.themeMode)}</Data></Cell>
    </Row>
    <Row>
+    <Cell><Data ss:Type="String">Theme Palette</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(user.themeCombo)}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell><Data ss:Type="String">Date Format</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(user.dateFormat)}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell><Data ss:Type="String">Display Amounts</Data></Cell>
+    <Cell><Data ss:Type="String">${if (user.displayAmounts) "Yes" else "No"}</Data></Cell>
+   </Row>
+   <Row>
     <Cell><Data ss:Type="String">Country</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(user.country)}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell><Data ss:Type="String">Default Tracking URL</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(user.defaultTrackingUrl)}</Data></Cell>
+   </Row>
+   <Row>
+    <Cell><Data ss:Type="String">Default Scheduled Sub Count</Data></Cell>
+    <Cell><Data ss:Type="Number">${user.defaultScheduledSubCount}</Data></Cell>
    </Row>
    <Row>
     <Cell><Data ss:Type="String">Total Bookstores</Data></Cell>
@@ -155,10 +179,12 @@ object ExcelExporter {
    <Column ss:Width="80"/>
    <Column ss:Width="200"/>
    <Column ss:Width="260"/>
+   <Column ss:Width="160"/>
    <Row>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Name</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Website</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Profile Picture</Data></Cell>
    </Row>
 """)
         for (b in bookstores) {
@@ -166,6 +192,7 @@ object ExcelExporter {
     <Cell><Data ss:Type="Number">${b.id}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(b.name)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(b.website)}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(b.profilePic ?: "")}</Data></Cell>
    </Row>
 """)
         }
@@ -206,6 +233,7 @@ object ExcelExporter {
    <Column ss:Width="80"/>
    <Column ss:Width="200"/>
    <Column ss:Width="260"/>
+   <Column ss:Width="160"/>
    <Column ss:Width="100"/>
    <Column ss:Width="120"/>
    <Column ss:Width="130"/>
@@ -214,6 +242,7 @@ object ExcelExporter {
     <Cell ss:StyleID="Header"><Data ss:Type="String">Service ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Name</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Website</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Profile Picture</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Storage Days</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Reminder Enabled</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Reminder D-Day Offset</Data></Cell>
@@ -226,6 +255,7 @@ object ExcelExporter {
     <Cell><Data ss:Type="Number">${fs.id}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(fs.name)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(fs.website)}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(fs.profilePic ?: "")}</Data></Cell>
     <Cell><Data ss:Type="String">${fs.storageDays?.toString() ?: ""}</Data></Cell>
     <Cell><Data ss:Type="String">${if (fs.reminderEnabled) "Yes" else "No"}</Data></Cell>
     <Cell><Data ss:Type="Number">${fs.reminderDDayOffset}</Data></Cell>
@@ -270,10 +300,12 @@ object ExcelExporter {
    <Column ss:Width="80"/>
    <Column ss:Width="200"/>
    <Column ss:Width="260"/>
+   <Column ss:Width="160"/>
    <Row>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Company ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Name</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Website</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Profile Picture</Data></Cell>
    </Row>
 """)
         for (sc in shippingCompanies) {
@@ -281,6 +313,7 @@ object ExcelExporter {
     <Cell><Data ss:Type="Number">${sc.id}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(sc.name)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(sc.website)}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(sc.profilePic ?: "")}</Data></Cell>
    </Row>
 """)
         }
@@ -319,22 +352,26 @@ object ExcelExporter {
         xmlBuilder.append(""" <Worksheet ss:Name="Addresses">
   <Table>
    <Column ss:Width="80"/>
+   <Column ss:Width="80"/>
    <Column ss:Width="180"/>
    <Column ss:Width="140"/>
    <Column ss:Width="120"/>
    <Column ss:Width="120"/>
    <Column ss:Width="90"/>
    <Column ss:Width="100"/>
+   <Column ss:Width="120"/>
    <Column ss:Width="160"/>
    <Column ss:Width="80"/>
    <Row>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Address ID</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">User ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Street Address 1</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Street Address 2</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">City</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">State / Region</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Postal Code</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Country</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Forwarding Service ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Forwarding Service</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Is Default</Data></Cell>
    </Row>
@@ -343,12 +380,14 @@ object ExcelExporter {
             val fsName = addr.forwardingServiceId?.let { forwardingMap[it]?.name } ?: ""
             xmlBuilder.append("""   <Row>
     <Cell><Data ss:Type="Number">${addr.id}</Data></Cell>
+    <Cell><Data ss:Type="Number">${addr.userId}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(addr.streetAddress1)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(addr.streetAddress2)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(addr.city)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(addr.stateProvinceRegion)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(addr.postalCode)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(addr.country)}</Data></Cell>
+    <Cell><Data ss:Type="String">${addr.forwardingServiceId?.toString() ?: ""}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(fsName)}</Data></Cell>
     <Cell><Data ss:Type="String">${if (addr.isDefault) "Yes" else "No"}</Data></Cell>
    </Row>
@@ -385,6 +424,7 @@ object ExcelExporter {
    <Column ss:Width="220"/>
    <Row>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Subscription ID</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Title</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Status</Data></Cell>
@@ -407,6 +447,11 @@ object ExcelExporter {
     <Cell ss:StyleID="Header"><Data ss:Type="String">Skip Type</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Max Skips</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Skip Months</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Skip Method</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Skip Link</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Skip Text</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Picture Path</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Shipping Address ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Shipping Address</Data></Cell>
    </Row>
 """)
@@ -421,6 +466,7 @@ object ExcelExporter {
 
             xmlBuilder.append("""   <Row>
     <Cell><Data ss:Type="Number">${sub.id}</Data></Cell>
+    <Cell><Data ss:Type="Number">${sub.bookstoreId}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(bookstoreName)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(sub.title)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(sub.status)}</Data></Cell>
@@ -443,6 +489,11 @@ object ExcelExporter {
     <Cell><Data ss:Type="String">${escapeXml(sub.skipType ?: "None")}</Data></Cell>
     <Cell><Data ss:Type="String">${sub.numberOfSkips?.toString() ?: ""}</Data></Cell>
     <Cell><Data ss:Type="String">${sub.numberOfMonths?.toString() ?: ""}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(sub.skipMethod ?: "")}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(sub.skipLink ?: "")}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(sub.skipText ?: "")}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(sub.picturePath ?: "")}</Data></Cell>
+    <Cell><Data ss:Type="String">${sub.shippingAddressId?.toString() ?: ""}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(shippingAddrStr)}</Data></Cell>
    </Row>
 """)
@@ -541,6 +592,7 @@ object ExcelExporter {
    <Column ss:Width="60"/>
    <Row>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Scheduled ID</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Subscription ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Subscription Title</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Book Title</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Author</Data></Cell>
@@ -549,6 +601,7 @@ object ExcelExporter {
     <Cell ss:StyleID="Header"><Data ss:Type="String">Status</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Is Skipped</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Rating</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Picture Path</Data></Cell>
    </Row>
 """)
         for (sch in scheduled) {
@@ -557,6 +610,7 @@ object ExcelExporter {
             val dueDateStr = if (sc.dueDate > 0) dateFormat.format(Date(sc.dueDate)) else ""
             xmlBuilder.append("""   <Row>
     <Cell><Data ss:Type="Number">${sc.id}</Data></Cell>
+    <Cell><Data ss:Type="Number">${sc.subscriptionTypeId}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(subTitle)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(sc.bookTitle)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(sc.bookAuthor)}</Data></Cell>
@@ -565,6 +619,7 @@ object ExcelExporter {
     <Cell><Data ss:Type="String">${escapeXml(sc.status)}</Data></Cell>
     <Cell><Data ss:Type="String">${if (sc.isSkipped) "Yes" else "No"}</Data></Cell>
     <Cell><Data ss:Type="Number">${sc.rating}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(sc.picturePath ?: "")}</Data></Cell>
    </Row>
 """)
         }
@@ -573,6 +628,7 @@ object ExcelExporter {
         // 13. Preorders Sheet
         xmlBuilder.append(""" <Worksheet ss:Name="Preorders">
   <Table>
+   <Column ss:Width="80"/>
    <Column ss:Width="80"/>
    <Column ss:Width="160"/>
    <Column ss:Width="180"/>
@@ -593,9 +649,11 @@ object ExcelExporter {
    <Column ss:Width="120"/>
    <Column ss:Width="100"/>
    <Column ss:Width="60"/>
+   <Column ss:Width="100"/>
    <Column ss:Width="220"/>
    <Row>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Preorder ID</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Bookstore</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Book Title</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Author</Data></Cell>
@@ -615,6 +673,8 @@ object ExcelExporter {
     <Cell ss:StyleID="Header"><Data ss:Type="String">Reminder Offset</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Reminder Time</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Rating</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Picture Path</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Shipping Address ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Shipping Address</Data></Cell>
    </Row>
 """)
@@ -628,6 +688,7 @@ object ExcelExporter {
 
             xmlBuilder.append("""   <Row>
     <Cell><Data ss:Type="Number">${pr.id}</Data></Cell>
+    <Cell><Data ss:Type="Number">${pr.bookstoreId}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(storeName)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(pr.bookTitle)}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(pr.bookAuthor)}</Data></Cell>
@@ -647,6 +708,8 @@ object ExcelExporter {
     <Cell><Data ss:Type="Number">${pr.reminderDDayOffset}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(timeStr)}</Data></Cell>
     <Cell><Data ss:Type="Number">${pr.rating}</Data></Cell>
+    <Cell><Data ss:Type="String">${escapeXml(pr.picturePath ?: "")}</Data></Cell>
+    <Cell><Data ss:Type="String">${pr.shippingAddressId?.toString() ?: ""}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(shippingAddrStr)}</Data></Cell>
    </Row>
 """)

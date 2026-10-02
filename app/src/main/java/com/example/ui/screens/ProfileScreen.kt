@@ -37,10 +37,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import coil.compose.AsyncImage
 import com.example.ui.components.ImageViewerDialog
+import com.example.utils.ExcelImportData
+import com.example.utils.AppFolderManager
 import com.example.data.Bookstore
 import com.example.data.ForwardingService
 import com.example.data.SubscriptionType
@@ -73,6 +79,7 @@ fun ProfileScreen(
     var editThemeCombo by remember { mutableStateOf("default") }
     var editDateFormat by remember { mutableStateOf("yyyy-MM-dd") }
     var editDisplayAmounts by remember { mutableStateOf(false) }
+    var editDefaultTrackingUrl by remember { mutableStateOf("") }
     var selectedTab by remember { mutableStateOf(0) }
     var showSavedToast by remember { mutableStateOf(false) }
     var showGeneratePastSubsDialog by remember { mutableStateOf(false) }
@@ -82,6 +89,43 @@ fun ProfileScreen(
     var showAddAddressDialog by remember { mutableStateOf(false) }
     var editingAddress by remember { mutableStateOf<UserAddress?>(null) }
     var previewImageUrl by remember { mutableStateOf<String?>(null) }
+
+    val importPreviewData by viewModel.importPreviewData.collectAsState()
+    val isImporting by viewModel.isImporting.collectAsState()
+    val importResultMessage by viewModel.importResultMessage.collectAsState()
+
+    val importFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.prepareSpreadsheetImport(context, it) }
+    }
+
+    val isDbOperationInProgress by viewModel.isDbOperationInProgress.collectAsState()
+    val dbOperationMessage by viewModel.dbOperationMessage.collectAsState()
+    var pendingRestoreDbUri by remember { mutableStateOf<Uri?>(null) }
+    var showRestoreDbConfirmDialog by remember { mutableStateOf(false) }
+
+    val appFolderUri by AppFolderManager.appFolderUri.collectAsState()
+    val appFolderDisplayPath by AppFolderManager.appFolderDisplayPath.collectAsState()
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            AppFolderManager.setAppFolderUri(context, uri)
+            viewModel.updateAppFolder(uri.toString())
+            Toast.makeText(context, "App folder set: ${AppFolderManager.formatDisplayPath(uri)}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val dbFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            pendingRestoreDbUri = it
+            showRestoreDbConfirmDialog = true
+        }
+    }
 
     fun autoSave(
         username: String = editUsername,
@@ -93,7 +137,8 @@ fun ProfileScreen(
         themeCombo: String = editThemeCombo,
         dateFormat: String = editDateFormat,
         displayAmounts: Boolean = editDisplayAmounts,
-        country: String = editCountry
+        country: String = editCountry,
+        defaultTrackingUrl: String = editDefaultTrackingUrl
     ) {
         if (username.isNotEmpty()) {
             val parsedCount = defaultCountStr.toIntOrNull() ?: 6
@@ -107,7 +152,9 @@ fun ProfileScreen(
                 themeCombo = themeCombo,
                 dateFormat = dateFormat,
                 displayAmounts = displayAmounts,
-                country = country
+                country = country,
+                defaultTrackingUrl = defaultTrackingUrl,
+                appFolder = appFolderUri ?: AppFolderManager.getDefaultAppFolder(context)
             )
             showSavedToast = true
         }
@@ -133,6 +180,7 @@ fun ProfileScreen(
             editThemeCombo = it.themeCombo
             editDateFormat = it.dateFormat
             editDisplayAmounts = it.displayAmounts
+            editDefaultTrackingUrl = it.defaultTrackingUrl
         }
     }
 
@@ -236,7 +284,7 @@ fun ProfileScreen(
                             Text("Select Reading Vibe", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -960,6 +1008,96 @@ fun ProfileScreen(
                                     modifier = Modifier.fillMaxWidth().testTag("profile_scheduled_count")
                                 )
 
+                                // Default Tracking URL field
+                                OutlinedTextField(
+                                    value = editDefaultTrackingUrl,
+                                    onValueChange = { newValue ->
+                                        editDefaultTrackingUrl = newValue
+                                        autoSave(defaultTrackingUrl = newValue)
+                                    },
+                                    label = { Text("Default Tracking URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    placeholder = { Text("e.g. https://parcelsapp.com/en/tracking/{tracking}") },
+                                    leadingIcon = { Icon(Icons.Default.TravelExplore, contentDescription = null) },
+                                    trailingIcon = {
+                                        if (editDefaultTrackingUrl.isNotEmpty()) {
+                                            IconButton(
+                                                onClick = {
+                                                    editDefaultTrackingUrl = ""
+                                                    autoSave(defaultTrackingUrl = "")
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Clear,
+                                                    contentDescription = "Clear default tracking URL",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                                    modifier = Modifier.fillMaxWidth().testTag("profile_default_tracking_url")
+                                )
+
+                                // App Folder field
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    val currentDisplay = appFolderDisplayPath ?: AppFolderManager.formatDisplayPath(AppFolderManager.getDefaultAppFolder(context), context)
+                                    OutlinedTextField(
+                                        value = currentDisplay,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        label = { Text("App Folder (Database Backups & Exports)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        placeholder = { Text(currentDisplay) },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Folder,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        },
+                                        trailingIcon = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(
+                                                    onClick = {
+                                                        val defaultPath = AppFolderManager.getDefaultAppFolder(context)
+                                                        AppFolderManager.setAppFolderPath(context, defaultPath)
+                                                        viewModel.updateAppFolder(defaultPath)
+                                                        Toast.makeText(context, "App folder reset to internal storage SubsTrack folder", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    modifier = Modifier.testTag("profile_clear_app_folder")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Restore,
+                                                        contentDescription = "Reset app folder to internal storage default",
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { folderPickerLauncher.launch(null) },
+                                                    modifier = Modifier.testTag("profile_choose_app_folder")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.FolderOpen,
+                                                        contentDescription = "Browse folder",
+                                                        tint = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("profile_app_folder")
+                                            .clickable { folderPickerLauncher.launch(null) }
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Current storage: $currentDisplay\nBackups and exported Excel files are automatically written here.",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 4.dp)
+                                    )
+                                }
+
                                 // Display Amounts toggle setting
                                 Row(
                                     modifier = Modifier
@@ -1251,7 +1389,7 @@ fun ProfileScreen(
                                         Icon(imageVector = Icons.Default.GridOn, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondary)
                                     }
                                     Text(
-                                        text = "Excel Spreadsheet Backup",
+                                        text = "Excel Spreadsheet Backup & Restore",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 16.sp,
                                         color = MaterialTheme.colorScheme.onSecondaryContainer
@@ -1261,27 +1399,173 @@ fun ProfileScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
 
                                 Text(
-                                    text = "Export your entire offline library (bookstores, subscriptions, deliveries, and preorders) to a standard spreadsheet file (.csv) that you can open instantly in Excel or Google Sheets.",
+                                    text = "Export your entire offline library (bookstores, subscriptions, deliveries, and preorders) to an Excel-compatible spreadsheet (.xls), or import a previously exported spreadsheet to merge or restore your data.",
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
                                 )
 
-                                Spacer(modifier = Modifier.height(12.dp))
+                                Spacer(modifier = Modifier.height(14.dp))
 
-                                Button(
-                                    onClick = { viewModel.exportToExcelSpreadsheet(context) },
-                                    modifier = Modifier.fillMaxWidth().testTag("profile_export_excel"),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondary
-                                    )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Button(
+                                        onClick = { viewModel.exportToExcelSpreadsheet(context) },
+                                        modifier = Modifier.weight(1f).testTag("profile_export_excel"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.secondary
+                                        )
                                     ) {
-                                        Icon(imageVector = Icons.Default.Share, contentDescription = null)
-                                        Text("Export and Share Spreadsheet")
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Text("Export", fontSize = 14.sp)
+                                        }
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { importFileLauncher.launch("*/*") },
+                                        modifier = Modifier.weight(1f).testTag("profile_import_excel"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.secondary)
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
+                                            Text("Import", fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. Database Snapshot Backup & Restore Card
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.tertiary),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Storage,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onTertiary
+                                        )
+                                    }
+                                    Text(
+                                        text = "Database Snapshot Backup & Restore",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "Create an exact snapshot backup of the application SQLite database (.db) to preserve all books, subscriptions, addresses, contacts, and custom settings. You can load a database file anytime to restore your data.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
+                                )
+
+                                if (appFolderDisplayPath != null) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Folder,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.tertiary
+                                            )
+                                            Text(
+                                                text = "Saving to: $appFolderDisplayPath",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Button(
+                                        onClick = { viewModel.backupDatabaseSnapshot(context) },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("profile_backup_database"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.tertiary
+                                        )
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Backup,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Text("Backup DB", fontSize = 14.sp)
+                                        }
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { dbFilePickerLauncher.launch("*/*") },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("profile_load_database"),
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.tertiary)
+                                    ) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.SettingsBackupRestore,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp),
+                                                tint = MaterialTheme.colorScheme.tertiary
+                                            )
+                                            Text("Load DB", fontSize = 14.sp, color = MaterialTheme.colorScheme.tertiary)
+                                        }
                                     }
                                 }
                             }
@@ -1377,7 +1661,259 @@ fun ProfileScreen(
                 onDismiss = { previewImageUrl = null }
             )
         }
+
+        importPreviewData?.let { preview ->
+            ImportSpreadsheetPreviewDialog(
+                data = preview,
+                onDismiss = { viewModel.clearImportPreview() },
+                onConfirm = { replaceExisting ->
+                    viewModel.executeImport(replaceExisting)
+                }
+            )
+        }
+
+        if (isImporting) {
+            Dialog(onDismissRequest = {}) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = "Importing spreadsheet data...",
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+
+        importResultMessage?.let { msg ->
+            AlertDialog(
+                onDismissRequest = { viewModel.clearImportResultMessage() },
+                title = { Text("Spreadsheet Import", fontWeight = FontWeight.Bold) },
+                text = { Text(msg, fontSize = 14.sp) },
+                confirmButton = {
+                    Button(onClick = { viewModel.clearImportResultMessage() }) {
+                        Text("OK")
+                    }
+                }
+            )
+        }
+
+        if (showRestoreDbConfirmDialog && pendingRestoreDbUri != null) {
+            AlertDialog(
+                onDismissRequest = {
+                    showRestoreDbConfirmDialog = false
+                    pendingRestoreDbUri = null
+                },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(32.dp)
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Load Database Snapshot?",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Loading this database snapshot will overwrite all current books, subscriptions, addresses, contacts, and custom settings with the data from the selected file.\n\nAn automatic safety backup of your current database will be saved beforehand. Do you want to proceed?",
+                        fontSize = 14.sp
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val uriToRestore = pendingRestoreDbUri
+                            showRestoreDbConfirmDialog = false
+                            pendingRestoreDbUri = null
+                            if (uriToRestore != null) {
+                                viewModel.restoreDatabaseSnapshot(context, uriToRestore)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        ),
+                        modifier = Modifier.testTag("confirm_restore_db_button")
+                    ) {
+                        Text("Overwrite & Load")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showRestoreDbConfirmDialog = false
+                            pendingRestoreDbUri = null
+                        },
+                        modifier = Modifier.testTag("cancel_restore_db_button")
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        if (isDbOperationInProgress) {
+            Dialog(onDismissRequest = {}) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
+                        Text(
+                            text = "Processing database snapshot...",
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+
+        dbOperationMessage?.let { msg ->
+            AlertDialog(
+                onDismissRequest = { viewModel.clearDbOperationMessage() },
+                title = {
+                    Text("Database Snapshot", fontWeight = FontWeight.Bold)
+                },
+                text = {
+                    Text(msg, fontSize = 14.sp)
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.clearDbOperationMessage() },
+                        modifier = Modifier.testTag("dismiss_db_op_dialog")
+                    ) {
+                        Text("OK")
+                    }
+                }
+            )
+        }
     }
+}
+
+@Composable
+fun ImportSpreadsheetPreviewDialog(
+    data: ExcelImportData,
+    onDismiss: () -> Unit,
+    onConfirm: (replaceExisting: Boolean) -> Unit
+) {
+    var replaceExisting by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FileDownload,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text("Import Spreadsheet", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "A valid spreadsheet backup was found with the following items:",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        data.user?.let { u ->
+                            Text("👤 Profile: ${u.username} (${u.currency})", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Text("📚 Bookstores: ${data.bookstores.size} (${data.bookstoreContacts.size} contacts)", fontSize = 13.sp)
+                        Text("📬 Forwarding Services: ${data.forwardingServices.size}", fontSize = 13.sp)
+                        Text("🚚 Shipping Companies: ${data.shippingCompanies.size}", fontSize = 13.sp)
+                        Text("📍 User Addresses: ${data.userAddresses.size}", fontSize = 13.sp)
+                        Text("📖 Subscriptions: ${data.subscriptions.size}", fontSize = 13.sp)
+                        Text("🗓️ Scheduled Deliveries: ${data.scheduledSubscriptions.size}", fontSize = 13.sp)
+                        Text("⏳ Preorders: ${data.preorders.size}", fontSize = 13.sp)
+                        Text("📦 Packages & Tracking: ${data.packages.size}", fontSize = 13.sp)
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "Importing will add new entries to your database without removing or overwriting previous data. Any entry matching existing data is automatically de-duplicated.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(false) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier.testTag("confirm_import_excel_button")
+            ) {
+                Text("Add to Database")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
