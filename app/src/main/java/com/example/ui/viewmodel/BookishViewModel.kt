@@ -63,8 +63,29 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     val alertMessage = MutableStateFlow<String?>(null)
 
+    fun setAlertMessage(msg: String) {
+        alertMessage.value = msg
+    }
+
     fun clearAlertMessage() {
         alertMessage.value = null
+    }
+
+    fun canSkipScheduledSubscription(
+        scheduled: ScheduledSubscription,
+        subType: SubscriptionType?,
+        allSkips: List<SubscriptionSkip> = allSubscriptionSkipsState.value
+    ): Boolean {
+        return repository.canSkipScheduledSubscription(scheduled, subType, allSkips)
+    }
+
+    fun getSkipUnavailableMessage(
+        scheduled: ScheduledSubscription,
+        subType: SubscriptionType?,
+        allSkips: List<SubscriptionSkip> = allSubscriptionSkipsState.value,
+        dateFormatPattern: String = userState.value?.dateFormat ?: "yyyy-MM-dd"
+    ): String {
+        return repository.getSkipUnavailableMessage(scheduled, subType, allSkips, dateFormatPattern)
     }
 
     // Base Database flows
@@ -128,6 +149,18 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun updateSubscriptionSkip(subscriptionSkip: SubscriptionSkip) {
+        viewModelScope.launch {
+            repository.updateSubscriptionSkip(subscriptionSkip)
+        }
+    }
+
+    fun deleteSubscriptionSkip(subscriptionSkip: SubscriptionSkip) {
+        viewModelScope.launch {
+            repository.deleteSubscriptionSkip(subscriptionSkip)
+        }
+    }
+
     private fun isSameDay(time1: Long, time2: Long): Boolean {
         val cal1 = Calendar.getInstance().apply { timeInMillis = time1 }
         val cal2 = Calendar.getInstance().apply { timeInMillis = time2 }
@@ -160,6 +193,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 repository.checkAndPrepopulate(defaultFolder)
+                repository.autoUpdateMissingPrices()
                 checkAndGenerateActiveSubscriptions()
                 reconcileStatuses()
             } catch (e: Exception) {
@@ -570,12 +604,18 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             val cleanStartDate = if (isWishlist) 0L else startDate
             val cleanFinishDate = if (isWishlist) 0L else finishDate
 
+            val effectivePrice = if (price <= 0.0 && basePrice != null) {
+                basePrice + (shippingPrice ?: 0.0) - (discountedAmount ?: 0.0)
+            } else {
+                price
+            }
+
             val subId = repository.insertSubscriptionType(
                 SubscriptionType(
                     bookstoreId = bookstoreId,
                     title = title,
                     status = status,
-                    price = price,
+                    price = effectivePrice,
                     dueDate = cleanDueDate,
                     startDate = cleanStartDate,
                     finishDate = cleanFinishDate,
@@ -714,7 +754,13 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateSubscriptionType(subscription: SubscriptionType, skipMethods: List<SubscriptionSkipMethod>? = null) {
         viewModelScope.launch {
-            repository.updateSubscriptionType(subscription)
+            val effectivePrice = if (subscription.price <= 0.0 && subscription.basePrice != null) {
+                subscription.basePrice + (subscription.shippingPrice ?: 0.0) - (subscription.discountedAmount ?: 0.0)
+            } else {
+                subscription.price
+            }
+            val subToSave = subscription.copy(price = effectivePrice)
+            repository.updateSubscriptionType(subToSave)
             if (skipMethods != null) {
                 repository.saveSubscriptionSkipMethods(subscription.id, skipMethods)
             }
@@ -804,11 +850,14 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                 // 3. Delete remaining unmatched items equal or bigger than today (or upcoming) that fall outside the new schedule
                 val remainingUnmatched = existingScheduled.filter { it.id !in matchedExistingIds }
                 for (item in remainingUnmatched) {
-                    if (item.dueDate >= todayStart || item.status == "Upcoming") {
+                    if (item.dueDate >= todayStart || item.status == "Upcoming" || (cleanFinishDate > 0L && item.dueDate > cleanFinishDate)) {
                         repository.deleteScheduledSubscription(item)
                     }
                 }
             }
+
+            // Resync number of skips left in corresponding skips register
+            repository.resyncSkipsLeftForSubscriptionType(subscription.id)
 
             // Re-schedule remaining future ones if reminder is enabled
             if (subscription.reminderEnabled) {
@@ -1068,19 +1117,27 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         rating: Double = 0.0
     ) {
         viewModelScope.launch {
-            val newId = repository.insertScheduledSubscription(
-                ScheduledSubscription(
-                    subscriptionTypeId = subscriptionTypeId,
-                    bookTitle = bookTitle,
-                    bookAuthor = bookAuthor,
-                    description = description,
-                    dueDate = dueDate,
-                    status = status,
-                    isSkipped = false,
-                    picturePath = picturePath,
-                    rating = rating
-                )
+            val isNowSkipped = status.equals("Skipped", ignoreCase = true)
+            val newSched = ScheduledSubscription(
+                subscriptionTypeId = subscriptionTypeId,
+                bookTitle = bookTitle,
+                bookAuthor = bookAuthor,
+                description = description,
+                dueDate = dueDate,
+                status = status,
+                isSkipped = isNowSkipped,
+                picturePath = picturePath,
+                rating = rating
             )
+            val pattern = userState.value?.dateFormat ?: "yyyy-MM-dd"
+            if (isNowSkipped) {
+                val error = repository.processSkipForScheduledSub(newSched, pattern)
+                if (error != null) {
+                    alertMessage.value = error
+                    return@launch
+                }
+            }
+            val newId = repository.insertScheduledSubscription(newSched)
             syncStorageReminderForOrigin("scheduled_subs", newId.toInt())
         }
     }
@@ -1216,6 +1273,13 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val today = System.currentTimeMillis()
             val finalStatus = if (today >= saleDateStart && today <= saleDateEnd) "Released" else status
+
+            val effectivePrice = if (price <= 0.0 && basePrice != null) {
+                basePrice + (shippingPrice ?: 0.0) - (discountedAmount ?: 0.0)
+            } else {
+                price
+            }
+
             val preorderId = repository.insertPreorder(
                 Preorder(
                     bookstoreId = bookstoreId,
@@ -1223,7 +1287,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     bookTitle = bookTitle,
                     bookAuthor = bookAuthor,
                     description = description,
-                    price = price,
+                    price = effectivePrice,
                     rangedSaleDateStart = saleDateStart,
                     rangedSaleDateEnd = saleDateEnd,
                     status = finalStatus,
@@ -1260,7 +1324,13 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     fun updatePreorder(preorder: Preorder) {
         viewModelScope.launch {
-            repository.updatePreorder(preorder)
+            val effectivePrice = if (preorder.price <= 0.0 && preorder.basePrice != null) {
+                preorder.basePrice + (preorder.shippingPrice ?: 0.0) - (preorder.discountedAmount ?: 0.0)
+            } else {
+                preorder.price
+            }
+            val preorderToSave = preorder.copy(price = effectivePrice)
+            repository.updatePreorder(preorderToSave)
             com.example.receiver.ReminderScheduler.cancelPreorderReminder(getApplication(), preorder.id)
             if (preorder.reminderEnabled) {
                 com.example.receiver.ReminderScheduler.schedulePreorderReminder(

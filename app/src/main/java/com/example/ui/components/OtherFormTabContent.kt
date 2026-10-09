@@ -561,52 +561,76 @@ fun OtherFormTabContent(
         }
 
         // --- 5. Total Price Summary ---
-        val calculatedTotal = remember(
-            basePriceStr, discountedAmountStr, shippingPriceStr, taxPriceStr,
-            forwardShippingPriceStr, forwardTaxPriceStr, hasForwardingService
-        ) {
-            val base = basePriceStr.toDoubleOrNull() ?: 0.0
-            val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-            val effectiveBase = if (base > 0.0) (base - discount).coerceAtLeast(0.0) else discount
-            val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
-            val tax = taxPriceStr.toDoubleOrNull() ?: 0.0
-            val forwardShipping = if (hasForwardingService) forwardShippingPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
-            val forwardTax = if (hasForwardingService) forwardTaxPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
-            effectiveBase + shipping + tax + forwardShipping + forwardTax
-        }
+        val baseVal = basePriceStr.toDoubleOrNull()
+        val discountVal = discountedAmountStr.toDoubleOrNull() ?: 0.0
+        val shippingVal = shippingPriceStr.toDoubleOrNull() ?: 0.0
+        val taxVal = taxPriceStr.toDoubleOrNull() ?: 0.0
+        val forwardShippingVal = if (hasForwardingService) forwardShippingPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
+        val forwardTaxVal = if (hasForwardingService) forwardTaxPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
 
-        if (calculatedTotal > 0.0 || basePriceStr.isNotBlank() || discountedAmountStr.isNotBlank()) {
+        val formulaPrice = if (baseVal != null) baseVal + shippingVal - discountVal else null
+        val totalWithTaxes = (formulaPrice ?: 0.0) + taxVal + forwardShippingVal + forwardTaxVal
+
+        if (formulaPrice != null || totalWithTaxes > 0.0 || basePriceStr.isNotBlank() || discountedAmountStr.isNotBlank()) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().testTag("other_tab_price_summary")
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Total Price Breakdown",
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "$selectedCurrency${String.format(Locale.US, "%.2f", calculatedTotal)}",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    if (formulaPrice != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Calculated Price (Base + Ship - Disc)",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            val formattedPrice = if (formulaPrice % 1.0 == 0.0) {
+                                formulaPrice.toLong().toString()
+                            } else {
+                                String.format(Locale.US, "%.2f", formulaPrice)
+                            }
+                            Text(
+                                text = "$selectedCurrency$formattedPrice",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
-                    val discountVal = discountedAmountStr.toDoubleOrNull()
-                    if (discountVal != null && discountVal > 0.0) {
+
+                    if (taxVal > 0.0 || forwardShippingVal > 0.0 || forwardTaxVal > 0.0) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Total with Taxes & Forwarding",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "$selectedCurrency${String.format(Locale.US, "%.2f", totalWithTaxes)}",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    if (discountVal > 0.0) {
                         Text(
                             text = "Includes discount: -$selectedCurrency${String.format(Locale.US, "%.2f", discountVal)}",
                             fontSize = 11.5.sp,

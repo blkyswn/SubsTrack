@@ -1646,6 +1646,11 @@ fun ScheduledItemRow(
     val isShipped = item.scheduled.status.equals("Shipped", ignoreCase = true)
     val isReceived = item.scheduled.status.equals("Received", ignoreCase = true)
 
+    val allSkips by viewModel.allSubscriptionSkipsState.collectAsState()
+    val canSkip = remember(item.scheduled, item.subscriptionType, allSkips) {
+        viewModel.canSkipScheduledSubscription(item.scheduled, item.subscriptionType, allSkips)
+    }
+
     val canSwipeRight = isSkippedStatus || isUpcoming || isRenewed || isForwarded || isInSuite || isShipped
     val canSwipeLeft = isReceived || isShipped || isInSuite || isForwarded || isRenewed || isUpcoming || (isSkippedStatus && isDueDateToCome)
     val density = LocalDensity.current
@@ -1733,13 +1738,18 @@ fun ScheduledItemRow(
                                     }
                                 }
                                 isUpcoming -> {
-                                    val newScheduled = item.scheduled.copy(status = "Skipped", isSkipped = true)
-                                    val msg = "$displayTitle: Skipped"
-                                    onPromptSkip?.invoke(item)
-                                    if (onStateChanged != null) {
-                                        onStateChanged(item.scheduled, newScheduled, msg)
+                                    if (!canSkip) {
+                                        val errorMsg = viewModel.getSkipUnavailableMessage(item.scheduled, item.subscriptionType, allSkips)
+                                        viewModel.setAlertMessage(errorMsg)
                                     } else {
-                                        viewModel.updateScheduledSubscription(newScheduled)
+                                        val newScheduled = item.scheduled.copy(status = "Skipped", isSkipped = true)
+                                        val msg = "$displayTitle: Skipped"
+                                        onPromptSkip?.invoke(item)
+                                        if (onStateChanged != null) {
+                                            onStateChanged(item.scheduled, newScheduled, msg)
+                                        } else {
+                                            viewModel.updateScheduledSubscription(newScheduled)
+                                        }
                                     }
                                 }
                                 isSkippedStatus -> {
@@ -2390,6 +2400,7 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
     var isExpanded by remember { mutableStateOf(false) }
     var totalDragX by remember { mutableFloatStateOf(0f) }
     var showViewerDialog by remember { mutableStateOf(false) }
+    var editingSkipRegister by remember { mutableStateOf<SubscriptionSkip?>(null) }
 
     val activeSubPic = item.subscription.picturePath.takeIf { !it.isNullOrEmpty() }
 
@@ -2624,20 +2635,27 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
                     )
                     item.subscription.skipType?.let { st ->
                         if (st.isNotBlank()) {
-                            val baseSkipText = when (st) {
-                                "Each calendar year" -> "Skips: ${item.subscription.numberOfSkips ?: 0}/yr"
-                                "Every certain months" -> "Skips: ${item.subscription.numberOfSkips ?: 0} / ${item.subscription.numberOfMonths ?: 1}mo"
-                                "Unlimited" -> "Skips: Unlimited"
-                                "None" -> "Skips: None"
-                                else -> "Skips: $st"
+                            val now = System.currentTimeMillis()
+                            val activeRegister = itemSkips.firstOrNull { skip ->
+                                skip.skipStartDate != null && skip.skipEndDate != null && now >= skip.skipStartDate && now <= skip.skipEndDate
+                            } ?: itemSkips.firstOrNull { skip ->
+                                skip.skipStartDate != null && skip.skipEndDate == null && now >= skip.skipStartDate
+                            } ?: itemSkips.firstOrNull { skip ->
+                                skip.skipStartDate == null && skip.skipEndDate != null && now <= skip.skipEndDate
+                            } ?: itemSkips.firstOrNull { skip ->
+                                skip.skipStartDate == null && skip.skipEndDate == null
+                            } ?: itemSkips.firstOrNull()
+
+                            val currentType = activeRegister?.subscriptionSkipType?.takeIf { it.isNotBlank() } ?: st
+                            val totalSkips = activeRegister?.numberOfSkips ?: item.subscription.numberOfSkips ?: 0
+                            val baseSkipText = when {
+                                currentType.equals("Each calendar year", ignoreCase = true) -> "Skips: $totalSkips/yr"
+                                currentType.equals("Every certain months", ignoreCase = true) -> "Skips: $totalSkips / ${item.subscription.numberOfMonths ?: 1}mo"
+                                currentType.equals("Unlimited", ignoreCase = true) -> "Skips: Unlimited"
+                                currentType.equals("None", ignoreCase = true) -> "Skips: None"
+                                else -> "Skips: $currentType"
                             }
-                            val skipText = if (st != "Unlimited" && st != "None") {
-                                val now = System.currentTimeMillis()
-                                val activeRegister = itemSkips.firstOrNull { skip ->
-                                    skip.skipStartDate != null && skip.skipEndDate != null && now >= skip.skipStartDate && now <= skip.skipEndDate
-                                } ?: itemSkips.firstOrNull { skip ->
-                                    skip.skipStartDate == null || skip.skipEndDate == null
-                                }
+                            val skipText = if (!currentType.equals("Unlimited", ignoreCase = true) && !currentType.equals("None", ignoreCase = true)) {
                                 val skipsLeft = activeRegister?.skipsLeft ?: activeRegister?.numberOfSkips ?: item.subscription.numberOfSkips
                                 if (skipsLeft != null) {
                                     "$baseSkipText • $skipsLeft left"
@@ -2773,10 +2791,13 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("Skip Type", modifier = Modifier.weight(1.2f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp)
-                                Text("Skips", modifier = Modifier.weight(0.7f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
-                                Text("Left", modifier = Modifier.weight(0.7f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
-                                Text("Start Date", modifier = Modifier.weight(1.1f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
-                                Text("End Date", modifier = Modifier.weight(1.1f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
+                                Text("Skips", modifier = Modifier.weight(0.6f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
+                                Text("Left", modifier = Modifier.weight(0.6f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
+                                Text("Start Date", modifier = Modifier.weight(1.0f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
+                                Text("End Date", modifier = Modifier.weight(1.0f), fontWeight = FontWeight.Bold, fontSize = 10.5.sp, textAlign = TextAlign.Center)
+                                Box(modifier = Modifier.width(32.dp), contentAlignment = Alignment.Center) {
+                                    Text("Edit", fontWeight = FontWeight.Bold, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
 
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -2790,7 +2811,7 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
                                             if (idx % 2 == 0) MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
                                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
                                         )
-                                        .padding(vertical = 4.dp, horizontal = 6.dp),
+                                        .padding(vertical = 2.dp, horizontal = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
@@ -2802,28 +2823,41 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
                                     )
                                     Text(
                                         text = skipRecord.numberOfSkips?.toString() ?: "-",
-                                        modifier = Modifier.weight(0.7f),
+                                        modifier = Modifier.weight(0.6f),
                                         fontSize = 10.5.sp,
                                         textAlign = TextAlign.Center
                                     )
                                     Text(
                                         text = skipRecord.skipsLeft?.toString() ?: "-",
-                                        modifier = Modifier.weight(0.7f),
+                                        modifier = Modifier.weight(0.6f),
                                         fontSize = 10.5.sp,
                                         textAlign = TextAlign.Center
                                     )
                                     Text(
                                         text = skipRecord.skipStartDate?.let { dateFormat.format(Date(it)) } ?: "-",
-                                        modifier = Modifier.weight(1.1f),
+                                        modifier = Modifier.weight(1.0f),
                                         fontSize = 10.sp,
                                         textAlign = TextAlign.Center
                                     )
                                     Text(
                                         text = skipRecord.skipEndDate?.let { dateFormat.format(Date(it)) } ?: "-",
-                                        modifier = Modifier.weight(1.1f),
+                                        modifier = Modifier.weight(1.0f),
                                         fontSize = 10.sp,
                                         textAlign = TextAlign.Center
                                     )
+                                    IconButton(
+                                        onClick = { editingSkipRegister = skipRecord },
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .testTag("edit_skip_register_${skipRecord.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Edit Skip Register",
+                                            modifier = Modifier.size(15.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                 }
                                 if (idx < pageSkips.size - 1) {
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
@@ -2874,6 +2908,374 @@ fun SubscriptionItemRow(item: SubscriptionWithBookstore, viewModel: BookishViewM
             viewModel = viewModel,
             bookstores = viewModel.bookstoresState.collectAsState().value,
             onDismiss = { showEditDialog = false }
+        )
+    }
+
+    if (editingSkipRegister != null) {
+        EditSubscriptionSkipDialog(
+            skip = editingSkipRegister!!,
+            subscription = item.subscription,
+            viewModel = viewModel,
+            onDismiss = { editingSkipRegister = null }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditSubscriptionSkipDialog(
+    skip: SubscriptionSkip,
+    subscription: SubscriptionType,
+    viewModel: BookishViewModel,
+    onDismiss: () -> Unit
+) {
+    val rawSubscriptions by viewModel.rawSubscriptionsState.collectAsState()
+    val userState by viewModel.userState.collectAsState()
+    val userDateFormatPattern = userState?.dateFormat ?: "yyyy-MM-dd"
+    val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
+
+    // Use skip type values in subscription types for skip type in edit skips dialogue
+    val skipTypeOptions = remember(rawSubscriptions) {
+        val standardTypes = listOf("Each calendar year", "Every certain months", "Unlimited", "None")
+        val fromSubs = rawSubscriptions.mapNotNull { it.subscription.skipType }.filter { it.isNotBlank() }
+        (standardTypes + fromSubs).distinct()
+    }
+
+    var selectedSkipType by remember { mutableStateOf(skip.subscriptionSkipType) }
+    var expandedSkipTypeMenu by remember { mutableStateOf(false) }
+
+    var numberOfSkipsStr by remember {
+        mutableStateOf(skip.numberOfSkips?.toString() ?: "")
+    }
+
+    val isUnlimited = selectedSkipType.equals("Unlimited", ignoreCase = true)
+    val isNone = selectedSkipType.equals("None", ignoreCase = true)
+
+    val initialMax = skip.numberOfSkips
+    val initialLeft = skip.skipsLeft?.let { if (initialMax != null) it.coerceAtMost(initialMax) else it }
+    var skipsLeftStr by remember {
+        mutableStateOf(if (isNone) "" else (initialLeft?.toString() ?: ""))
+    }
+
+    var startDateMillis by remember { mutableStateOf(skip.skipStartDate) }
+    var endDateMillis by remember { mutableStateOf(skip.skipEndDate) }
+
+    var showStartDatePicker by remember { mutableStateOf(false) }
+    var showEndDatePicker by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("edit_skip_dialog"),
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = "Edit Skip Register",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = subscription.title,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium
+                )
+
+                // Skip Type Selector (using skip type values from subscription types)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Skip Type",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = { expandedSkipTypeMenu = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("skip_type_dropdown"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = selectedSkipType.ifBlank { "Select Skip Type" },
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = expandedSkipTypeMenu,
+                            onDismissRequest = { expandedSkipTypeMenu = false }
+                        ) {
+                            skipTypeOptions.forEach { typeOption ->
+                                DropdownMenuItem(
+                                    text = { Text(typeOption) },
+                                    onClick = {
+                                        selectedSkipType = typeOption
+                                        expandedSkipTypeMenu = false
+                                        if (typeOption.equals("None", ignoreCase = true)) {
+                                            numberOfSkipsStr = ""
+                                            skipsLeftStr = ""
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Number of Skips & Skips Left: if skip type is none, don't show number of skips and skips left
+                if (!isNone) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Num. of Skips (mutable even if skip type is unlimited)
+                        OutlinedTextField(
+                            value = numberOfSkipsStr,
+                            onValueChange = { input ->
+                                val filtered = input.filter { ch -> ch.isDigit() }
+                                numberOfSkipsStr = filtered
+                                val maxSkips = filtered.toIntOrNull()
+                                val curLeft = skipsLeftStr.toIntOrNull()
+                                if (curLeft != null && maxSkips != null && curLeft > maxSkips) {
+                                    skipsLeftStr = maxSkips.toString()
+                                }
+                            },
+                            label = { Text("Num. of Skips", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("e.g. 2") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("number_of_skips_input"),
+                            singleLine = true,
+                            enabled = true,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+
+                        // Skips Left: to the right of number of skips
+                        OutlinedTextField(
+                            value = skipsLeftStr,
+                            onValueChange = { input ->
+                                val filtered = input.filter { ch -> ch.isDigit() }
+                                val maxSkips = numberOfSkipsStr.toIntOrNull()
+                                val intVal = filtered.toIntOrNull()
+                                if (intVal != null && maxSkips != null && intVal > maxSkips) {
+                                    skipsLeftStr = maxSkips.toString()
+                                } else {
+                                    skipsLeftStr = filtered
+                                }
+                            },
+                            label = { Text("Skips Left", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            placeholder = { Text("e.g. 1") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("skips_left_input"),
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+
+                // Start Date
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Start Date",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showStartDatePicker = true },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("skip_start_date_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = startDateMillis?.let { dateFormat.format(Date(it)) } ?: "Not set",
+                                    fontSize = 13.sp
+                                )
+                                Icon(Icons.Default.DateRange, contentDescription = "Pick Start Date", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        if (startDateMillis != null) {
+                            IconButton(
+                                onClick = { startDateMillis = null },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear Start Date", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+
+                // End Date
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "End Date",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showEndDatePicker = true },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("skip_end_date_button"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = endDateMillis?.let { dateFormat.format(Date(it)) } ?: "Not set",
+                                    fontSize = 13.sp
+                                )
+                                Icon(Icons.Default.DateRange, contentDescription = "Pick End Date", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        if (endDateMillis != null) {
+                            IconButton(
+                                onClick = { endDateMillis = null },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(Icons.Default.Clear, contentDescription = "Clear End Date", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { showDeleteConfirm = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("delete_skip_button")
+                ) {
+                    Text("Delete")
+                }
+
+                Button(
+                    onClick = {
+                        val parsedSkips = if (isNone) null else numberOfSkipsStr.toIntOrNull()
+                        val rawLeft = if (isNone) null else skipsLeftStr.toIntOrNull()
+                        val parsedLeft = if (rawLeft != null && parsedSkips != null) rawLeft.coerceAtMost(parsedSkips) else rawLeft
+                        val updatedSkip = skip.copy(
+                            subscriptionSkipType = selectedSkipType,
+                            numberOfSkips = parsedSkips,
+                            skipsLeft = parsedLeft,
+                            skipStartDate = startDateMillis,
+                            skipEndDate = endDateMillis
+                        )
+                        viewModel.updateSubscriptionSkip(updatedSkip)
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("save_skip_button")
+                ) {
+                    Text("Save")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+
+    if (showStartDatePicker) {
+        ComposeDatePickerDialog(
+            initialDateMillis = startDateMillis ?: System.currentTimeMillis(),
+            onDateSelected = { selected ->
+                startDateMillis = selected
+                if (endDateMillis != null && endDateMillis!! < selected) {
+                    endDateMillis = selected
+                }
+            },
+            onDismiss = { showStartDatePicker = false }
+        )
+    }
+
+    if (showEndDatePicker) {
+        ComposeDatePickerDialog(
+            initialDateMillis = endDateMillis ?: (startDateMillis ?: System.currentTimeMillis()),
+            onDateSelected = { selected ->
+                endDateMillis = selected
+                if (startDateMillis != null && startDateMillis!! > selected) {
+                    startDateMillis = selected
+                }
+            },
+            onDismiss = { showEndDatePicker = false }
+        )
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete Skip Register") },
+            text = { Text("Are you sure you want to delete this skip register entry?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteSubscriptionSkip(skip)
+                        showDeleteConfirm = false
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 }
@@ -3509,7 +3911,23 @@ fun AddSubscriptionTypeDialog(
     var selectedBookstoreId by remember { mutableStateOf(bookstores.firstOrNull()?.id ?: 0) }
     var title by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Active") }
+    var isPriceManuallyEdited by remember { mutableStateOf(false) }
     var priceStr by remember { mutableStateOf("") }
+
+    val updateDynamicPrice: (String, String, String) -> Unit = { newBase, newDiscount, newShipping ->
+        if (!isPriceManuallyEdited || priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+            val base = newBase.toDoubleOrNull()
+            if (base != null) {
+                val shipping = newShipping.toDoubleOrNull() ?: 0.0
+                val discount = newDiscount.toDoubleOrNull() ?: 0.0
+                val calc = base + shipping - discount
+                priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
+                isPriceManuallyEdited = false
+            } else if (newBase.isBlank() && !isPriceManuallyEdited) {
+                priceStr = ""
+            }
+        }
+    }
     var frequency by remember { mutableStateOf("Monthly") }
     var reminderEnabled by remember { mutableStateOf(false) }
     var reminderDDayOffset by remember { mutableStateOf(0) }
@@ -3662,7 +4080,21 @@ fun AddSubscriptionTypeDialog(
 
                                 OutlinedTextField(
                                     value = priceStr,
-                                    onValueChange = { priceStr = it },
+                                    onValueChange = { input ->
+                                        priceStr = input
+                                        if (input.isBlank() || input == "0" || input == "0.0") {
+                                            isPriceManuallyEdited = false
+                                            val base = basePriceStr.toDoubleOrNull()
+                                            if (base != null) {
+                                                val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
+                                                val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
+                                                val calc = base + shipping - discount
+                                                priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
+                                            }
+                                        } else {
+                                            isPriceManuallyEdited = true
+                                        }
+                                    },
                                     label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -3941,14 +4373,18 @@ fun AddSubscriptionTypeDialog(
                                 basePriceStr = basePriceStr,
                                 onBasePriceChange = {
                                     basePriceStr = it
-                                    if (priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
-                                        priceStr = it
-                                    }
+                                    updateDynamicPrice(it, discountedAmountStr, shippingPriceStr)
                                 },
                                 discountedAmountStr = discountedAmountStr,
-                                onDiscountedAmountChange = { discountedAmountStr = it },
+                                onDiscountedAmountChange = {
+                                    discountedAmountStr = it
+                                    updateDynamicPrice(basePriceStr, it, shippingPriceStr)
+                                },
                                 shippingPriceStr = shippingPriceStr,
-                                onShippingPriceChange = { shippingPriceStr = it },
+                                onShippingPriceChange = {
+                                    shippingPriceStr = it
+                                    updateDynamicPrice(basePriceStr, discountedAmountStr, it)
+                                },
                                 taxPriceStr = taxPriceStr,
                                 onTaxPriceChange = { taxPriceStr = it },
                                 forwardShippingPriceStr = forwardShippingPriceStr,
@@ -3965,7 +4401,17 @@ fun AddSubscriptionTypeDialog(
             Button(
                 onClick = {
                     val parsedBase = basePriceStr.toDoubleOrNull()
-                    val parsedPrice = priceStr.toDoubleOrNull() ?: (parsedBase ?: 0.0)
+                    val parsedShipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
+                    val parsedDiscount = discountedAmountStr.toDoubleOrNull() ?: 0.0
+                    val parsedPrice = if (isPriceManuallyEdited && priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
+                        priceStr.toDoubleOrNull()!!
+                    } else if (parsedBase != null) {
+                        parsedBase + parsedShipping - parsedDiscount
+                    } else if (priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
+                        priceStr.toDoubleOrNull()!!
+                    } else {
+                        0.0
+                    }
                     val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
                     val hasForwarding = selectedAddr?.forwardingServiceId != null
 
@@ -4046,7 +4492,40 @@ fun EditSubscriptionTypeDialog(
     var selectedBookstoreId by remember { mutableStateOf(sub.bookstoreId) }
     var title by remember { mutableStateOf(sub.title) }
     var status by remember { mutableStateOf(sub.status) }
-    var priceStr by remember { mutableStateOf(sub.price.toString()) }
+
+    val initialBase = sub.basePrice
+    val initialShipping = sub.shippingPrice ?: 0.0
+    val initialDiscount = sub.discountedAmount ?: 0.0
+    val initialCalc = if (initialBase != null) initialBase + initialShipping - initialDiscount else null
+    val isInitiallyAuto = sub.price <= 0.0 || (initialCalc != null && Math.abs(sub.price - initialCalc) < 0.01)
+
+    var isPriceManuallyEdited by remember { mutableStateOf(!isInitiallyAuto && sub.price > 0.0) }
+    var priceStr by remember {
+        mutableStateOf(
+            if (sub.price > 0.0) {
+                if (sub.price % 1.0 == 0.0) sub.price.toLong().toString() else String.format(Locale.US, "%.2f", sub.price)
+            } else if (initialCalc != null) {
+                if (initialCalc % 1.0 == 0.0) initialCalc.toLong().toString() else String.format(Locale.US, "%.2f", initialCalc)
+            } else {
+                ""
+            }
+        )
+    }
+
+    val updateDynamicPrice: (String, String, String) -> Unit = { newBase, newDiscount, newShipping ->
+        if (!isPriceManuallyEdited || priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+            val base = newBase.toDoubleOrNull()
+            if (base != null) {
+                val shipping = newShipping.toDoubleOrNull() ?: 0.0
+                val discount = newDiscount.toDoubleOrNull() ?: 0.0
+                val calc = base + shipping - discount
+                priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
+                isPriceManuallyEdited = false
+            } else if (newBase.isBlank() && !isPriceManuallyEdited) {
+                priceStr = ""
+            }
+        }
+    }
     var frequency by remember { mutableStateOf(sub.frequency) }
     var reminderEnabled by remember { mutableStateOf(sub.reminderEnabled) }
     var reminderDDayOffset by remember { mutableStateOf(sub.reminderDDayOffset) }
@@ -4217,7 +4696,21 @@ fun EditSubscriptionTypeDialog(
 
                                 OutlinedTextField(
                                     value = priceStr,
-                                    onValueChange = { priceStr = it },
+                                    onValueChange = { input ->
+                                        priceStr = input
+                                        if (input.isBlank() || input == "0" || input == "0.0") {
+                                            isPriceManuallyEdited = false
+                                            val base = basePriceStr.toDoubleOrNull()
+                                            if (base != null) {
+                                                val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
+                                                val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
+                                                val calc = base + shipping - discount
+                                                priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
+                                            }
+                                        } else {
+                                            isPriceManuallyEdited = true
+                                        }
+                                    },
                                     label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -4496,14 +4989,18 @@ fun EditSubscriptionTypeDialog(
                                 basePriceStr = basePriceStr,
                                 onBasePriceChange = {
                                     basePriceStr = it
-                                    if (priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
-                                        priceStr = it
-                                    }
+                                    updateDynamicPrice(it, discountedAmountStr, shippingPriceStr)
                                 },
                                 discountedAmountStr = discountedAmountStr,
-                                onDiscountedAmountChange = { discountedAmountStr = it },
+                                onDiscountedAmountChange = {
+                                    discountedAmountStr = it
+                                    updateDynamicPrice(basePriceStr, it, shippingPriceStr)
+                                },
                                 shippingPriceStr = shippingPriceStr,
-                                onShippingPriceChange = { shippingPriceStr = it },
+                                onShippingPriceChange = {
+                                    shippingPriceStr = it
+                                    updateDynamicPrice(basePriceStr, discountedAmountStr, it)
+                                },
                                 taxPriceStr = taxPriceStr,
                                 onTaxPriceChange = { taxPriceStr = it },
                                 forwardShippingPriceStr = forwardShippingPriceStr,
@@ -4531,7 +5028,17 @@ fun EditSubscriptionTypeDialog(
                 Button(
                     onClick = {
                         val parsedBase = basePriceStr.toDoubleOrNull()
-                        val parsedPrice = priceStr.toDoubleOrNull() ?: (parsedBase ?: sub.price)
+                        val parsedShipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
+                        val parsedDiscount = discountedAmountStr.toDoubleOrNull() ?: 0.0
+                        val parsedPrice = if (isPriceManuallyEdited && priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
+                            priceStr.toDoubleOrNull()!!
+                        } else if (parsedBase != null) {
+                            parsedBase + parsedShipping - parsedDiscount
+                        } else if (priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
+                            priceStr.toDoubleOrNull()!!
+                        } else {
+                            sub.price
+                        }
                         val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
                         val hasForwarding = selectedAddr?.forwardingServiceId != null
 
@@ -4606,24 +5113,46 @@ fun AddScheduledSubscriptionDialog(
     val isForwardingAddress = remember(currentSub?.subscription?.shippingAddressId, userAddresses) {
         userAddresses.find { it.id == currentSub?.subscription?.shippingAddressId }?.forwardingServiceId != null
     }
-    val availableStatuses = remember(isForwardingAddress) {
-        if (isForwardingAddress) {
-            listOf("Upcoming", "Skipped", "Renewed", "Forwarded", "In Suite", "Shipped", "Received")
-        } else {
-            listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received")
-        }
-    }
+    val allSkips by viewModel.allSubscriptionSkipsState.collectAsState()
+    val calendar = Calendar.getInstance()
+    var dueDate by remember { mutableStateOf(calendar.timeInMillis) }
+    var showDueDatePicker by remember { mutableStateOf(false) }
+
+    var imageUrl by remember { mutableStateOf("") }
+    var rating by remember { mutableStateOf(0.0) }
+
     LaunchedEffect(isForwardingAddress) {
         if (!isForwardingAddress && status in listOf("Forwarded", "In Suite")) {
             status = "Renewed"
         }
     }
-    var imageUrl by remember { mutableStateOf("") }
-    var rating by remember { mutableStateOf(0.0) }
 
-    val calendar = Calendar.getInstance()
-    var dueDate by remember { mutableStateOf(calendar.timeInMillis) }
-    var showDueDatePicker by remember { mutableStateOf(false) }
+    val dummySched = remember(selectedSubId, dueDate) {
+        ScheduledSubscription(
+            id = 0,
+            subscriptionTypeId = selectedSubId,
+            bookTitle = "",
+            bookAuthor = "",
+            description = "",
+            dueDate = dueDate,
+            status = "Upcoming"
+        )
+    }
+    val canSkip = remember(dummySched, currentSub, allSkips) {
+        viewModel.canSkipScheduledSubscription(dummySched, currentSub?.subscription, allSkips)
+    }
+    val availableStatuses = remember(isForwardingAddress, canSkip) {
+        val base = if (isForwardingAddress) {
+            listOf("Upcoming", "Skipped", "Renewed", "Forwarded", "In Suite", "Shipped", "Received")
+        } else {
+            listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received")
+        }
+        if (!canSkip) {
+            base.filter { it != "Skipped" }
+        } else {
+            base
+        }
+    }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
@@ -4753,6 +5282,11 @@ fun AddScheduledSubscriptionDialog(
             Button(
                 onClick = {
                     if (bookTitle.isNotEmpty() && selectedSubId > 0) {
+                        if (status.equals("Skipped", ignoreCase = true) && !canSkip) {
+                            val errorMsg = viewModel.getSkipUnavailableMessage(dummySched, currentSub?.subscription, allSkips)
+                            viewModel.setAlertMessage(errorMsg)
+                            return@Button
+                        }
                         viewModel.addScheduledSubscription(
                             subscriptionTypeId = selectedSubId,
                             bookTitle = bookTitle,
@@ -4804,24 +5338,36 @@ fun EditScheduledSubscriptionDialog(
     val isForwardingAddress = remember(subType?.shippingAddressId, userAddresses) {
         userAddresses.find { it.id == subType?.shippingAddressId }?.forwardingServiceId != null
     }
-    val availableStatuses = remember(isForwardingAddress) {
-        if (isForwardingAddress) {
-            listOf("Upcoming", "Skipped", "Renewed", "Forwarded", "In Suite", "Shipped", "Received")
-        } else {
-            listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received")
-        }
-    }
+    val allSkips by viewModel.allSubscriptionSkipsState.collectAsState()
+    var dueDate by remember { mutableStateOf(sc.dueDate) }
+    var showDueDatePicker by remember { mutableStateOf(false) }
+    var showPackageDialog by remember { mutableStateOf(false) }
+
+    var imageUrl by remember { mutableStateOf(sc.picturePath ?: "") }
+    var rating by remember { mutableStateOf(sc.rating) }
+
     LaunchedEffect(isForwardingAddress) {
         if (!isForwardingAddress && status in listOf("Forwarded", "In Suite")) {
             status = "Renewed"
         }
     }
-    var imageUrl by remember { mutableStateOf(sc.picturePath ?: "") }
-    var rating by remember { mutableStateOf(sc.rating) }
 
-    var dueDate by remember { mutableStateOf(sc.dueDate) }
-    var showDueDatePicker by remember { mutableStateOf(false) }
-    var showPackageDialog by remember { mutableStateOf(false) }
+    val canSkip = remember(sc, subType, allSkips, dueDate) {
+        viewModel.canSkipScheduledSubscription(sc.copy(dueDate = dueDate), subType, allSkips)
+    }
+    val wasSkipped = sc.status.equals("Skipped", ignoreCase = true) || sc.isSkipped
+    val availableStatuses = remember(isForwardingAddress, canSkip, wasSkipped) {
+        val base = if (isForwardingAddress) {
+            listOf("Upcoming", "Skipped", "Renewed", "Forwarded", "In Suite", "Shipped", "Received")
+        } else {
+            listOf("Upcoming", "Skipped", "Renewed", "Shipped", "Received")
+        }
+        if (!canSkip && !wasSkipped) {
+            base.filter { it != "Skipped" }
+        } else {
+            base
+        }
+    }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
@@ -4995,6 +5541,11 @@ fun EditScheduledSubscriptionDialog(
                     onClick = {
                         val wasSkipped = sc.status.equals("Skipped", ignoreCase = true) || sc.isSkipped
                         val isNowSkipped = status.equals("Skipped", ignoreCase = true)
+                        if (!wasSkipped && isNowSkipped && !canSkip) {
+                            val errorMsg = viewModel.getSkipUnavailableMessage(sc.copy(dueDate = dueDate), subType, allSkips)
+                            viewModel.setAlertMessage(errorMsg)
+                            return@Button
+                        }
                         val updatedScheduled = sc.copy(
                             bookTitle = bookTitle,
                             bookAuthor = bookAuthor,

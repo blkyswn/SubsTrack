@@ -230,6 +230,18 @@ class BookishRepository(private val database: BookishDatabase) {
             return
         }
 
+        val maxSkips = subscriptionType.numberOfSkips
+        val preservedLeft = if (existing != null) {
+            val cur = existing.skipsLeft
+            if (cur != null && maxSkips != null) {
+                minOf(cur, maxSkips)
+            } else {
+                cur ?: maxSkips
+            }
+        } else {
+            maxSkips
+        }
+
         val skipRecord = when (skipType) {
             "Each calendar year" -> {
                 val (startYear, endYear) = getStartAndEndOfCurrentYear()
@@ -238,9 +250,9 @@ class BookishRepository(private val database: BookishDatabase) {
                     subscriptionTypeId = subscriptionType.id,
                     subscriptionSkipType = "Each calendar year",
                     numberOfSkips = subscriptionType.numberOfSkips,
-                    skipsLeft = subscriptionType.numberOfSkips,
-                    skipStartDate = startYear,
-                    skipEndDate = endYear
+                    skipsLeft = preservedLeft,
+                    skipStartDate = existing?.skipStartDate ?: startYear,
+                    skipEndDate = existing?.skipEndDate ?: endYear
                 )
             }
             "Every certain months" -> {
@@ -249,9 +261,9 @@ class BookishRepository(private val database: BookishDatabase) {
                     subscriptionTypeId = subscriptionType.id,
                     subscriptionSkipType = "Every certain months",
                     numberOfSkips = subscriptionType.numberOfSkips,
-                    skipsLeft = subscriptionType.numberOfSkips,
-                    skipStartDate = null,
-                    skipEndDate = null
+                    skipsLeft = preservedLeft,
+                    skipStartDate = existing?.skipStartDate,
+                    skipEndDate = existing?.skipEndDate
                 )
             }
             else -> { // "Unlimited"
@@ -259,14 +271,116 @@ class BookishRepository(private val database: BookishDatabase) {
                     id = existing?.id ?: 0,
                     subscriptionTypeId = subscriptionType.id,
                     subscriptionSkipType = "Unlimited",
-                    numberOfSkips = null,
+                    numberOfSkips = existing?.numberOfSkips,
                     skipsLeft = null,
-                    skipStartDate = null,
-                    skipEndDate = null
+                    skipStartDate = existing?.skipStartDate,
+                    skipEndDate = existing?.skipEndDate
                 )
             }
         }
         subscriptionSkipDao.insert(skipRecord)
+    }
+
+    suspend fun updateSubscriptionSkip(subscriptionSkip: SubscriptionSkip) {
+        val maxSkips = subscriptionSkip.numberOfSkips
+        val cleanSkip = if (maxSkips != null && subscriptionSkip.skipsLeft != null && subscriptionSkip.skipsLeft > maxSkips) {
+            subscriptionSkip.copy(skipsLeft = maxSkips)
+        } else {
+            subscriptionSkip
+        }
+        subscriptionSkipDao.update(cleanSkip)
+    }
+
+    suspend fun resyncSkipsLeftForSubscriptionType(subscriptionTypeId: Int) {
+        val subType = subscriptionTypeDao.getSubscriptionTypeById(subscriptionTypeId) ?: return
+        val skipType = subType.skipType ?: "None"
+        if (skipType.equals("None", ignoreCase = true) || skipType.equals("Unlimited", ignoreCase = true)) {
+            return
+        }
+
+        val registers = subscriptionSkipDao.getSkipsForSubscriptionType(subscriptionTypeId)
+        if (registers.isEmpty()) {
+            return
+        }
+
+        val scheduledSubs = scheduledSubscriptionDao.getScheduledSubscriptionsForType(subscriptionTypeId)
+
+        fun findMatchingRegister(renewalDate: Long): SubscriptionSkip? {
+            return registers.firstOrNull { skip ->
+                skip.skipStartDate != null && skip.skipEndDate != null &&
+                        renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
+            } ?: registers.firstOrNull { skip ->
+                skip.skipStartDate != null && skip.skipEndDate == null && renewalDate >= skip.skipStartDate
+            } ?: registers.firstOrNull { skip ->
+                skip.skipStartDate == null && skip.skipEndDate != null && renewalDate <= skip.skipEndDate
+            } ?: registers.firstOrNull { skip ->
+                skip.skipStartDate == null && skip.skipEndDate == null
+            } ?: registers.firstOrNull()
+        }
+
+        for (register in registers) {
+            val regType = if (register.subscriptionSkipType.isNotBlank()) {
+                register.subscriptionSkipType
+            } else {
+                skipType
+            }
+            if (regType.equals("None", ignoreCase = true) || regType.equals("Unlimited", ignoreCase = true)) {
+                continue
+            }
+
+            val maxSkips = register.numberOfSkips ?: subType.numberOfSkips ?: 0
+            if (maxSkips <= 0) {
+                if (register.skipsLeft != 0) {
+                    subscriptionSkipDao.update(register.copy(skipsLeft = 0))
+                }
+                continue
+            }
+
+            val skippedCount = scheduledSubs.count { sched ->
+                val isSkipped = sched.status.equals("Skipped", ignoreCase = true) || sched.isSkipped
+                isSkipped && findMatchingRegister(sched.dueDate)?.id == register.id
+            }
+
+            val recalculatedSkipsLeft = (maxSkips - skippedCount).coerceIn(0, maxSkips)
+            val currentSkipsLeft = register.skipsLeft
+
+            val newSkipsLeft = if (currentSkipsLeft != null) {
+                val clampedCurrent = currentSkipsLeft.coerceAtMost(maxSkips)
+                if (recalculatedSkipsLeft > clampedCurrent) {
+                    // if the recalculated number of skips left is bigger than the actual one in the register, do not update it
+                    clampedCurrent
+                } else {
+                    recalculatedSkipsLeft
+                }
+            } else {
+                recalculatedSkipsLeft
+            }
+
+            if (newSkipsLeft != register.skipsLeft) {
+                subscriptionSkipDao.update(register.copy(skipsLeft = newSkipsLeft))
+            }
+        }
+    }
+
+    suspend fun deleteSubscriptionSkip(subscriptionSkip: SubscriptionSkip) {
+        subscriptionSkipDao.delete(subscriptionSkip)
+    }
+
+    suspend fun autoUpdateMissingPrices() {
+        val subs = subscriptionTypeDao.getAllSubscriptionTypesList()
+        for (sub in subs) {
+            if (sub.price <= 0.0 && sub.basePrice != null) {
+                val calculated = sub.basePrice + (sub.shippingPrice ?: 0.0) - (sub.discountedAmount ?: 0.0)
+                subscriptionTypeDao.update(sub.copy(price = calculated))
+            }
+        }
+        val preorders = preorderDao.getAllPreordersList()
+        for (pr in preorders) {
+            if (pr.price <= 0.0 && pr.basePrice != null) {
+                val calculated = pr.basePrice + (pr.shippingPrice ?: 0.0) - (pr.discountedAmount ?: 0.0)
+                preorderDao.update(pr.copy(price = calculated))
+            }
+        }
     }
 
     // Expose combined Subscription with Bookstore and Skip Info
@@ -332,13 +446,117 @@ class BookishRepository(private val database: BookishDatabase) {
         return forwardingServiceDao.getForwardingServiceById(id)
     }
 
+    fun canSkipScheduledSubscription(
+        scheduled: ScheduledSubscription,
+        subType: SubscriptionType?,
+        allSkips: List<SubscriptionSkip>
+    ): Boolean {
+        if (subType == null) return false
+        val renewalDate = scheduled.dueDate
+        val subSkips = allSkips.filter { it.subscriptionTypeId == subType.id }
+
+        val matching = subSkips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate != null &&
+                    renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
+        } ?: subSkips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate == null && renewalDate >= skip.skipStartDate
+        } ?: subSkips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate != null && renewalDate <= skip.skipEndDate
+        } ?: subSkips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate == null
+        }
+
+        if (matching != null) {
+            val registerType = if (matching.subscriptionSkipType.isNotBlank()) {
+                matching.subscriptionSkipType
+            } else {
+                subType.skipType ?: "None"
+            }
+
+            return when {
+                registerType.equals("None", ignoreCase = true) -> false
+                registerType.equals("Unlimited", ignoreCase = true) -> true
+                else -> {
+                    val currentLeft = matching.skipsLeft
+                        ?: matching.numberOfSkips
+                        ?: subType.numberOfSkips
+                        ?: 0
+                    currentLeft > 0
+                }
+            }
+        } else {
+            val subSkipType = subType.skipType ?: "None"
+            return when {
+                subSkipType.equals("None", ignoreCase = true) -> false
+                subSkipType.equals("Unlimited", ignoreCase = true) -> true
+                else -> {
+                    val maxSkips = subType.numberOfSkips ?: 0
+                    maxSkips > 0
+                }
+            }
+        }
+    }
+
+    fun getSkipUnavailableMessage(
+        scheduled: ScheduledSubscription,
+        subType: SubscriptionType?,
+        allSkips: List<SubscriptionSkip>,
+        userDateFormatPattern: String
+    ): String {
+        if (subType == null) return "Subscription type not found."
+        val renewalDate = scheduled.dueDate
+        val dateFormat = java.text.SimpleDateFormat(userDateFormatPattern, java.util.Locale.getDefault())
+
+        fun formatRenewDate(endDate: Long): String {
+            val cal = java.util.Calendar.getInstance()
+            cal.timeInMillis = endDate
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+            return dateFormat.format(cal.time)
+        }
+
+        val subSkips = allSkips.filter { it.subscriptionTypeId == subType.id }
+
+        val matching = subSkips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate != null &&
+                    renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
+        } ?: subSkips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate == null && renewalDate >= skip.skipStartDate
+        } ?: subSkips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate != null && renewalDate <= skip.skipEndDate
+        } ?: subSkips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate == null
+        }
+
+        if (matching != null) {
+            val registerType = if (matching.subscriptionSkipType.isNotBlank()) {
+                matching.subscriptionSkipType
+            } else {
+                subType.skipType ?: "None"
+            }
+
+            if (registerType.equals("None", ignoreCase = true)) {
+                return "Skipping is not allowed for this subscription (Skip type: None)."
+            }
+            if (matching.skipEndDate != null) {
+                val renewDateStr = formatRenewDate(matching.skipEndDate)
+                return "No skips left. Skips renew in $renewDateStr."
+            }
+            return "No skips left for this period."
+        } else {
+            val subSkipType = subType.skipType ?: "None"
+            if (subSkipType.equals("None", ignoreCase = true)) {
+                return "Skipping is not allowed for this subscription (Skip type: None)."
+            }
+            return "No skips left for this period."
+        }
+    }
+
     suspend fun processSkipForScheduledSub(
         scheduled: ScheduledSubscription,
         userDateFormatPattern: String
     ): String? {
-        val subType = subscriptionTypeDao.getSubscriptionTypeById(scheduled.subscriptionTypeId) ?: return null
-        val skipType = subType.skipType ?: "None"
-        if (skipType == "None") return null
+        val subType = subscriptionTypeDao.getSubscriptionTypeById(scheduled.subscriptionTypeId)
+            ?: return "Subscription type not found."
 
         val renewalDate = scheduled.dueDate
         val dateFormat = java.text.SimpleDateFormat(userDateFormatPattern, java.util.Locale.getDefault())
@@ -352,21 +570,97 @@ class BookishRepository(private val database: BookishDatabase) {
 
         val skips = subscriptionSkipDao.getSkipsForSubscriptionType(subType.id)
 
-        when (skipType) {
-            "Unlimited" -> {
-                val existing = skips.firstOrNull { it.subscriptionSkipType == "Unlimited" } ?: skips.firstOrNull()
-                if (existing != null) {
-                    val newCount = (existing.numberOfSkips ?: 0) + 1
+        val matching = skips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate != null &&
+                    renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
+        } ?: skips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate == null && renewalDate >= skip.skipStartDate
+        } ?: skips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate != null && renewalDate <= skip.skipEndDate
+        } ?: skips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate == null
+        }
+
+        if (matching != null) {
+            val registerType = if (matching.subscriptionSkipType.isNotBlank()) {
+                matching.subscriptionSkipType
+            } else {
+                subType.skipType ?: "None"
+            }
+
+            when {
+                registerType.equals("None", ignoreCase = true) -> {
+                    return "Skipping is not allowed for this subscription (Skip type: None)."
+                }
+                registerType.equals("Unlimited", ignoreCase = true) -> {
+                    val newCount = (matching.numberOfSkips ?: 0) + 1
                     subscriptionSkipDao.update(
-                        existing.copy(
+                        matching.copy(
                             subscriptionSkipType = "Unlimited",
                             numberOfSkips = newCount,
-                            skipsLeft = null,
-                            skipStartDate = null,
-                            skipEndDate = null
+                            skipsLeft = null
                         )
                     )
-                } else {
+                    return null
+                }
+                else -> {
+                    val currentLeft = matching.skipsLeft
+                        ?: matching.numberOfSkips
+                        ?: subType.numberOfSkips
+                        ?: 0
+
+                    if (currentLeft <= 0) {
+                        return if (matching.skipEndDate != null) {
+                            val renewDateStr = formatRenewDate(matching.skipEndDate)
+                            "No skips left. Skips renew in $renewDateStr."
+                        } else {
+                            "No skips left for this period."
+                        }
+                    }
+
+                    val newLeft = currentLeft - 1
+                    var updated = matching.copy(skipsLeft = newLeft)
+
+                    // If dates were null, initialize period based on register type
+                    if (updated.skipStartDate == null || updated.skipEndDate == null) {
+                        if (registerType.equals("Each calendar year", ignoreCase = true)) {
+                            val cal = java.util.Calendar.getInstance()
+                            cal.timeInMillis = renewalDate
+                            val year = cal.get(java.util.Calendar.YEAR)
+                            cal.set(year, java.util.Calendar.JANUARY, 1, 0, 0, 0)
+                            cal.set(java.util.Calendar.MILLISECOND, 0)
+                            val startOfYear = cal.timeInMillis
+                            cal.set(year, java.util.Calendar.DECEMBER, 31, 23, 59, 59)
+                            cal.set(java.util.Calendar.MILLISECOND, 999)
+                            val endOfYear = cal.timeInMillis
+                            updated = updated.copy(
+                                skipStartDate = updated.skipStartDate ?: startOfYear,
+                                skipEndDate = updated.skipEndDate ?: endOfYear
+                            )
+                        } else if (registerType.equals("Every certain months", ignoreCase = true)) {
+                            val cal = java.util.Calendar.getInstance()
+                            cal.timeInMillis = renewalDate
+                            cal.add(java.util.Calendar.MONTH, subType.numberOfMonths ?: 1)
+                            cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
+                            val endDate = cal.timeInMillis
+                            updated = updated.copy(
+                                skipStartDate = updated.skipStartDate ?: renewalDate,
+                                skipEndDate = updated.skipEndDate ?: endDate
+                            )
+                        }
+                    }
+
+                    subscriptionSkipDao.update(updated)
+                    return null
+                }
+            }
+        } else {
+            val subSkipType = subType.skipType ?: "None"
+            when {
+                subSkipType.equals("None", ignoreCase = true) -> {
+                    return "Skipping is not allowed for this subscription (Skip type: None)."
+                }
+                subSkipType.equals("Unlimited", ignoreCase = true) -> {
                     subscriptionSkipDao.insert(
                         SubscriptionSkip(
                             subscriptionTypeId = subType.id,
@@ -377,205 +671,114 @@ class BookishRepository(private val database: BookishDatabase) {
                             skipEndDate = null
                         )
                     )
+                    return null
                 }
-                return null
-            }
-            "Each calendar year" -> {
-                val matching = skips.firstOrNull { skip ->
-                    skip.skipStartDate != null && skip.skipEndDate != null &&
-                            renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
-                }
-
-                if (matching != null) {
-                    val currentLeft = matching.skipsLeft
-                    if (currentLeft != null && currentLeft <= 0) {
-                        val renewDateStr = formatRenewDate(matching.skipEndDate!!)
-                        return "No skips left. Skips renew in $renewDateStr."
-                    } else {
-                        val initialSkips = matching.skipsLeft ?: (matching.numberOfSkips ?: subType.numberOfSkips ?: 0)
-                        if (initialSkips <= 0) {
-                            val renewDateStr = formatRenewDate(matching.skipEndDate!!)
-                            return "No skips left. Skips renew in $renewDateStr."
-                        }
-                        val newSkipsLeft = initialSkips - 1
-                        subscriptionSkipDao.update(matching.copy(skipsLeft = newSkipsLeft))
-                        return null
-                    }
-                } else {
+                subSkipType.equals("Each calendar year", ignoreCase = true) -> {
                     val cal = java.util.Calendar.getInstance()
                     cal.timeInMillis = renewalDate
                     val year = cal.get(java.util.Calendar.YEAR)
-
                     cal.set(year, java.util.Calendar.JANUARY, 1, 0, 0, 0)
                     cal.set(java.util.Calendar.MILLISECOND, 0)
                     val startOfYear = cal.timeInMillis
-
                     cal.set(year, java.util.Calendar.DECEMBER, 31, 23, 59, 59)
                     cal.set(java.util.Calendar.MILLISECOND, 999)
                     val endOfYear = cal.timeInMillis
 
-                    val uninitialized = skips.firstOrNull { it.skipStartDate == null || it.skipEndDate == null }
-                    val currentRegister = skips.firstOrNull {
-                        it.skipStartDate != null && it.skipEndDate != null &&
-                                endOfYear >= it.skipStartDate && endOfYear <= it.skipEndDate
-                    }
                     val maxSkips = subType.numberOfSkips ?: 0
                     if (maxSkips <= 0) {
                         val renewDateStr = formatRenewDate(endOfYear)
                         return "No skips left. Skips renew in $renewDateStr."
-                    } else if (currentRegister != null) {
-                        val currentNum = currentRegister.numberOfSkips ?: maxSkips
-                        val currentLeft = currentRegister.skipsLeft ?: currentNum
-                        val newNum = currentNum + maxSkips
-                        val newLeft = (currentLeft + maxSkips - 1).coerceAtLeast(0)
-                        val newStart = minOf(startOfYear, currentRegister.skipStartDate!!)
-                        val newEnd = maxOf(endOfYear, currentRegister.skipEndDate!!)
-                        subscriptionSkipDao.update(
-                            currentRegister.copy(
-                                numberOfSkips = newNum,
-                                skipsLeft = newLeft,
-                                skipStartDate = newStart,
-                                skipEndDate = newEnd
-                            )
-                        )
-                        return null
-                    } else {
-                        if (uninitialized != null) {
-                            subscriptionSkipDao.update(
-                                uninitialized.copy(
-                                    subscriptionSkipType = "Each calendar year",
-                                    numberOfSkips = maxSkips,
-                                    skipsLeft = maxSkips - 1,
-                                    skipStartDate = startOfYear,
-                                    skipEndDate = endOfYear
-                                )
-                            )
-                        } else {
-                            subscriptionSkipDao.insert(
-                                SubscriptionSkip(
-                                    subscriptionTypeId = subType.id,
-                                    subscriptionSkipType = "Each calendar year",
-                                    numberOfSkips = maxSkips,
-                                    skipsLeft = maxSkips - 1,
-                                    skipStartDate = startOfYear,
-                                    skipEndDate = endOfYear
-                                )
-                            )
-                        }
-                        return null
                     }
+                    subscriptionSkipDao.insert(
+                        SubscriptionSkip(
+                            subscriptionTypeId = subType.id,
+                            subscriptionSkipType = "Each calendar year",
+                            numberOfSkips = maxSkips,
+                            skipsLeft = maxSkips - 1,
+                            skipStartDate = startOfYear,
+                            skipEndDate = endOfYear
+                        )
+                    )
+                    return null
                 }
-            }
-            "Every certain months" -> {
-                val startDate = renewalDate
-                val cal = java.util.Calendar.getInstance()
-                cal.timeInMillis = renewalDate
-                cal.add(java.util.Calendar.MONTH, subType.numberOfMonths ?: 1)
-                cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
-                val endDate = cal.timeInMillis
+                subSkipType.equals("Every certain months", ignoreCase = true) -> {
+                    val cal = java.util.Calendar.getInstance()
+                    cal.timeInMillis = renewalDate
+                    cal.add(java.util.Calendar.MONTH, subType.numberOfMonths ?: 1)
+                    cal.add(java.util.Calendar.DAY_OF_MONTH, -1)
+                    val endDate = cal.timeInMillis
 
-                val matchingDueDate = skips.firstOrNull { skip ->
-                    skip.skipStartDate != null && skip.skipEndDate != null &&
-                            renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
-                }
-
-                if (matchingDueDate != null) {
-                    val currentLeft = matchingDueDate.skipsLeft ?: (matchingDueDate.numberOfSkips ?: subType.numberOfSkips ?: 0)
-                    if (currentLeft <= 0) {
-                        val renewDateStr = formatRenewDate(matchingDueDate.skipEndDate!!)
+                    val maxSkips = subType.numberOfSkips ?: 0
+                    if (maxSkips <= 0) {
+                        val renewDateStr = formatRenewDate(endDate)
                         return "No skips left. Skips renew in $renewDateStr."
                     }
-                    val newSkipsLeft = currentLeft - 1
-                    subscriptionSkipDao.update(matchingDueDate.copy(skipsLeft = newSkipsLeft))
-                    return null
-                } else {
-                    val matchingEndDate = skips.firstOrNull { skip ->
-                        skip.skipStartDate != null && skip.skipEndDate != null &&
-                                endDate >= skip.skipStartDate && endDate <= skip.skipEndDate
-                    }
-
-                    if (matchingEndDate != null) {
-                        val currentLeft = matchingEndDate.skipsLeft ?: (matchingEndDate.numberOfSkips ?: subType.numberOfSkips ?: 0)
-                        if (currentLeft <= 0) {
-                            val renewDateStr = formatRenewDate(matchingEndDate.skipEndDate!!)
-                            return "No skips left. Skips renew in $renewDateStr."
-                        }
-                        val newSkipsLeft = currentLeft - 1
-                        subscriptionSkipDao.update(
-                            matchingEndDate.copy(
-                                skipStartDate = startDate,
-                                skipEndDate = endDate,
-                                skipsLeft = newSkipsLeft
-                            )
+                    subscriptionSkipDao.insert(
+                        SubscriptionSkip(
+                            subscriptionTypeId = subType.id,
+                            subscriptionSkipType = "Every certain months",
+                            numberOfSkips = maxSkips,
+                            skipsLeft = maxSkips - 1,
+                            skipStartDate = renewalDate,
+                            skipEndDate = endDate
                         )
-                        return null
-                    } else {
-                        val maxSkips = subType.numberOfSkips ?: 0
-                        if (maxSkips <= 0) {
-                            val renewDateStr = formatRenewDate(endDate)
-                            return "No skips left. Skips renew in $renewDateStr."
-                        }
-                        val uninitialized = skips.firstOrNull { it.skipStartDate == null || it.skipEndDate == null }
-                        if (uninitialized != null) {
-                            subscriptionSkipDao.update(
-                                uninitialized.copy(
-                                    subscriptionSkipType = "Every certain months",
-                                    numberOfSkips = maxSkips,
-                                    skipsLeft = maxSkips - 1,
-                                    skipStartDate = startDate,
-                                    skipEndDate = endDate
-                                )
-                            )
-                        } else {
-                            subscriptionSkipDao.insert(
-                                SubscriptionSkip(
-                                    subscriptionTypeId = subType.id,
-                                    subscriptionSkipType = "Every certain months",
-                                    numberOfSkips = maxSkips,
-                                    skipsLeft = maxSkips - 1,
-                                    skipStartDate = startDate,
-                                    skipEndDate = endDate
-                                )
-                            )
-                        }
-                        return null
+                    )
+                    return null
+                }
+                else -> {
+                    val maxSkips = subType.numberOfSkips ?: 0
+                    if (maxSkips <= 0) {
+                        return "No skips left for this period."
                     }
+                    subscriptionSkipDao.insert(
+                        SubscriptionSkip(
+                            subscriptionTypeId = subType.id,
+                            subscriptionSkipType = subSkipType,
+                            numberOfSkips = maxSkips,
+                            skipsLeft = maxSkips - 1,
+                            skipStartDate = null,
+                            skipEndDate = null
+                        )
+                    )
+                    return null
                 }
             }
         }
-        return null
     }
 
     suspend fun processUnskipForScheduledSub(scheduled: ScheduledSubscription) {
         val subType = subscriptionTypeDao.getSubscriptionTypeById(scheduled.subscriptionTypeId) ?: return
-        val skipType = subType.skipType ?: "None"
-        if (skipType == "None") return
-
         val renewalDate = scheduled.dueDate
         val skips = subscriptionSkipDao.getSkipsForSubscriptionType(subType.id)
 
-        when (skipType) {
-            "Unlimited" -> {
-                val existing = skips.firstOrNull { it.subscriptionSkipType == "Unlimited" } ?: skips.firstOrNull()
-                if (existing != null) {
-                    val currentCount = existing.numberOfSkips ?: 0
-                    if (currentCount > 0) {
-                        subscriptionSkipDao.update(existing.copy(numberOfSkips = currentCount - 1))
-                    }
-                }
+        val matching = skips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate != null &&
+                    renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
+        } ?: skips.firstOrNull { skip ->
+            skip.skipStartDate != null && skip.skipEndDate == null && renewalDate >= skip.skipStartDate
+        } ?: skips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate != null && renewalDate <= skip.skipEndDate
+        } ?: skips.firstOrNull { skip ->
+            skip.skipStartDate == null && skip.skipEndDate == null
+        } ?: skips.firstOrNull()
+
+        if (matching != null) {
+            val registerType = if (matching.subscriptionSkipType.isNotBlank()) {
+                matching.subscriptionSkipType
+            } else {
+                subType.skipType ?: "None"
             }
-            "Each calendar year", "Every certain months" -> {
-                val matching = skips.firstOrNull { skip ->
-                    skip.skipStartDate != null && skip.skipEndDate != null &&
-                            renewalDate >= skip.skipStartDate && renewalDate <= skip.skipEndDate
+
+            if (registerType.equals("Unlimited", ignoreCase = true)) {
+                val currentCount = matching.numberOfSkips ?: 0
+                if (currentCount > 0) {
+                    subscriptionSkipDao.update(matching.copy(numberOfSkips = currentCount - 1))
                 }
-                if (matching != null) {
-                    val maxSkips = matching.numberOfSkips ?: subType.numberOfSkips ?: 0
-                    val currentLeft = matching.skipsLeft ?: 0
-                    if (currentLeft < maxSkips) {
-                        subscriptionSkipDao.update(matching.copy(skipsLeft = currentLeft + 1))
-                    }
-                }
+            } else if (!registerType.equals("None", ignoreCase = true)) {
+                val currentLeft = matching.skipsLeft ?: 0
+                val maxSkips = matching.numberOfSkips ?: subType.numberOfSkips ?: Int.MAX_VALUE
+                val newLeft = (currentLeft + 1).coerceAtMost(maxSkips)
+                subscriptionSkipDao.update(matching.copy(skipsLeft = newLeft))
             }
         }
     }
@@ -1400,14 +1603,10 @@ class BookishRepository(private val database: BookishDatabase) {
     }
 
     suspend fun recalculateSubscriptionSkips(userDateFormatPattern: String) {
-        subscriptionSkipDao.deleteAllSubscriptionSkips()
         val allSubTypes = subscriptionTypeDao.getAllSubscriptionTypesList()
         for (subType in allSubTypes) {
             syncSubscriptionSkip(subType)
-        }
-        val skippedSubs = scheduledSubscriptionDao.getSkippedScheduledSubscriptions()
-        for (scheduled in skippedSubs) {
-            processSkipForScheduledSub(scheduled, userDateFormatPattern)
+            resyncSkipsLeftForSubscriptionType(subType.id)
         }
     }
 }

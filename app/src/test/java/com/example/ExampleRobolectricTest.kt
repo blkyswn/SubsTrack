@@ -179,4 +179,252 @@ class ExampleRobolectricTest {
     val bookstoresAfter = repo.allBookstoresFlow.first()
     org.junit.Assert.assertEquals("Bookstore count should remain the same", initialCount, bookstoresAfter.size)
   }
+
+  @Test
+  fun `test scheduled subscription skip logic with edited skip registers and skips left`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+
+    // Prepopulate default data (bookstore 1 FairyLoot)
+    repo.checkAndPrepopulate(com.example.utils.AppFolderManager.getDefaultAppFolder(context))
+
+    // Insert a subscription type with 2 skips
+    val subId = db.subscriptionTypeDao().insert(
+      com.example.data.SubscriptionType(
+        id = 101,
+        bookstoreId = 1,
+        title = "Test Sub With Skips",
+        status = "Active",
+        price = 30.0,
+        dueDate = 1727788800000L,
+        startDate = 1725196800000L,
+        finishDate = 0L,
+        notificationAlertDays = 3,
+        frequency = "Monthly",
+        skipType = "Each calendar year",
+        numberOfSkips = 2
+      )
+    ).toInt()
+
+    // Sync skip registers
+    repo.syncSubscriptionSkip(db.subscriptionTypeDao().getSubscriptionTypeById(subId)!!)
+    var skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(1, skips.size)
+    org.junit.Assert.assertEquals(2, skips[0].skipsLeft)
+
+    val testDueDate = skips[0].skipStartDate!! + 86400000L
+
+    val sched1 = com.example.data.ScheduledSubscription(
+      id = 201,
+      subscriptionTypeId = subId,
+      bookTitle = "Book 1",
+      bookAuthor = "Author 1",
+      description = "Desc 1",
+      dueDate = testDueDate,
+      status = "Upcoming",
+      isSkipped = false
+    )
+    val sched1Id = repo.insertScheduledSubscription(sched1).toInt()
+    val insertedSched1 = sched1.copy(id = sched1Id)
+
+    // Check canSkip
+    var canSkip = repo.canSkipScheduledSubscription(insertedSched1, db.subscriptionTypeDao().getSubscriptionTypeById(subId), skips)
+    org.junit.Assert.assertTrue("Should allow skip when skipsLeft > 0", canSkip)
+
+    // Process skip
+    var error = repo.processSkipForScheduledSub(insertedSched1, "yyyy-MM-dd")
+    org.junit.Assert.assertNull("Skip should succeed without error", error)
+
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(1, skips.size)
+    org.junit.Assert.assertEquals(1, skips[0].skipsLeft)
+
+    // User edits the skip register to set skipsLeft = 0
+    val editedRegister = skips[0].copy(skipsLeft = 0)
+    repo.updateSubscriptionSkip(editedRegister)
+
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(0, skips[0].skipsLeft)
+
+    val sched2 = com.example.data.ScheduledSubscription(
+      id = 202,
+      subscriptionTypeId = subId,
+      bookTitle = "Book 2",
+      bookAuthor = "Author 2",
+      description = "Desc 2",
+      dueDate = testDueDate,
+      status = "Upcoming",
+      isSkipped = false
+    )
+    canSkip = repo.canSkipScheduledSubscription(sched2, db.subscriptionTypeDao().getSubscriptionTypeById(subId), skips)
+    org.junit.Assert.assertFalse("Should not allow skip when edited skipsLeft is 0", canSkip)
+
+    error = repo.processSkipForScheduledSub(sched2, "yyyy-MM-dd")
+    org.junit.Assert.assertNotNull("Skip should fail when skipsLeft is 0", error)
+    org.junit.Assert.assertTrue("Error message should mention no skips left", error!!.contains("No skips left"))
+
+    // User now edits the register to set numberOfSkips = 3, skipsLeft = 3
+    repo.updateSubscriptionSkip(skips[0].copy(numberOfSkips = 3, skipsLeft = 3))
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    canSkip = repo.canSkipScheduledSubscription(sched2, db.subscriptionTypeDao().getSubscriptionTypeById(subId), skips)
+    org.junit.Assert.assertTrue("Should allow skip after user edited skipsLeft to 3", canSkip)
+
+    error = repo.processSkipForScheduledSub(sched2, "yyyy-MM-dd")
+    org.junit.Assert.assertNull("Skip should succeed now", error)
+
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(2, skips[0].skipsLeft)
+
+    // Unskip sched2
+    repo.processUnskipForScheduledSub(sched2)
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(3, skips[0].skipsLeft)
+
+    // Edit register to None
+    repo.updateSubscriptionSkip(skips[0].copy(subscriptionSkipType = "None"))
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    canSkip = repo.canSkipScheduledSubscription(sched2, db.subscriptionTypeDao().getSubscriptionTypeById(subId), skips)
+    org.junit.Assert.assertFalse("Should not allow skip when skip register type is None", canSkip)
+
+    // Edit register to Unlimited
+    repo.updateSubscriptionSkip(skips[0].copy(subscriptionSkipType = "Unlimited", numberOfSkips = 5, skipsLeft = null))
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    canSkip = repo.canSkipScheduledSubscription(sched2, db.subscriptionTypeDao().getSubscriptionTypeById(subId), skips)
+    org.junit.Assert.assertTrue("Should allow skip when skip register type is Unlimited", canSkip)
+
+    error = repo.processSkipForScheduledSub(sched2, "yyyy-MM-dd")
+    org.junit.Assert.assertNull("Skip should succeed for Unlimited register", error)
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(6, skips[0].numberOfSkips)
+  }
+
+  @Test
+  fun `test resync skips left when changing end date of sub type and regenerating scheduled subs`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+
+    repo.checkAndPrepopulate(com.example.utils.AppFolderManager.getDefaultAppFolder(context))
+
+    val cal = java.util.Calendar.getInstance()
+    cal.set(2026, java.util.Calendar.JANUARY, 1, 0, 0, 0)
+    cal.set(java.util.Calendar.MILLISECOND, 0)
+    val jan1 = cal.timeInMillis
+
+    cal.set(2026, java.util.Calendar.DECEMBER, 31, 23, 59, 59)
+    val dec31 = cal.timeInMillis
+
+    val subType = com.example.data.SubscriptionType(
+      id = 301,
+      bookstoreId = 1,
+      title = "End Date Test Sub",
+      status = "Active",
+      price = 25.0,
+      dueDate = jan1 + 10 * 86400000L,
+      startDate = jan1,
+      finishDate = dec31,
+      notificationAlertDays = null,
+      frequency = "Monthly",
+      skipType = "Each calendar year",
+      numberOfSkips = 3
+    )
+    val subId = db.subscriptionTypeDao().insert(subType).toInt()
+    val savedSub = subType.copy(id = subId)
+
+    repo.syncSubscriptionSkip(savedSub)
+    var skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(1, skips.size)
+    org.junit.Assert.assertEquals(3, skips[0].numberOfSkips)
+    org.junit.Assert.assertEquals(3, skips[0].skipsLeft)
+
+    // User manually edited skipsLeft in register to 1
+    repo.updateSubscriptionSkip(skips[0].copy(skipsLeft = 1))
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(1, skips[0].skipsLeft)
+
+    // Verify: skipsLeft cannot be bigger than numberOfSkips
+    repo.updateSubscriptionSkip(skips[0].copy(skipsLeft = 10))
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals("Skips left cannot exceed numberOfSkips", 3, skips[0].skipsLeft)
+
+    // Reset back to 1
+    repo.updateSubscriptionSkip(skips[0].copy(skipsLeft = 1))
+
+    // Insert scheduled subs for Jan, Feb, Mar, Apr
+    val feb11 = jan1 + 41 * 86400000L
+    val mar11 = jan1 + 70 * 86400000L
+    val apr11 = jan1 + 100 * 86400000L
+
+    val sched1 = com.example.data.ScheduledSubscription(
+      id = 401,
+      subscriptionTypeId = subId,
+      bookTitle = "Book 1",
+      bookAuthor = "Author",
+      description = "Desc",
+      dueDate = feb11,
+      status = "Skipped",
+      isSkipped = true
+    )
+    val sched2 = com.example.data.ScheduledSubscription(
+      id = 402,
+      subscriptionTypeId = subId,
+      bookTitle = "Book 2",
+      bookAuthor = "Author",
+      description = "Desc",
+      dueDate = mar11,
+      status = "Skipped",
+      isSkipped = true
+    )
+    val sched3 = com.example.data.ScheduledSubscription(
+      id = 403,
+      subscriptionTypeId = subId,
+      bookTitle = "Book 3",
+      bookAuthor = "Author",
+      description = "Desc",
+      dueDate = apr11,
+      status = "Upcoming",
+      isSkipped = false
+    )
+    db.scheduledSubscriptionDao().insert(sched1)
+    db.scheduledSubscriptionDao().insert(sched2)
+    db.scheduledSubscriptionDao().insert(sched3)
+
+    // Currently 2 are skipped (sched1, sched2).
+    // recalculatedSkipsLeft = maxSkips (3) - skippedCount (2) = 1.
+    // actual in register = 1.
+    repo.resyncSkipsLeftForSubscriptionType(subId)
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals(1, skips[0].skipsLeft)
+
+    // Now, change end date to before March (so March sched2 is removed)
+    db.scheduledSubscriptionDao().delete(sched2)
+    // Now skippedCount = 1.
+    // recalculatedSkipsLeft = 3 - 1 = 2.
+    // BUT actual one in register is 1.
+    // recalculated (2) is bigger than actual (1) -> MUST NOT UPDATE!
+    repo.resyncSkipsLeftForSubscriptionType(subId)
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals("Recalculated (2) > actual (1) must not update skips left", 1, skips[0].skipsLeft)
+
+    // Now mark sched3 as skipped and add another skipped sub (sched4):
+    db.scheduledSubscriptionDao().update(sched3.copy(status = "Skipped", isSkipped = true))
+    val sched4 = com.example.data.ScheduledSubscription(
+      id = 404,
+      subscriptionTypeId = subId,
+      bookTitle = "Book 4",
+      bookAuthor = "Author",
+      description = "Desc",
+      dueDate = feb11 + 5 * 86400000L,
+      status = "Skipped",
+      isSkipped = true
+    )
+    db.scheduledSubscriptionDao().insert(sched4)
+    // Now skippedCount = 3 (sched1, sched3, sched4).
+    // recalculatedSkipsLeft = 3 - 3 = 0.
+    // recalculated (0) is smaller than actual (1) -> SHOULD update to 0!
+    repo.resyncSkipsLeftForSubscriptionType(subId)
+    skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
+    org.junit.Assert.assertEquals("Recalculated (0) <= actual (1) should update skips left to 0", 0, skips[0].skipsLeft)
+  }
 }
