@@ -427,4 +427,16 @@ class ExampleRobolectricTest {
     skips = db.subscriptionSkipDao().getSkipsForSubscriptionType(subId)
     org.junit.Assert.assertEquals("Recalculated (0) <= actual (1) should update skips left to 0", 0, skips[0].skipsLeft)
   }
+
+  @Test
+  fun `test CalendarBentoWidgetProvider updates widget cleanly`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+    repo.checkAndPrepopulate(com.example.utils.AppFolderManager.getDefaultAppFolder(context))
+
+    // Trigger update
+    com.example.widget.CalendarBentoWidgetProvider.triggerUpdate(context)
+    org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+  }
 }
