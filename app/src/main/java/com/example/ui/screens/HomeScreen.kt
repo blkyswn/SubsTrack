@@ -2658,7 +2658,7 @@ data class UpcomingEvent(
 fun isUpcomingEvent(event: UpcomingEvent, now: Long): Boolean {
     val hasDistinctEndDate = event.rawPreorder?.let {
         it.preorder.rangedSaleDateEnd > 0L && it.preorder.rangedSaleDateEnd != it.preorder.rangedSaleDateStart
-    } ?: false
+    } ?: (event.endDate > 0L && event.endDate != event.startDate)
 
     val targetEndDate = if (hasDistinctEndDate) event.endDate else event.startDate
 

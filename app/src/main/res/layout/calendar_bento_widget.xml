@@ -20,7 +20,7 @@
         android:orientation="horizontal"
         android:baselineAligned="false"
         android:paddingHorizontal="14dp"
-        android:paddingVertical="12dp"
+        android:paddingVertical="11dp"
         android:weightSum="1">
 
         <!-- LEFT COLUMN: Today Date & Today's Events -->
@@ -30,15 +30,32 @@
             android:layout_weight="0.48"
             android:orientation="vertical">
 
-            <!-- Day Name & Day Number Header -->
-            <TextView
-                android:id="@+id/widget_today_day_name"
-                android:layout_width="wrap_content"
+            <!-- Day Name & Indicators Header Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="TODAY"
-                android:textColor="#D9FFFFFF"
-                android:textSize="11sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/widget_today_day_name"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="TODAY"
+                    android:textColor="#D9FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_today_grouped_indicator"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#E6FFFFFF"
+                    android:textSize="9.5sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/widget_today_day_number"
@@ -170,182 +187,454 @@
             android:layout_width="10dp"
             android:layout_height="match_parent" />
 
-        <!-- RIGHT COLUMN: Upcoming Events -->
+        <!-- RIGHT COLUMN: Upcoming Events Grouped by Day -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="0.52"
             android:orientation="vertical">
 
-            <!-- Future Section Header -->
-            <TextView
-                android:id="@+id/widget_future_header"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="UPCOMING"
-                android:textColor="#D9FFFFFF"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-
             <!-- Empty State for Future -->
-            <TextView
-                android:id="@+id/widget_future_empty"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:id="@+id/widget_future_empty_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/widget_future_empty_header"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="UPCOMING"
+                    android:textColor="#D9FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_future_empty_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="No upcoming events"
+                    android:textColor="#B3FFFFFF"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- GROUP 1 -->
+            <LinearLayout
+                android:id="@+id/widget_g1_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/widget_g1_header"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="TOMORROW"
+                        android:textColor="#D9FFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_g1_count"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#E6FFFFFF"
+                        android:textSize="9.5sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <!-- G1 Event 1 -->
+                <LinearLayout
+                    android:id="@+id/widget_g1_e1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/widget_chip_bg"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="3dp"
+                    android:visibility="gone">
+
+                    <View
+                        android:layout_width="2.5dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/widget_vertical_bar" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/widget_g1_e1_title"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/widget_g1_e1_time"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- G1 Event 2 -->
+                <LinearLayout
+                    android:id="@+id/widget_g1_e2"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/widget_chip_bg"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="3dp"
+                    android:visibility="gone">
+
+                    <View
+                        android:layout_width="2.5dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/widget_vertical_bar" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/widget_g1_e2_title"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/widget_g1_e2_time"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- G1 Event 3 -->
+                <LinearLayout
+                    android:id="@+id/widget_g1_e3"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/widget_chip_bg"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="3dp"
+                    android:visibility="gone">
+
+                    <View
+                        android:layout_width="2.5dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/widget_vertical_bar" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/widget_g1_e3_title"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/widget_g1_e3_time"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- G1 More -->
+                <TextView
+                    android:id="@+id/widget_g1_more"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="#E6FFFFFF"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <!-- GROUP 2 -->
+            <LinearLayout
+                android:id="@+id/widget_g2_container"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="No upcoming events"
-                android:textColor="#B3FFFFFF"
-                android:textSize="11sp"
-                android:visibility="gone" />
-
-            <!-- Event 1 Future -->
-            <LinearLayout
-                android:id="@+id/widget_future_event_1"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/widget_chip_bg"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingHorizontal="5dp"
-                android:paddingVertical="3dp"
+                android:orientation="vertical"
                 android:visibility="gone">
 
-                <View
-                    android:layout_width="2.5dp"
-                    android:layout_height="match_parent"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/widget_vertical_bar" />
-
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
                     <TextView
-                        android:id="@+id/widget_future_event_1_title"
-                        android:layout_width="match_parent"
+                        android:id="@+id/widget_g2_header"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:textColor="#FFFFFFFF"
+                        android:layout_weight="1"
+                        android:textColor="#D9FFFFFF"
                         android:textSize="11sp"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/widget_future_event_1_time"
-                        android:layout_width="match_parent"
+                        android:id="@+id/widget_g2_count"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:textColor="#CCFFFFFF"
-                        android:textSize="9.5sp" />
+                        android:textColor="#E6FFFFFF"
+                        android:textSize="9.5sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
                 </LinearLayout>
+
+                <!-- G2 Event 1 -->
+                <LinearLayout
+                    android:id="@+id/widget_g2_e1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/widget_chip_bg"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="3dp"
+                    android:visibility="gone">
+
+                    <View
+                        android:layout_width="2.5dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/widget_vertical_bar" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/widget_g2_e1_title"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/widget_g2_e1_time"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- G2 Event 2 -->
+                <LinearLayout
+                    android:id="@+id/widget_g2_e2"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/widget_chip_bg"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="3dp"
+                    android:visibility="gone">
+
+                    <View
+                        android:layout_width="2.5dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/widget_vertical_bar" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/widget_g2_e2_title"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/widget_g2_e2_time"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- G2 More -->
+                <TextView
+                    android:id="@+id/widget_g2_more"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="#E6FFFFFF"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
             </LinearLayout>
 
-            <!-- Event 2 Future -->
+            <!-- GROUP 3 -->
             <LinearLayout
-                android:id="@+id/widget_future_event_2"
+                android:id="@+id/widget_g3_container"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
-                android:background="@drawable/widget_chip_bg"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingHorizontal="5dp"
-                android:paddingVertical="3dp"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical"
                 android:visibility="gone">
 
-                <View
-                    android:layout_width="2.5dp"
-                    android:layout_height="match_parent"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/widget_vertical_bar" />
-
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
                     <TextView
-                        android:id="@+id/widget_future_event_2_title"
-                        android:layout_width="match_parent"
+                        android:id="@+id/widget_g3_header"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:textColor="#FFFFFFFF"
+                        android:layout_weight="1"
+                        android:textColor="#D9FFFFFF"
                         android:textSize="11sp"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/widget_future_event_2_time"
-                        android:layout_width="match_parent"
+                        android:id="@+id/widget_g3_count"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:textColor="#CCFFFFFF"
-                        android:textSize="9.5sp" />
+                        android:textColor="#E6FFFFFF"
+                        android:textSize="9.5sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
                 </LinearLayout>
-            </LinearLayout>
 
-            <!-- Event 3 Future -->
-            <LinearLayout
-                android:id="@+id/widget_future_event_3"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
-                android:background="@drawable/widget_chip_bg"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingHorizontal="5dp"
-                android:paddingVertical="3dp"
-                android:visibility="gone">
-
-                <View
-                    android:layout_width="2.5dp"
-                    android:layout_height="match_parent"
-                    android:layout_marginEnd="4dp"
-                    android:background="@drawable/widget_vertical_bar" />
-
+                <!-- G3 Event 1 -->
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:id="@+id/widget_g3_e1"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/widget_chip_bg"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="3dp"
+                    android:visibility="gone">
 
-                    <TextView
-                        android:id="@+id/widget_future_event_3_title"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:textColor="#FFFFFFFF"
-                        android:textSize="11sp"
-                        android:textStyle="bold" />
+                    <View
+                        android:layout_width="2.5dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/widget_vertical_bar" />
 
-                    <TextView
-                        android:id="@+id/widget_future_event_3_time"
-                        android:layout_width="match_parent"
+                    <LinearLayout
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:textColor="#CCFFFFFF"
-                        android:textSize="9.5sp" />
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/widget_g3_e1_title"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#FFFFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/widget_g3_e1_time"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
                 </LinearLayout>
+
+                <!-- G3 More -->
+                <TextView
+                    android:id="@+id/widget_g3_more"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="#E6FFFFFF"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
             </LinearLayout>
 
-            <!-- Leftover count -->
-            <TextView
-                android:id="@+id/widget_future_more"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:textColor="#E6FFFFFF"
-                android:textSize="10sp"
-                android:textStyle="bold"
-                android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>
