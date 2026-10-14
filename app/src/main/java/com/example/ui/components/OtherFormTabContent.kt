@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -568,10 +569,10 @@ fun OtherFormTabContent(
         val forwardShippingVal = if (hasForwardingService) forwardShippingPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
         val forwardTaxVal = if (hasForwardingService) forwardTaxPriceStr.toDoubleOrNull() ?: 0.0 else 0.0
 
-        val formulaPrice = if (baseVal != null) baseVal + shippingVal - discountVal else null
-        val totalWithTaxes = (formulaPrice ?: 0.0) + taxVal + forwardShippingVal + forwardTaxVal
+        val formulaPrice = if (baseVal != null) baseVal + shippingVal + taxVal - discountVal else null
+        val totalWithForwarding = (formulaPrice ?: 0.0) + forwardShippingVal + forwardTaxVal
 
-        if (formulaPrice != null || totalWithTaxes > 0.0 || basePriceStr.isNotBlank() || discountedAmountStr.isNotBlank()) {
+        if (formulaPrice != null || totalWithForwarding > 0.0 || basePriceStr.isNotBlank() || discountedAmountStr.isNotBlank()) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 shape = RoundedCornerShape(8.dp),
@@ -586,14 +587,14 @@ fun OtherFormTabContent(
                     if (formulaPrice != null) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Calculated Price (Base + Ship - Disc)",
+                                text = "Calculated Price (Base + Ship + Tax - Disc)",
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(0.6f)
                             )
                             val formattedPrice = if (formulaPrice % 1.0 == 0.0) {
                                 formulaPrice.toLong().toString()
@@ -604,28 +605,34 @@ fun OtherFormTabContent(
                                 text = "$selectedCurrency$formattedPrice",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(0.4f),
+                                textAlign = TextAlign.End,
+                                maxLines = 1
                             )
                         }
                     }
 
-                    if (taxVal > 0.0 || forwardShippingVal > 0.0 || forwardTaxVal > 0.0) {
+                    if (forwardShippingVal > 0.0 || forwardTaxVal > 0.0) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Total with Taxes & Forwarding",
+                                text = "Total with Forwarding",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(0.6f)
                             )
                             Text(
-                                text = "$selectedCurrency${String.format(Locale.US, "%.2f", totalWithTaxes)}",
+                                text = "$selectedCurrency${String.format(Locale.US, "%.2f", totalWithForwarding)}",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(0.4f),
+                                textAlign = TextAlign.End,
+                                maxLines = 1
                             )
                         }
                     }

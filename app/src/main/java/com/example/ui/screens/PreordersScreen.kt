@@ -1758,16 +1758,16 @@ fun AddPreorderDialog(
     var isPriceManuallyEdited by remember { mutableStateOf(false) }
     var priceStr by remember { mutableStateOf("") }
 
-    val updateDynamicPrice: (String, String, String) -> Unit = { newBase, newDiscount, newShipping ->
-        if (!isPriceManuallyEdited || priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+    val updateDynamicPrice: (String, String, String, String) -> Unit = { newBase, newDiscount, newShipping, newTax ->
+        if (!isPriceManuallyEdited) {
             val base = newBase.toDoubleOrNull()
             if (base != null) {
                 val shipping = newShipping.toDoubleOrNull() ?: 0.0
                 val discount = newDiscount.toDoubleOrNull() ?: 0.0
-                val calc = base + shipping - discount
+                val tax = newTax.toDoubleOrNull() ?: 0.0
+                val calc = base + shipping + tax - discount
                 priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                isPriceManuallyEdited = false
-            } else if (newBase.isBlank() && !isPriceManuallyEdited) {
+            } else if (newBase.isBlank()) {
                 priceStr = ""
             }
         }
@@ -1946,18 +1946,7 @@ fun AddPreorderDialog(
                                 value = priceStr,
                                 onValueChange = { input ->
                                     priceStr = input
-                                    if (input.isBlank() || input == "0" || input == "0.0") {
-                                        isPriceManuallyEdited = false
-                                        val base = basePriceStr.toDoubleOrNull()
-                                        if (base != null) {
-                                            val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
-                                            val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                                            val calc = base + shipping - discount
-                                            priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                                        }
-                                    } else {
-                                        isPriceManuallyEdited = true
-                                    }
+                                    isPriceManuallyEdited = true
                                 },
                                 label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -1995,7 +1984,20 @@ fun AddPreorderDialog(
                                 }
                                 Switch(
                                     checked = reminderEnabled,
-                                    onCheckedChange = { reminderEnabled = it }
+                                    onCheckedChange = { enabled ->
+                                        reminderEnabled = enabled
+                                        if (enabled) {
+                                            val startCal = Calendar.getInstance().apply { timeInMillis = saleDateStart }
+                                            val hasTime = startCal.get(Calendar.HOUR_OF_DAY) != 0 || startCal.get(Calendar.MINUTE) != 0
+                                            if (hasTime) {
+                                                reminderHour = startCal.get(Calendar.HOUR_OF_DAY)
+                                                reminderMinute = startCal.get(Calendar.MINUTE)
+                                            } else {
+                                                reminderHour = 8
+                                                reminderMinute = 0
+                                            }
+                                        }
+                                    }
                                 )
                             }
 
@@ -2043,20 +2045,23 @@ fun AddPreorderDialog(
                             basePriceStr = basePriceStr,
                             onBasePriceChange = {
                                 basePriceStr = it
-                                updateDynamicPrice(it, discountedAmountStr, shippingPriceStr)
+                                updateDynamicPrice(it, discountedAmountStr, shippingPriceStr, taxPriceStr)
                             },
                             discountedAmountStr = discountedAmountStr,
                             onDiscountedAmountChange = {
                                 discountedAmountStr = it
-                                updateDynamicPrice(basePriceStr, it, shippingPriceStr)
+                                updateDynamicPrice(basePriceStr, it, shippingPriceStr, taxPriceStr)
                             },
                             shippingPriceStr = shippingPriceStr,
                             onShippingPriceChange = {
                                 shippingPriceStr = it
-                                updateDynamicPrice(basePriceStr, discountedAmountStr, it)
+                                updateDynamicPrice(basePriceStr, discountedAmountStr, it, taxPriceStr)
                             },
                             taxPriceStr = taxPriceStr,
-                            onTaxPriceChange = { taxPriceStr = it },
+                            onTaxPriceChange = {
+                                taxPriceStr = it
+                                updateDynamicPrice(basePriceStr, discountedAmountStr, shippingPriceStr, it)
+                            },
                             forwardShippingPriceStr = forwardShippingPriceStr,
                             onForwardShippingPriceChange = { forwardShippingPriceStr = it },
                             forwardTaxPriceStr = forwardTaxPriceStr,
@@ -2072,14 +2077,13 @@ fun AddPreorderDialog(
                     val parsedBase = basePriceStr.toDoubleOrNull()
                     val parsedShipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
                     val parsedDiscount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                    val parsedPrice = if (isPriceManuallyEdited && priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                        priceStr.toDoubleOrNull()!!
+                    val parsedTax = taxPriceStr.toDoubleOrNull() ?: 0.0
+                    val parsedPrice = if (isPriceManuallyEdited) {
+                        priceStr.toDoubleOrNull() ?: 0.0
                     } else if (parsedBase != null) {
-                        parsedBase + parsedShipping - parsedDiscount
-                    } else if (priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                        priceStr.toDoubleOrNull()!!
+                        parsedBase + parsedShipping + parsedTax - parsedDiscount
                     } else {
-                        0.0
+                        priceStr.toDoubleOrNull() ?: 0.0
                     }
                     val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
                     val hasForwarding = selectedAddr?.forwardingServiceId != null
@@ -2154,32 +2158,31 @@ fun EditPreorderDialog(
     val initialBase = pr.basePrice
     val initialShipping = pr.shippingPrice ?: 0.0
     val initialDiscount = pr.discountedAmount ?: 0.0
-    val initialCalc = if (initialBase != null) initialBase + initialShipping - initialDiscount else null
-    val isInitiallyAuto = pr.price <= 0.0 || (initialCalc != null && Math.abs(pr.price - initialCalc) < 0.01)
+    val initialTax = pr.taxPrice ?: 0.0
+    val initialCalc = if (initialBase != null) initialBase + initialShipping + initialTax - initialDiscount else null
+    val isInitiallyAuto = initialCalc != null && Math.abs(pr.price - initialCalc) < 0.01
 
     var isPriceManuallyEdited by remember(pr.id) { mutableStateOf(!isInitiallyAuto && pr.price > 0.0) }
     var priceStr by remember(pr.id) {
         mutableStateOf(
             if (pr.price > 0.0) {
                 if (pr.price % 1.0 == 0.0) pr.price.toLong().toString() else String.format(Locale.US, "%.2f", pr.price)
-            } else if (initialCalc != null) {
-                if (initialCalc % 1.0 == 0.0) initialCalc.toLong().toString() else String.format(Locale.US, "%.2f", initialCalc)
             } else {
                 ""
             }
         )
     }
 
-    val updateDynamicPrice: (String, String, String) -> Unit = { newBase, newDiscount, newShipping ->
-        if (!isPriceManuallyEdited || priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+    val updateDynamicPrice: (String, String, String, String) -> Unit = { newBase, newDiscount, newShipping, newTax ->
+        if (!isPriceManuallyEdited) {
             val base = newBase.toDoubleOrNull()
             if (base != null) {
                 val shipping = newShipping.toDoubleOrNull() ?: 0.0
                 val discount = newDiscount.toDoubleOrNull() ?: 0.0
-                val calc = base + shipping - discount
+                val tax = newTax.toDoubleOrNull() ?: 0.0
+                val calc = base + shipping + tax - discount
                 priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                isPriceManuallyEdited = false
-            } else if (newBase.isBlank() && !isPriceManuallyEdited) {
+            } else if (newBase.isBlank()) {
                 priceStr = ""
             }
         }
@@ -2374,18 +2377,7 @@ fun EditPreorderDialog(
                                 value = priceStr,
                                 onValueChange = { input ->
                                     priceStr = input
-                                    if (input.isBlank() || input == "0" || input == "0.0") {
-                                        isPriceManuallyEdited = false
-                                        val base = basePriceStr.toDoubleOrNull()
-                                        if (base != null) {
-                                            val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
-                                            val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                                            val calc = base + shipping - discount
-                                            priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                                        }
-                                    } else {
-                                        isPriceManuallyEdited = true
-                                    }
+                                    isPriceManuallyEdited = true
                                 },
                                 label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -2423,7 +2415,20 @@ fun EditPreorderDialog(
                                 }
                                 Switch(
                                     checked = reminderEnabled,
-                                    onCheckedChange = { reminderEnabled = it }
+                                    onCheckedChange = { enabled ->
+                                        reminderEnabled = enabled
+                                        if (enabled) {
+                                            val startCal = Calendar.getInstance().apply { timeInMillis = saleDateStart }
+                                            val hasTime = startCal.get(Calendar.HOUR_OF_DAY) != 0 || startCal.get(Calendar.MINUTE) != 0
+                                            if (hasTime) {
+                                                reminderHour = startCal.get(Calendar.HOUR_OF_DAY)
+                                                reminderMinute = startCal.get(Calendar.MINUTE)
+                                            } else {
+                                                reminderHour = if (pr.reminderHour in 0..23) pr.reminderHour else 8
+                                                reminderMinute = if (pr.reminderMinute in 0..59) pr.reminderMinute else 0
+                                            }
+                                        }
+                                    }
                                 )
                             }
 
@@ -2471,20 +2476,23 @@ fun EditPreorderDialog(
                             basePriceStr = basePriceStr,
                             onBasePriceChange = {
                                 basePriceStr = it
-                                updateDynamicPrice(it, discountedAmountStr, shippingPriceStr)
+                                updateDynamicPrice(it, discountedAmountStr, shippingPriceStr, taxPriceStr)
                             },
                             discountedAmountStr = discountedAmountStr,
                             onDiscountedAmountChange = {
                                 discountedAmountStr = it
-                                updateDynamicPrice(basePriceStr, it, shippingPriceStr)
+                                updateDynamicPrice(basePriceStr, it, shippingPriceStr, taxPriceStr)
                             },
                             shippingPriceStr = shippingPriceStr,
                             onShippingPriceChange = {
                                 shippingPriceStr = it
-                                updateDynamicPrice(basePriceStr, discountedAmountStr, it)
+                                updateDynamicPrice(basePriceStr, discountedAmountStr, it, taxPriceStr)
                             },
                             taxPriceStr = taxPriceStr,
-                            onTaxPriceChange = { taxPriceStr = it },
+                            onTaxPriceChange = {
+                                taxPriceStr = it
+                                updateDynamicPrice(basePriceStr, discountedAmountStr, shippingPriceStr, it)
+                            },
                             forwardShippingPriceStr = forwardShippingPriceStr,
                             onForwardShippingPriceChange = { forwardShippingPriceStr = it },
                             forwardTaxPriceStr = forwardTaxPriceStr,
@@ -2511,14 +2519,13 @@ fun EditPreorderDialog(
                         val parsedBase = basePriceStr.toDoubleOrNull()
                         val parsedShipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
                         val parsedDiscount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                        val parsedPrice = if (isPriceManuallyEdited && priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                            priceStr.toDoubleOrNull()!!
+                        val parsedTax = taxPriceStr.toDoubleOrNull() ?: 0.0
+                        val parsedPrice = if (isPriceManuallyEdited) {
+                            priceStr.toDoubleOrNull() ?: 0.0
                         } else if (parsedBase != null) {
-                            parsedBase + parsedShipping - parsedDiscount
-                        } else if (priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                            priceStr.toDoubleOrNull()!!
+                            parsedBase + parsedShipping + parsedTax - parsedDiscount
                         } else {
-                            pr.price
+                            priceStr.toDoubleOrNull() ?: pr.price
                         }
                         val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
                         val hasForwarding = selectedAddr?.forwardingServiceId != null
@@ -3459,9 +3466,13 @@ private fun GoogleCalendarStylePreorderPeriodPicker(
             onTimeSelected = { h, m ->
                 startHour = h
                 startMinute = m
-                if (areDatesSame && (h > endHour || (h == endHour && m > endMinute))) {
-                    endHour = (h + 1) % 24
-                    endMinute = m
+                val startMs = combineDateAndTime(startDateLong, h, m)
+                val endMs = startMs + 60 * 60 * 1000L
+                val endC = Calendar.getInstance().apply { timeInMillis = endMs }
+                endHour = endC.get(Calendar.HOUR_OF_DAY)
+                endMinute = endC.get(Calendar.MINUTE)
+                if (areDatesSame || endDateLong <= startDateLong + 24 * 60 * 60 * 1000L) {
+                    endDateLong = endMs
                 }
             },
             onDismiss = { showStartTimePicker = false }

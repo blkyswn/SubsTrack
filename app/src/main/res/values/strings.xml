@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">SubsTrack</string>
+    <string name="calendar_widget_name">Calendar Bento</string>
+    <string name="calendar_widget_description">Displays today\'s and upcoming book subscriptions and preorders.</string>
 </resources>

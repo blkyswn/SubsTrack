@@ -200,6 +200,14 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                 e.printStackTrace()
             }
         }
+
+        // Automatically update homescreen widget whenever scheduled subs, preorders, or user preferences change
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(rawScheduledState, rawPreordersState, userState) { _, _, _ -> }
+                .collect {
+                    com.example.widget.CalendarBentoWidgetProvider.triggerUpdate(application)
+                }
+        }
     }
 
     private suspend fun reconcileStatuses() {
@@ -604,8 +612,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             val cleanStartDate = if (isWishlist) 0L else startDate
             val cleanFinishDate = if (isWishlist) 0L else finishDate
 
-            val effectivePrice = if (price <= 0.0 && basePrice != null) {
-                basePrice + (shippingPrice ?: 0.0) - (discountedAmount ?: 0.0)
+            val effectivePrice = if (price < 0.0 && basePrice != null) {
+                basePrice + (shippingPrice ?: 0.0) + (taxPrice ?: 0.0) - (discountedAmount ?: 0.0)
             } else {
                 price
             }
@@ -754,8 +762,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateSubscriptionType(subscription: SubscriptionType, skipMethods: List<SubscriptionSkipMethod>? = null) {
         viewModelScope.launch {
-            val effectivePrice = if (subscription.price <= 0.0 && subscription.basePrice != null) {
-                subscription.basePrice + (subscription.shippingPrice ?: 0.0) - (subscription.discountedAmount ?: 0.0)
+            val effectivePrice = if (subscription.price < 0.0 && subscription.basePrice != null) {
+                subscription.basePrice + (subscription.shippingPrice ?: 0.0) + (subscription.taxPrice ?: 0.0) - (subscription.discountedAmount ?: 0.0)
             } else {
                 subscription.price
             }
@@ -1274,8 +1282,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             val today = System.currentTimeMillis()
             val finalStatus = if (today >= saleDateStart && today <= saleDateEnd) "Released" else status
 
-            val effectivePrice = if (price <= 0.0 && basePrice != null) {
-                basePrice + (shippingPrice ?: 0.0) - (discountedAmount ?: 0.0)
+            val effectivePrice = if (price < 0.0 && basePrice != null) {
+                basePrice + (shippingPrice ?: 0.0) + (taxPrice ?: 0.0) - (discountedAmount ?: 0.0)
             } else {
                 price
             }
@@ -1324,8 +1332,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     fun updatePreorder(preorder: Preorder) {
         viewModelScope.launch {
-            val effectivePrice = if (preorder.price <= 0.0 && preorder.basePrice != null) {
-                preorder.basePrice + (preorder.shippingPrice ?: 0.0) - (preorder.discountedAmount ?: 0.0)
+            val effectivePrice = if (preorder.price < 0.0 && preorder.basePrice != null) {
+                preorder.basePrice + (preorder.shippingPrice ?: 0.0) + (preorder.taxPrice ?: 0.0) - (preorder.discountedAmount ?: 0.0)
             } else {
                 preorder.price
             }

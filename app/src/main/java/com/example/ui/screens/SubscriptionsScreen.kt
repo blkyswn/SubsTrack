@@ -1198,7 +1198,7 @@ fun SubscriptionsScreen(
                             ScheduledItemRow(
                                 item = item,
                                 viewModel = viewModel,
-                                onPromptSkip = { itemToPromptSkip = it },
+                                onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
                                 onStateChanged = onScheduledStateChanged
                             )
                         }
@@ -1280,7 +1280,7 @@ fun SubscriptionsScreen(
                                         ScheduledItemRow(
                                             item = item,
                                             viewModel = viewModel,
-                                            onPromptSkip = { itemToPromptSkip = it },
+                                            onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
                                             onStateChanged = onScheduledStateChanged
                                         )
                                     }
@@ -1322,7 +1322,7 @@ fun SubscriptionsScreen(
                                         ScheduledItemRow(
                                             item = item,
                                             viewModel = viewModel,
-                                            onPromptSkip = { itemToPromptSkip = it },
+                                            onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
                                             onStateChanged = onScheduledStateChanged
                                         )
                                     }
@@ -1364,7 +1364,7 @@ fun SubscriptionsScreen(
                                         ScheduledItemRow(
                                             item = item,
                                             viewModel = viewModel,
-                                            onPromptSkip = { itemToPromptSkip = it },
+                                            onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
                                             onStateChanged = onScheduledStateChanged
                                         )
                                     }
@@ -1557,13 +1557,17 @@ fun SubscriptionsScreen(
 
         // Hoisted Skip Action Prompt Dialog
         itemToPromptSkip?.let { scheduledItem ->
-            SkipActionPromptDialog(
-                scheduledWithDetails = scheduledItem,
-                allSkipMethods = allSkipMethods,
-                allScheduled = rawScheduled,
-                viewModel = viewModel,
-                onDismiss = { itemToPromptSkip = null }
-            )
+            if (scheduledItem.scheduled.dueDate >= todayStart) {
+                SkipActionPromptDialog(
+                    scheduledWithDetails = scheduledItem,
+                    allSkipMethods = allSkipMethods,
+                    allScheduled = rawScheduled,
+                    viewModel = viewModel,
+                    onDismiss = { itemToPromptSkip = null }
+                )
+            } else {
+                itemToPromptSkip = null
+            }
         }
     }
 }
@@ -1744,7 +1748,16 @@ fun ScheduledItemRow(
                                     } else {
                                         val newScheduled = item.scheduled.copy(status = "Skipped", isSkipped = true)
                                         val msg = "$displayTitle: Skipped"
-                                        onPromptSkip?.invoke(item)
+                                        val todayStart = Calendar.getInstance().apply {
+                                            set(Calendar.HOUR_OF_DAY, 0)
+                                            set(Calendar.MINUTE, 0)
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }.timeInMillis
+                                        val isPast = item.scheduled.dueDate < todayStart
+                                        if (!isPast) {
+                                            onPromptSkip?.invoke(item)
+                                        }
                                         if (onStateChanged != null) {
                                             onStateChanged(item.scheduled, newScheduled, msg)
                                         } else {
@@ -2178,6 +2191,19 @@ fun SkipActionPromptDialog(
     viewModel: BookishViewModel? = null,
     onDismiss: () -> Unit
 ) {
+    val todayStart = remember {
+        java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    if (scheduledWithDetails.scheduled.dueDate < todayStart) {
+        SideEffect { onDismiss() }
+        return
+    }
+
     val context = LocalContext.current
     val bookstoreName = scheduledWithDetails.bookstore?.name?.takeIf { it.isNotBlank() }
         ?: scheduledWithDetails.subscriptionType?.title?.takeIf { it.isNotBlank() }
@@ -2960,6 +2986,32 @@ fun EditSubscriptionSkipDialog(
     var startDateMillis by remember { mutableStateOf(skip.skipStartDate) }
     var endDateMillis by remember { mutableStateOf(skip.skipEndDate) }
 
+    fun calculateSkipEndDate(startDate: Long, skipType: String, numberOfMonths: Int?): Long? {
+        return when {
+            skipType.equals("Each calendar year", ignoreCase = true) -> {
+                Calendar.getInstance().apply {
+                    timeInMillis = startDate
+                    val year = get(Calendar.YEAR)
+                    set(year, Calendar.DECEMBER, 31, 23, 59, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }.timeInMillis
+            }
+            skipType.equals("Every certain months", ignoreCase = true) -> {
+                val months = numberOfMonths?.takeIf { it > 0 } ?: 1
+                Calendar.getInstance().apply {
+                    timeInMillis = startDate
+                    add(Calendar.MONTH, months)
+                    add(Calendar.DAY_OF_MONTH, -1)
+                    set(Calendar.HOUR_OF_DAY, 23)
+                    set(Calendar.MINUTE, 59)
+                    set(Calendar.SECOND, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }.timeInMillis
+            }
+            else -> null
+        }
+    }
+
     var showStartDatePicker by remember { mutableStateOf(false) }
     var showEndDatePicker by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -3040,6 +3092,12 @@ fun EditSubscriptionSkipDialog(
                                         if (typeOption.equals("None", ignoreCase = true)) {
                                             numberOfSkipsStr = ""
                                             skipsLeftStr = ""
+                                        }
+                                        if (startDateMillis != null) {
+                                            val autoEnd = calculateSkipEndDate(startDateMillis!!, typeOption, subscription.numberOfMonths)
+                                            if (autoEnd != null) {
+                                                endDateMillis = autoEnd
+                                            }
                                         }
                                     }
                                 )
@@ -3233,7 +3291,10 @@ fun EditSubscriptionSkipDialog(
             initialDateMillis = startDateMillis ?: System.currentTimeMillis(),
             onDateSelected = { selected ->
                 startDateMillis = selected
-                if (endDateMillis != null && endDateMillis!! < selected) {
+                val autoEnd = calculateSkipEndDate(selected, selectedSkipType, subscription.numberOfMonths)
+                if (autoEnd != null) {
+                    endDateMillis = autoEnd
+                } else if (endDateMillis != null && endDateMillis!! < selected) {
                     endDateMillis = selected
                 }
             },
@@ -3914,16 +3975,16 @@ fun AddSubscriptionTypeDialog(
     var isPriceManuallyEdited by remember { mutableStateOf(false) }
     var priceStr by remember { mutableStateOf("") }
 
-    val updateDynamicPrice: (String, String, String) -> Unit = { newBase, newDiscount, newShipping ->
-        if (!isPriceManuallyEdited || priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+    val updateDynamicPrice: (String, String, String, String) -> Unit = { newBase, newDiscount, newShipping, newTax ->
+        if (!isPriceManuallyEdited) {
             val base = newBase.toDoubleOrNull()
             if (base != null) {
                 val shipping = newShipping.toDoubleOrNull() ?: 0.0
                 val discount = newDiscount.toDoubleOrNull() ?: 0.0
-                val calc = base + shipping - discount
+                val tax = newTax.toDoubleOrNull() ?: 0.0
+                val calc = base + shipping + tax - discount
                 priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                isPriceManuallyEdited = false
-            } else if (newBase.isBlank() && !isPriceManuallyEdited) {
+            } else if (newBase.isBlank()) {
                 priceStr = ""
             }
         }
@@ -4082,18 +4143,7 @@ fun AddSubscriptionTypeDialog(
                                     value = priceStr,
                                     onValueChange = { input ->
                                         priceStr = input
-                                        if (input.isBlank() || input == "0" || input == "0.0") {
-                                            isPriceManuallyEdited = false
-                                            val base = basePriceStr.toDoubleOrNull()
-                                            if (base != null) {
-                                                val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
-                                                val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                                                val calc = base + shipping - discount
-                                                priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                                            }
-                                        } else {
-                                            isPriceManuallyEdited = true
-                                        }
+                                        isPriceManuallyEdited = true
                                     },
                                     label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -4373,20 +4423,23 @@ fun AddSubscriptionTypeDialog(
                                 basePriceStr = basePriceStr,
                                 onBasePriceChange = {
                                     basePriceStr = it
-                                    updateDynamicPrice(it, discountedAmountStr, shippingPriceStr)
+                                    updateDynamicPrice(it, discountedAmountStr, shippingPriceStr, taxPriceStr)
                                 },
                                 discountedAmountStr = discountedAmountStr,
                                 onDiscountedAmountChange = {
                                     discountedAmountStr = it
-                                    updateDynamicPrice(basePriceStr, it, shippingPriceStr)
+                                    updateDynamicPrice(basePriceStr, it, shippingPriceStr, taxPriceStr)
                                 },
                                 shippingPriceStr = shippingPriceStr,
                                 onShippingPriceChange = {
                                     shippingPriceStr = it
-                                    updateDynamicPrice(basePriceStr, discountedAmountStr, it)
+                                    updateDynamicPrice(basePriceStr, discountedAmountStr, it, taxPriceStr)
                                 },
                                 taxPriceStr = taxPriceStr,
-                                onTaxPriceChange = { taxPriceStr = it },
+                                onTaxPriceChange = {
+                                    taxPriceStr = it
+                                    updateDynamicPrice(basePriceStr, discountedAmountStr, shippingPriceStr, it)
+                                },
                                 forwardShippingPriceStr = forwardShippingPriceStr,
                                 onForwardShippingPriceChange = { forwardShippingPriceStr = it },
                                 forwardTaxPriceStr = forwardTaxPriceStr,
@@ -4403,14 +4456,13 @@ fun AddSubscriptionTypeDialog(
                     val parsedBase = basePriceStr.toDoubleOrNull()
                     val parsedShipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
                     val parsedDiscount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                    val parsedPrice = if (isPriceManuallyEdited && priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                        priceStr.toDoubleOrNull()!!
+                    val parsedTax = taxPriceStr.toDoubleOrNull() ?: 0.0
+                    val parsedPrice = if (isPriceManuallyEdited) {
+                        priceStr.toDoubleOrNull() ?: 0.0
                     } else if (parsedBase != null) {
-                        parsedBase + parsedShipping - parsedDiscount
-                    } else if (priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                        priceStr.toDoubleOrNull()!!
+                        parsedBase + parsedShipping + parsedTax - parsedDiscount
                     } else {
-                        0.0
+                        priceStr.toDoubleOrNull() ?: 0.0
                     }
                     val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
                     val hasForwarding = selectedAddr?.forwardingServiceId != null
@@ -4496,32 +4548,31 @@ fun EditSubscriptionTypeDialog(
     val initialBase = sub.basePrice
     val initialShipping = sub.shippingPrice ?: 0.0
     val initialDiscount = sub.discountedAmount ?: 0.0
-    val initialCalc = if (initialBase != null) initialBase + initialShipping - initialDiscount else null
-    val isInitiallyAuto = sub.price <= 0.0 || (initialCalc != null && Math.abs(sub.price - initialCalc) < 0.01)
+    val initialTax = sub.taxPrice ?: 0.0
+    val initialCalc = if (initialBase != null) initialBase + initialShipping + initialTax - initialDiscount else null
+    val isInitiallyAuto = initialCalc != null && Math.abs(sub.price - initialCalc) < 0.01
 
     var isPriceManuallyEdited by remember { mutableStateOf(!isInitiallyAuto && sub.price > 0.0) }
     var priceStr by remember {
         mutableStateOf(
             if (sub.price > 0.0) {
                 if (sub.price % 1.0 == 0.0) sub.price.toLong().toString() else String.format(Locale.US, "%.2f", sub.price)
-            } else if (initialCalc != null) {
-                if (initialCalc % 1.0 == 0.0) initialCalc.toLong().toString() else String.format(Locale.US, "%.2f", initialCalc)
             } else {
                 ""
             }
         )
     }
 
-    val updateDynamicPrice: (String, String, String) -> Unit = { newBase, newDiscount, newShipping ->
-        if (!isPriceManuallyEdited || priceStr.isBlank() || priceStr == "0" || priceStr == "0.0") {
+    val updateDynamicPrice: (String, String, String, String) -> Unit = { newBase, newDiscount, newShipping, newTax ->
+        if (!isPriceManuallyEdited) {
             val base = newBase.toDoubleOrNull()
             if (base != null) {
                 val shipping = newShipping.toDoubleOrNull() ?: 0.0
                 val discount = newDiscount.toDoubleOrNull() ?: 0.0
-                val calc = base + shipping - discount
+                val tax = newTax.toDoubleOrNull() ?: 0.0
+                val calc = base + shipping + tax - discount
                 priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                isPriceManuallyEdited = false
-            } else if (newBase.isBlank() && !isPriceManuallyEdited) {
+            } else if (newBase.isBlank()) {
                 priceStr = ""
             }
         }
@@ -4698,18 +4749,7 @@ fun EditSubscriptionTypeDialog(
                                     value = priceStr,
                                     onValueChange = { input ->
                                         priceStr = input
-                                        if (input.isBlank() || input == "0" || input == "0.0") {
-                                            isPriceManuallyEdited = false
-                                            val base = basePriceStr.toDoubleOrNull()
-                                            if (base != null) {
-                                                val shipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
-                                                val discount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                                                val calc = base + shipping - discount
-                                                priceStr = if (calc % 1.0 == 0.0) calc.toLong().toString() else String.format(Locale.US, "%.2f", calc)
-                                            }
-                                        } else {
-                                            isPriceManuallyEdited = true
-                                        }
+                                        isPriceManuallyEdited = true
                                     },
                                     label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -4989,20 +5029,23 @@ fun EditSubscriptionTypeDialog(
                                 basePriceStr = basePriceStr,
                                 onBasePriceChange = {
                                     basePriceStr = it
-                                    updateDynamicPrice(it, discountedAmountStr, shippingPriceStr)
+                                    updateDynamicPrice(it, discountedAmountStr, shippingPriceStr, taxPriceStr)
                                 },
                                 discountedAmountStr = discountedAmountStr,
                                 onDiscountedAmountChange = {
                                     discountedAmountStr = it
-                                    updateDynamicPrice(basePriceStr, it, shippingPriceStr)
+                                    updateDynamicPrice(basePriceStr, it, shippingPriceStr, taxPriceStr)
                                 },
                                 shippingPriceStr = shippingPriceStr,
                                 onShippingPriceChange = {
                                     shippingPriceStr = it
-                                    updateDynamicPrice(basePriceStr, discountedAmountStr, it)
+                                    updateDynamicPrice(basePriceStr, discountedAmountStr, it, taxPriceStr)
                                 },
                                 taxPriceStr = taxPriceStr,
-                                onTaxPriceChange = { taxPriceStr = it },
+                                onTaxPriceChange = {
+                                    taxPriceStr = it
+                                    updateDynamicPrice(basePriceStr, discountedAmountStr, shippingPriceStr, it)
+                                },
                                 forwardShippingPriceStr = forwardShippingPriceStr,
                                 onForwardShippingPriceChange = { forwardShippingPriceStr = it },
                                 forwardTaxPriceStr = forwardTaxPriceStr,
@@ -5030,14 +5073,13 @@ fun EditSubscriptionTypeDialog(
                         val parsedBase = basePriceStr.toDoubleOrNull()
                         val parsedShipping = shippingPriceStr.toDoubleOrNull() ?: 0.0
                         val parsedDiscount = discountedAmountStr.toDoubleOrNull() ?: 0.0
-                        val parsedPrice = if (isPriceManuallyEdited && priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                            priceStr.toDoubleOrNull()!!
+                        val parsedTax = taxPriceStr.toDoubleOrNull() ?: 0.0
+                        val parsedPrice = if (isPriceManuallyEdited) {
+                            priceStr.toDoubleOrNull() ?: 0.0
                         } else if (parsedBase != null) {
-                            parsedBase + parsedShipping - parsedDiscount
-                        } else if (priceStr.isNotBlank() && priceStr.toDoubleOrNull() != null) {
-                            priceStr.toDoubleOrNull()!!
+                            parsedBase + parsedShipping + parsedTax - parsedDiscount
                         } else {
-                            sub.price
+                            priceStr.toDoubleOrNull() ?: sub.price
                         }
                         val selectedAddr = userAddresses.find { it.id == selectedShippingAddressId }
                         val hasForwarding = selectedAddr?.forwardingServiceId != null
@@ -5559,7 +5601,15 @@ fun EditScheduledSubscriptionDialog(
 
                         viewModel.updateScheduledSubscription(updatedScheduled)
 
-                        if (!wasSkipped && isNowSkipped) {
+                        val todayStart = Calendar.getInstance().apply {
+                            set(Calendar.HOUR_OF_DAY, 0)
+                            set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }.timeInMillis
+                        val isPast = dueDate < todayStart
+
+                        if (!wasSkipped && isNowSkipped && !isPast) {
                             onPromptSkip?.invoke(
                                 scheduledWithDetails.copy(scheduled = updatedScheduled)
                             )

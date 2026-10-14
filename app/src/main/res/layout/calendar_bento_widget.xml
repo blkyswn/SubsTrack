@@ -1,0 +1,351 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Background card -->
+    <ImageView
+        android:id="@+id/widget_bg_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_bento_bg"
+        android:contentDescription="@null" />
+
+    <!-- Content columns -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:baselineAligned="false"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="12dp"
+        android:weightSum="1">
+
+        <!-- LEFT COLUMN: Today Date & Today's Events -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.48"
+            android:orientation="vertical">
+
+            <!-- Day Name & Day Number Header -->
+            <TextView
+                android:id="@+id/widget_today_day_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="TODAY"
+                android:textColor="#D9FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/widget_today_day_number"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="14"
+                android:textColor="#FFFFFFFF"
+                android:textSize="32sp"
+                android:textStyle="bold"
+                android:includeFontPadding="false" />
+
+            <!-- Empty State for Today -->
+            <TextView
+                android:id="@+id/widget_today_empty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="No events today"
+                android:textColor="#B3FFFFFF"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <!-- Event 1 Today -->
+            <LinearLayout
+                android:id="@+id/widget_today_event_1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:background="@drawable/widget_chip_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="5dp"
+                android:paddingVertical="3dp"
+                android:visibility="gone">
+
+                <View
+                    android:layout_width="2.5dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/widget_vertical_bar" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/widget_today_event_1_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#FFFFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_today_event_1_time"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="9.5sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Event 2 Today -->
+            <LinearLayout
+                android:id="@+id/widget_today_event_2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:background="@drawable/widget_chip_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="5dp"
+                android:paddingVertical="3dp"
+                android:visibility="gone">
+
+                <View
+                    android:layout_width="2.5dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/widget_vertical_bar" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/widget_today_event_2_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#FFFFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_today_event_2_time"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="9.5sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Leftover count -->
+            <TextView
+                android:id="@+id/widget_today_more"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="#E6FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Divider space -->
+        <View
+            android:layout_width="10dp"
+            android:layout_height="match_parent" />
+
+        <!-- RIGHT COLUMN: Upcoming Events -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.52"
+            android:orientation="vertical">
+
+            <!-- Future Section Header -->
+            <TextView
+                android:id="@+id/widget_future_header"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="UPCOMING"
+                android:textColor="#D9FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <!-- Empty State for Future -->
+            <TextView
+                android:id="@+id/widget_future_empty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="No upcoming events"
+                android:textColor="#B3FFFFFF"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <!-- Event 1 Future -->
+            <LinearLayout
+                android:id="@+id/widget_future_event_1"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/widget_chip_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="5dp"
+                android:paddingVertical="3dp"
+                android:visibility="gone">
+
+                <View
+                    android:layout_width="2.5dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/widget_vertical_bar" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/widget_future_event_1_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#FFFFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_future_event_1_time"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="9.5sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Event 2 Future -->
+            <LinearLayout
+                android:id="@+id/widget_future_event_2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:background="@drawable/widget_chip_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="5dp"
+                android:paddingVertical="3dp"
+                android:visibility="gone">
+
+                <View
+                    android:layout_width="2.5dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/widget_vertical_bar" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/widget_future_event_2_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#FFFFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_future_event_2_time"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="9.5sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Event 3 Future -->
+            <LinearLayout
+                android:id="@+id/widget_future_event_3"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:background="@drawable/widget_chip_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="5dp"
+                android:paddingVertical="3dp"
+                android:visibility="gone">
+
+                <View
+                    android:layout_width="2.5dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/widget_vertical_bar" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/widget_future_event_3_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#FFFFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/widget_future_event_3_time"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="9.5sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Leftover count -->
+            <TextView
+                android:id="@+id/widget_future_more"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="#E6FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

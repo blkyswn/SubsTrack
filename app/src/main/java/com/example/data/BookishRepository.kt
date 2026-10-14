@@ -369,15 +369,15 @@ class BookishRepository(private val database: BookishDatabase) {
     suspend fun autoUpdateMissingPrices() {
         val subs = subscriptionTypeDao.getAllSubscriptionTypesList()
         for (sub in subs) {
-            if (sub.price <= 0.0 && sub.basePrice != null) {
-                val calculated = sub.basePrice + (sub.shippingPrice ?: 0.0) - (sub.discountedAmount ?: 0.0)
+            if (sub.price < 0.0 && sub.basePrice != null) {
+                val calculated = sub.basePrice + (sub.shippingPrice ?: 0.0) + (sub.taxPrice ?: 0.0) - (sub.discountedAmount ?: 0.0)
                 subscriptionTypeDao.update(sub.copy(price = calculated))
             }
         }
         val preorders = preorderDao.getAllPreordersList()
         for (pr in preorders) {
-            if (pr.price <= 0.0 && pr.basePrice != null) {
-                val calculated = pr.basePrice + (pr.shippingPrice ?: 0.0) - (pr.discountedAmount ?: 0.0)
+            if (pr.price < 0.0 && pr.basePrice != null) {
+                val calculated = pr.basePrice + (pr.shippingPrice ?: 0.0) + (pr.taxPrice ?: 0.0) - (pr.discountedAmount ?: 0.0)
                 preorderDao.update(pr.copy(price = calculated))
             }
         }
