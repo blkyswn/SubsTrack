@@ -345,6 +345,27 @@ data class Preorder(
     val forwardTaxPrice: Double? = null
 )
 
+fun Preorder.getEffectiveEndTimestamp(): Long {
+    val targetEndDate = if (rangedSaleDateEnd > 0L) rangedSaleDateEnd else rangedSaleDateStart
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = targetEndDate }
+    val hasSpecificTime = cal.get(java.util.Calendar.HOUR_OF_DAY) != 0 || cal.get(java.util.Calendar.MINUTE) != 0
+    return if (hasSpecificTime) {
+        targetEndDate
+    } else {
+        cal.apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 23)
+            set(java.util.Calendar.MINUTE, 59)
+            set(java.util.Calendar.SECOND, 59)
+            set(java.util.Calendar.MILLISECOND, 999)
+        }.timeInMillis
+    }
+}
+
+fun Preorder.isEndPassed(now: Long = System.currentTimeMillis()): Boolean {
+    return now >= getEffectiveEndTimestamp()
+}
+
+
 @Entity(
     tableName = "packages",
     indices = [

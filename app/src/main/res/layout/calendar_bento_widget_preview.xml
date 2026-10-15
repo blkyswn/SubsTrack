@@ -73,11 +73,12 @@
                 android:paddingHorizontal="5dp"
                 android:paddingVertical="3dp">
 
-                <View
+                <ImageView
                     android:layout_width="2.5dp"
                     android:layout_height="match_parent"
                     android:layout_marginEnd="4dp"
-                    android:background="@drawable/widget_vertical_bar" />
+                    android:background="@drawable/widget_vertical_bar"
+                    android:contentDescription="@null" />
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -117,11 +118,12 @@
                 android:paddingHorizontal="5dp"
                 android:paddingVertical="3dp">
 
-                <View
+                <ImageView
                     android:layout_width="2.5dp"
                     android:layout_height="match_parent"
                     android:layout_marginEnd="4dp"
-                    android:background="@drawable/widget_vertical_bar" />
+                    android:background="@drawable/widget_vertical_bar"
+                    android:contentDescription="@null" />
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -152,7 +154,7 @@
         </LinearLayout>
 
         <!-- Divider space -->
-        <View
+        <FrameLayout
             android:layout_width="10dp"
             android:layout_height="match_parent" />
 
@@ -204,11 +206,12 @@
                     android:paddingHorizontal="5dp"
                     android:paddingVertical="3dp">
 
-                    <View
+                    <ImageView
                         android:layout_width="2.5dp"
                         android:layout_height="match_parent"
                         android:layout_marginEnd="4dp"
-                        android:background="@drawable/widget_vertical_bar" />
+                        android:background="@drawable/widget_vertical_bar"
+                        android:contentDescription="@null" />
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -248,11 +251,12 @@
                     android:paddingHorizontal="5dp"
                     android:paddingVertical="3dp">
 
-                    <View
+                    <ImageView
                         android:layout_width="2.5dp"
                         android:layout_height="match_parent"
                         android:layout_marginEnd="4dp"
-                        android:background="@drawable/widget_vertical_bar" />
+                        android:background="@drawable/widget_vertical_bar"
+                        android:contentDescription="@null" />
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -308,11 +312,12 @@
                     android:paddingHorizontal="5dp"
                     android:paddingVertical="3dp">
 
-                    <View
+                    <ImageView
                         android:layout_width="2.5dp"
                         android:layout_height="match_parent"
                         android:layout_marginEnd="4dp"
-                        android:background="@drawable/widget_vertical_bar" />
+                        android:background="@drawable/widget_vertical_bar"
+                        android:contentDescription="@null" />
 
                     <LinearLayout
                         android:layout_width="0dp"

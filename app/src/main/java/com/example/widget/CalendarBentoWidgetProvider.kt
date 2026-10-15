@@ -27,9 +27,13 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         super.onUpdate(context, appWidgetManager, appWidgetIds)
-        for (widgetId in appWidgetIds) {
-            updateAppWidget(context, appWidgetManager, widgetId)
+        if (appWidgetIds.isEmpty()) return
+        val pendingResult = try {
+            goAsync()
+        } catch (_: Exception) {
+            null
         }
+        updateWidgetsInternal(context, appWidgetManager, appWidgetIds, pendingResult)
     }
 
     override fun onAppWidgetOptionsChanged(
@@ -39,7 +43,12 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
         newOptions: Bundle?
     ) {
         super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
-        updateAppWidget(context, appWidgetManager, appWidgetId)
+        val pendingResult = try {
+            goAsync()
+        } catch (_: Exception) {
+            null
+        }
+        updateWidgetsInternal(context, appWidgetManager, intArrayOf(appWidgetId), pendingResult)
     }
 
     override fun onEnabled(context: Context) {
@@ -59,13 +68,12 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
         }
     }
 
-    private fun updateAppWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
-        val pendingResult = try {
-            goAsync()
-        } catch (_: Exception) {
-            null
-        }
-
+    private fun updateWidgetsInternal(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetIds: IntArray,
+        pendingResult: PendingResult?
+    ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val db = BookishDatabase.getDatabase(context)
@@ -430,7 +438,9 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                     }
                 }
 
-                appWidgetManager.updateAppWidget(appWidgetId, views)
+                for (widgetId in appWidgetIds) {
+                    appWidgetManager.updateAppWidget(widgetId, views)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("CalendarBentoWidget", "Error updating widget", e)
             } finally {
@@ -509,9 +519,7 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                 val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
                 if (appWidgetIds != null && appWidgetIds.isNotEmpty()) {
                     val provider = CalendarBentoWidgetProvider()
-                    for (widgetId in appWidgetIds) {
-                        provider.updateAppWidget(context, appWidgetManager, widgetId)
-                    }
+                    provider.updateWidgetsInternal(context, appWidgetManager, appWidgetIds, null)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("CalendarBentoWidget", "Error triggering widget update", e)

@@ -439,4 +439,103 @@ class ExampleRobolectricTest {
     com.example.widget.CalendarBentoWidgetProvider.triggerUpdate(context)
     org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
   }
+
+  @Test
+  fun `test widget layouts inflate without error`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val rvWidget = android.widget.RemoteViews(context.packageName, R.layout.calendar_bento_widget)
+    val viewWidget = rvWidget.apply(context, null)
+    org.junit.Assert.assertNotNull(viewWidget)
+
+    val rvPreview = android.widget.RemoteViews(context.packageName, R.layout.calendar_bento_widget_preview)
+    val viewPreview = rvPreview.apply(context, null)
+    org.junit.Assert.assertNotNull(viewPreview)
+  }
+
+  @Test
+  fun `test widget actions apply cleanly on inflated view`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val rvWidget = android.widget.RemoteViews(context.packageName, R.layout.calendar_bento_widget)
+    rvWidget.setInt(R.id.widget_bg_image, "setColorFilter", -0x2b5c8d) // 0xFFD4A373
+    rvWidget.setTextViewText(R.id.widget_today_day_name, "MONDAY")
+    rvWidget.setTextViewText(R.id.widget_today_day_number, "15")
+    rvWidget.setViewVisibility(R.id.widget_today_empty, android.view.View.GONE)
+    rvWidget.setViewVisibility(R.id.widget_today_event_1, android.view.View.VISIBLE)
+    rvWidget.setTextViewText(R.id.widget_today_event_1_title, "Test Book ($10.00)")
+    rvWidget.setTextViewText(R.id.widget_today_event_1_time, "Starts at 9:00")
+    val view = rvWidget.apply(context, null)
+    org.junit.Assert.assertNotNull(view)
+  }
+
+  @Test
+  fun `test preorder status changes to released when end date and end time passes`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+    val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+    repo.checkAndPrepopulate(com.example.utils.AppFolderManager.getDefaultAppFolder(context))
+    val viewModel = com.example.ui.viewmodel.BookishViewModel(app)
+
+    val now = System.currentTimeMillis()
+    val pastStart = now - 2 * 3600 * 1000L // 2 hours ago
+    val pastEnd = now - 1 * 3600 * 1000L   // 1 hour ago
+    val futureStart = now + 1 * 3600 * 1000L
+    val futureEnd = now + 2 * 3600 * 1000L
+
+    // 1. Preorder in the past with status Upcoming
+    val pastPreorderId = repo.insertPreorder(
+      com.example.data.Preorder(
+        bookstoreId = 1,
+        picturePath = null,
+        bookTitle = "Past End Book",
+        bookAuthor = "Author A",
+        description = "Desc",
+        price = 25.0,
+        rangedSaleDateStart = pastStart,
+        rangedSaleDateEnd = pastEnd,
+        status = "Upcoming"
+      )
+    ).toInt()
+
+    // 2. Preorder in the future with status Upcoming
+    val futurePreorderId = repo.insertPreorder(
+      com.example.data.Preorder(
+        bookstoreId = 1,
+        picturePath = null,
+        bookTitle = "Future End Book",
+        bookAuthor = "Author B",
+        description = "Desc",
+        price = 30.0,
+        rangedSaleDateStart = futureStart,
+        rangedSaleDateEnd = futureEnd,
+        status = "Upcoming"
+      )
+    ).toInt()
+
+    // 3. Preorder in the past that was already marked Preordered
+    val preorderedId = repo.insertPreorder(
+      com.example.data.Preorder(
+        bookstoreId = 1,
+        picturePath = null,
+        bookTitle = "Already Preordered Book",
+        bookAuthor = "Author C",
+        description = "Desc",
+        price = 35.0,
+        rangedSaleDateStart = pastStart,
+        rangedSaleDateEnd = pastEnd,
+        status = "Preordered"
+      )
+    ).toInt()
+
+    // Reconcile statuses
+    viewModel.reconcileStatuses()
+
+    val updatedPast = db.preorderDao().getPreorderById(pastPreorderId)
+    val updatedFuture = db.preorderDao().getPreorderById(futurePreorderId)
+    val updatedPreordered = db.preorderDao().getPreorderById(preorderedId)
+
+    org.junit.Assert.assertEquals("Upcoming preorder past end date/time should be Released", "Released", updatedPast?.status)
+    org.junit.Assert.assertEquals("Upcoming preorder before end date/time should remain Upcoming", "Upcoming", updatedFuture?.status)
+    org.junit.Assert.assertEquals("Already preordered item should not be changed to Released", "Preordered", updatedPreordered?.status)
+  }
 }

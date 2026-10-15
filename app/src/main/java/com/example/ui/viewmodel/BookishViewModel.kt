@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -172,6 +174,16 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val rawPreordersState: StateFlow<List<PreorderWithBookstore>> = repository.preordersWithBookstoreFlow
+        .map { list ->
+            val now = System.currentTimeMillis()
+            list.map { item ->
+                if (item.preorder.status.equals("Upcoming", ignoreCase = true) && item.preorder.isEndPassed(now)) {
+                    item.copy(preorder = item.preorder.copy(status = "Released"))
+                } else {
+                    item
+                }
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     init {
@@ -208,9 +220,17 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     com.example.widget.CalendarBentoWidgetProvider.triggerUpdate(application)
                 }
         }
+
+        // Periodic ticker to reconcile statuses in DB while app is running (e.g. when preorder end time passes)
+        viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                reconcileStatuses()
+                delay(30_000L)
+            }
+        }
     }
 
-    private suspend fun reconcileStatuses() {
+    suspend fun reconcileStatuses() {
         try {
             val now = System.currentTimeMillis()
             val scheduledList = repository.scheduledWithDetailsFlow.first()
@@ -224,7 +244,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             val preordersList = repository.preordersWithBookstoreFlow.first()
             for (item in preordersList) {
                 if (item.preorder.status.equals("Upcoming", ignoreCase = true)) {
-                    if (now >= item.preorder.rangedSaleDateStart && now <= item.preorder.rangedSaleDateEnd) {
+                    if (item.preorder.isEndPassed(now)) {
                         repository.updatePreorder(
                             item.preorder.copy(status = "Released")
                         )
@@ -342,7 +362,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     // 3. FILTERED Preorders
     val filteredPreordersState: StateFlow<List<PreorderWithBookstore>> = combine(
-        repository.preordersWithBookstoreFlow,
+        rawPreordersState,
         preorderFiltersFlow
     ) { list, filters ->
         list.filter { item ->
@@ -1280,7 +1300,18 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
     ) {
         viewModelScope.launch {
             val today = System.currentTimeMillis()
-            val finalStatus = if (today >= saleDateStart && today <= saleDateEnd) "Released" else status
+            val tempPreorder = Preorder(
+                bookstoreId = bookstoreId,
+                picturePath = picturePath,
+                bookTitle = bookTitle,
+                bookAuthor = bookAuthor,
+                description = description,
+                price = 0.0,
+                rangedSaleDateStart = saleDateStart,
+                rangedSaleDateEnd = saleDateEnd,
+                status = status
+            )
+            val finalStatus = if (status.equals("Upcoming", ignoreCase = true) && tempPreorder.isEndPassed(today)) "Released" else status
 
             val effectivePrice = if (price < 0.0 && basePrice != null) {
                 basePrice + (shippingPrice ?: 0.0) + (taxPrice ?: 0.0) - (discountedAmount ?: 0.0)
@@ -1332,12 +1363,14 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
 
     fun updatePreorder(preorder: Preorder) {
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val finalStatus = if (preorder.status.equals("Upcoming", ignoreCase = true) && preorder.isEndPassed(now)) "Released" else preorder.status
             val effectivePrice = if (preorder.price < 0.0 && preorder.basePrice != null) {
                 preorder.basePrice + (preorder.shippingPrice ?: 0.0) + (preorder.taxPrice ?: 0.0) - (preorder.discountedAmount ?: 0.0)
             } else {
                 preorder.price
             }
-            val preorderToSave = preorder.copy(price = effectivePrice)
+            val preorderToSave = preorder.copy(price = effectivePrice, status = finalStatus)
             repository.updatePreorder(preorderToSave)
             com.example.receiver.ReminderScheduler.cancelPreorderReminder(getApplication(), preorder.id)
             if (preorder.reminderEnabled) {

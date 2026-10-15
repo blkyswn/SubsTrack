@@ -2667,15 +2667,15 @@ fun isUpcomingEvent(event: UpcomingEvent, now: Long): Boolean {
     val hasSpecificTime = event.hasTime || event.reminderHour != null || hasTimestampTime
 
     val eventEndTimestampMs: Long = if (hasSpecificTime) {
-        if (event.reminderHour != null) {
+        if (hasTimestampTime) {
+            targetEndDate
+        } else if (event.hasTime && event.reminderHour != null) {
             val cal = Calendar.getInstance().apply { timeInMillis = targetEndDate }
             cal.set(Calendar.HOUR_OF_DAY, event.reminderHour)
             cal.set(Calendar.MINUTE, event.reminderMinute ?: 0)
             cal.set(Calendar.SECOND, 59)
             cal.set(Calendar.MILLISECOND, 999)
             cal.timeInMillis
-        } else if (hasTimestampTime) {
-            targetEndDate
         } else {
             val cal = Calendar.getInstance().apply { timeInMillis = targetEndDate }
             cal.set(Calendar.HOUR_OF_DAY, 23)

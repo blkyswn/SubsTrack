@@ -1305,7 +1305,7 @@ fun PreorderItemRow(
                             false
                         }
                         "preordered" -> {
-                            val prevStatus = if (System.currentTimeMillis() >= currentPreorder.rangedSaleDateEnd) "Released" else "Upcoming"
+                            val prevStatus = if (currentPreorder.isEndPassed()) "Released" else "Upcoming"
                             val newPreorder = currentPreorder.copy(
                                 status = prevStatus,
                                 shippingAddressId = currentPreorder.shippingAddressId
@@ -1804,8 +1804,18 @@ fun AddPreorderDialog(
     }
 
     LaunchedEffect(saleDateStart, saleDateEnd) {
-        val targetDate = if (saleDateEnd > 0L) saleDateEnd else saleDateStart
-        status = if (targetDate > System.currentTimeMillis()) "Upcoming" else "Released"
+        val temp = Preorder(
+            bookstoreId = 0,
+            picturePath = null,
+            bookTitle = "",
+            bookAuthor = "",
+            description = "",
+            price = 0.0,
+            rangedSaleDateStart = saleDateStart,
+            rangedSaleDateEnd = saleDateEnd,
+            status = "Upcoming"
+        )
+        status = if (temp.isEndPassed()) "Released" else "Upcoming"
     }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
