@@ -567,4 +567,21 @@ class ExampleRobolectricTest {
     org.junit.Assert.assertTrue(isoCountries.contains("United States"))
     org.junit.Assert.assertTrue(isoCountries.contains("United Kingdom"))
   }
+
+  @Test
+  fun `test widget theme colors for all combos`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val combos = listOf("summer", "cozy", "winter", "serenity", "green_serenity", "blood_moon", "earthy_harmony", "chocolate_sunset", "red_sunburst", "earthy_forest", "deep_sea", "soft_lavender", "default")
+    for (combo in combos) {
+      val user = com.example.data.User(id = 1, username = "Test", profilePic = null, currency = "USD", language = "English", themeCombo = combo, themeMode = "light")
+      val colorsLight = com.example.widget.WidgetThemeUtils.getThemeColors(context, user)
+      org.junit.Assert.assertNotEquals(0, colorsLight.primary)
+      org.junit.Assert.assertNotEquals(0, colorsLight.surface)
+
+      val userDark = com.example.data.User(id = 1, username = "Test", profilePic = null, currency = "USD", language = "English", themeCombo = combo, themeMode = "dark")
+      val colorsDark = com.example.widget.WidgetThemeUtils.getThemeColors(context, userDark)
+      org.junit.Assert.assertNotEquals(0, colorsDark.primary)
+      org.junit.Assert.assertNotEquals(0, colorsDark.surface)
+    }
+  }
 }

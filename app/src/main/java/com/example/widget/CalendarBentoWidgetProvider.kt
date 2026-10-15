@@ -198,9 +198,8 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                 val views = RemoteViews(context.packageName, R.layout.calendar_bento_widget)
 
                 // Background tint matching user theme
-                val isDarkMode = user?.themeMode == "dark"
-                val primaryColor = getThemePrimaryColor(user?.themeCombo, isDarkMode)
-                views.setInt(R.id.widget_bg_image, "setColorFilter", primaryColor)
+                val themeColors = WidgetThemeUtils.getThemeColors(context, user)
+                views.setInt(R.id.widget_bg_image, "setColorFilter", themeColors.primary)
 
                 // Open App on Click
                 val clickIntent = Intent(context, MainActivity::class.java).apply {
