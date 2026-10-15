@@ -1,0 +1,575 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_calendar_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="6dp">
+
+    <!-- Card Background -->
+    <ImageView
+        android:id="@+id/widget_cal_bg_card"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:src="@drawable/widget_calendar_bg"
+        android:scaleType="fitXY"
+        android:contentDescription="@null" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <!-- Header: Prev, Title, Next, Toggle -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="36dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/widget_cal_prev"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_chevron_left"
+                android:contentDescription="Previous" />
+
+            <TextView
+                android:id="@+id/widget_cal_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="October 2026"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#FF1F1F1F"
+                android:gravity="center"
+                android:singleLine="true" />
+
+            <ImageView
+                android:id="@+id/widget_cal_next"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_chevron_right"
+                android:contentDescription="Next" />
+
+            <ImageView
+                android:id="@+id/widget_cal_toggle"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_expand_more"
+                android:contentDescription="Toggle Weekly or Monthly" />
+        </LinearLayout>
+
+        <!-- Weekday Headers -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="4dp">
+
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="S" android:textSize="11sp" android:textStyle="bold" android:textColor="#88707070" android:gravity="center" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="M" android:textSize="11sp" android:textStyle="bold" android:textColor="#88707070" android:gravity="center" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="T" android:textSize="11sp" android:textStyle="bold" android:textColor="#88707070" android:gravity="center" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="W" android:textSize="11sp" android:textStyle="bold" android:textColor="#88707070" android:gravity="center" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="T" android:textSize="11sp" android:textStyle="bold" android:textColor="#88707070" android:gravity="center" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="F" android:textSize="11sp" android:textStyle="bold" android:textColor="#88707070" android:gravity="center" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="S" android:textSize="11sp" android:textStyle="bold" android:textColor="#88707070" android:gravity="center" />
+        </LinearLayout>
+
+        <!-- WEEKLY CONTAINER -->
+        <LinearLayout
+            android:id="@+id/widget_weekly_container"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:visibility="visible">
+
+            <!-- Day 1 -->
+            <FrameLayout
+                android:id="@+id/widget_wcell_1"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_margin="1.5dp">
+                <ImageView android:id="@+id/widget_wbg_1" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:id="@+id/widget_wtoday_1" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:id="@+id/widget_wday_1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="5dp" android:text="1" android:textSize="12sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <LinearLayout android:id="@+id/widget_wdots_1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:orientation="horizontal">
+                    <ImageView android:id="@+id/widget_wdot1_1" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot2_1" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot3_1" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- Day 2 -->
+            <FrameLayout
+                android:id="@+id/widget_wcell_2"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_margin="1.5dp">
+                <ImageView android:id="@+id/widget_wbg_2" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:id="@+id/widget_wtoday_2" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:id="@+id/widget_wday_2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="5dp" android:text="2" android:textSize="12sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <LinearLayout android:id="@+id/widget_wdots_2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:orientation="horizontal">
+                    <ImageView android:id="@+id/widget_wdot1_2" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot2_2" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot3_2" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- Day 3 -->
+            <FrameLayout
+                android:id="@+id/widget_wcell_3"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_margin="1.5dp">
+                <ImageView android:id="@+id/widget_wbg_3" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:id="@+id/widget_wtoday_3" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:id="@+id/widget_wday_3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="5dp" android:text="3" android:textSize="12sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <LinearLayout android:id="@+id/widget_wdots_3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:orientation="horizontal">
+                    <ImageView android:id="@+id/widget_wdot1_3" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot2_3" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot3_3" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- Day 4 -->
+            <FrameLayout
+                android:id="@+id/widget_wcell_4"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_margin="1.5dp">
+                <ImageView android:id="@+id/widget_wbg_4" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:id="@+id/widget_wtoday_4" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:id="@+id/widget_wday_4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="5dp" android:text="4" android:textSize="12sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <LinearLayout android:id="@+id/widget_wdots_4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:orientation="horizontal">
+                    <ImageView android:id="@+id/widget_wdot1_4" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot2_4" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot3_4" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- Day 5 -->
+            <FrameLayout
+                android:id="@+id/widget_wcell_5"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_margin="1.5dp">
+                <ImageView android:id="@+id/widget_wbg_5" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:id="@+id/widget_wtoday_5" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:id="@+id/widget_wday_5" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="5dp" android:text="5" android:textSize="12sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <LinearLayout android:id="@+id/widget_wdots_5" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:orientation="horizontal">
+                    <ImageView android:id="@+id/widget_wdot1_5" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot2_5" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot3_5" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- Day 6 -->
+            <FrameLayout
+                android:id="@+id/widget_wcell_6"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_margin="1.5dp">
+                <ImageView android:id="@+id/widget_wbg_6" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:id="@+id/widget_wtoday_6" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:id="@+id/widget_wday_6" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="5dp" android:text="6" android:textSize="12sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <LinearLayout android:id="@+id/widget_wdots_6" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:orientation="horizontal">
+                    <ImageView android:id="@+id/widget_wdot1_6" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot2_6" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot3_6" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- Day 7 -->
+            <FrameLayout
+                android:id="@+id/widget_wcell_7"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_margin="1.5dp">
+                <ImageView android:id="@+id/widget_wbg_7" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:id="@+id/widget_wtoday_7" android:layout_width="22dp" android:layout_height="22dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:id="@+id/widget_wday_7" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="5dp" android:text="7" android:textSize="12sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <LinearLayout android:id="@+id/widget_wdots_7" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:orientation="horizontal">
+                    <ImageView android:id="@+id/widget_wdot1_7" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot2_7" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_wdot3_7" android:layout_width="5dp" android:layout_height="5dp" android:layout_margin="1dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </LinearLayout>
+            </FrameLayout>
+
+        </LinearLayout>
+
+        <!-- MONTHLY CONTAINER (6 rows x 7 days = 42 cells) -->
+        <LinearLayout
+            android:id="@+id/widget_monthly_container"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <!-- Row 1: cells 1-7 -->
+            <LinearLayout
+                android:id="@+id/widget_mrow_1"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+                <!-- Cell 1 -->
+                <FrameLayout android:id="@+id/widget_mcell_1" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_1" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_1" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="1" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_1" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 2 -->
+                <FrameLayout android:id="@+id/widget_mcell_2" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_2" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_2" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="2" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_2" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 3 -->
+                <FrameLayout android:id="@+id/widget_mcell_3" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_3" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_3" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="3" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_3" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 4 -->
+                <FrameLayout android:id="@+id/widget_mcell_4" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_4" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_4" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="4" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_4" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 5 -->
+                <FrameLayout android:id="@+id/widget_mcell_5" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_5" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_5" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_5" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="5" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_5" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 6 -->
+                <FrameLayout android:id="@+id/widget_mcell_6" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_6" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_6" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_6" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="6" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_6" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 7 -->
+                <FrameLayout android:id="@+id/widget_mcell_7" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_7" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_7" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_7" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="7" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_7" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <!-- Row 2: cells 8-14 -->
+            <LinearLayout
+                android:id="@+id/widget_mrow_2"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+                <!-- Cell 8 -->
+                <FrameLayout android:id="@+id/widget_mcell_8" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_8" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_8" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_8" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="8" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_8" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 9 -->
+                <FrameLayout android:id="@+id/widget_mcell_9" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_9" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_9" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_9" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="9" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_9" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 10 -->
+                <FrameLayout android:id="@+id/widget_mcell_10" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_10" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_10" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_10" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="10" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_10" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 11 -->
+                <FrameLayout android:id="@+id/widget_mcell_11" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_11" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_11" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_11" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="11" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_11" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 12 -->
+                <FrameLayout android:id="@+id/widget_mcell_12" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_12" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_12" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_12" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="12" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_12" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 13 -->
+                <FrameLayout android:id="@+id/widget_mcell_13" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_13" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_13" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_13" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="13" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_13" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 14 -->
+                <FrameLayout android:id="@+id/widget_mcell_14" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_14" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_14" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_14" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="14" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_14" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <!-- Row 3: cells 15-21 -->
+            <LinearLayout
+                android:id="@+id/widget_mrow_3"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+                <!-- Cell 15 -->
+                <FrameLayout android:id="@+id/widget_mcell_15" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_15" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_15" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_15" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="15" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_15" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 16 -->
+                <FrameLayout android:id="@+id/widget_mcell_16" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_16" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_16" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_16" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="16" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_16" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 17 -->
+                <FrameLayout android:id="@+id/widget_mcell_17" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_17" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_17" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_17" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="17" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_17" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 18 -->
+                <FrameLayout android:id="@+id/widget_mcell_18" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_18" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_18" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_18" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="18" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_18" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 19 -->
+                <FrameLayout android:id="@+id/widget_mcell_19" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_19" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_19" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_19" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="19" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_19" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 20 -->
+                <FrameLayout android:id="@+id/widget_mcell_20" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_20" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_20" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_20" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="20" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_20" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 21 -->
+                <FrameLayout android:id="@+id/widget_mcell_21" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_21" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_21" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_21" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="21" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_21" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <!-- Row 4: cells 22-28 -->
+            <LinearLayout
+                android:id="@+id/widget_mrow_4"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+                <!-- Cell 22 -->
+                <FrameLayout android:id="@+id/widget_mcell_22" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_22" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_22" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_22" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="22" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_22" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 23 -->
+                <FrameLayout android:id="@+id/widget_mcell_23" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_23" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_23" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_23" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="23" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_23" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 24 -->
+                <FrameLayout android:id="@+id/widget_mcell_24" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_24" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_24" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_24" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="24" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_24" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 25 -->
+                <FrameLayout android:id="@+id/widget_mcell_25" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_25" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_25" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_25" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="25" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_25" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 26 -->
+                <FrameLayout android:id="@+id/widget_mcell_26" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_26" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_26" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_26" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="26" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_26" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 27 -->
+                <FrameLayout android:id="@+id/widget_mcell_27" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_27" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_27" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_27" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="27" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_27" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 28 -->
+                <FrameLayout android:id="@+id/widget_mcell_28" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_28" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_28" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_28" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="28" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_28" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <!-- Row 5: cells 29-35 -->
+            <LinearLayout
+                android:id="@+id/widget_mrow_5"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+                <!-- Cell 29 -->
+                <FrameLayout android:id="@+id/widget_mcell_29" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_29" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_29" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_29" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="29" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_29" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 30 -->
+                <FrameLayout android:id="@+id/widget_mcell_30" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_30" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_30" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_30" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="30" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_30" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 31 -->
+                <FrameLayout android:id="@+id/widget_mcell_31" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_31" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_31" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_31" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="31" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_31" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 32 -->
+                <FrameLayout android:id="@+id/widget_mcell_32" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_32" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_32" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_32" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_32" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 33 -->
+                <FrameLayout android:id="@+id/widget_mcell_33" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_33" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_33" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_33" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_33" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 34 -->
+                <FrameLayout android:id="@+id/widget_mcell_34" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_34" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_34" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_34" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_34" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 35 -->
+                <FrameLayout android:id="@+id/widget_mcell_35" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_35" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_35" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_35" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_35" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <!-- Row 6: cells 36-42 -->
+            <LinearLayout
+                android:id="@+id/widget_mrow_6"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+                <!-- Cell 36 -->
+                <FrameLayout android:id="@+id/widget_mcell_36" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_36" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_36" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_36" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_36" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 37 -->
+                <FrameLayout android:id="@+id/widget_mcell_37" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_37" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_37" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_37" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_37" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 38 -->
+                <FrameLayout android:id="@+id/widget_mcell_38" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_38" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_38" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_38" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_38" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 39 -->
+                <FrameLayout android:id="@+id/widget_mcell_39" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_39" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_39" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_39" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_39" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 40 -->
+                <FrameLayout android:id="@+id/widget_mcell_40" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_40" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_40" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_40" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_40" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 41 -->
+                <FrameLayout android:id="@+id/widget_mcell_41" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_41" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_41" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_41" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_41" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+                <!-- Cell 42 -->
+                <FrameLayout android:id="@+id/widget_mcell_42" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
+                    <ImageView android:id="@+id/widget_mbg_42" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_bg" android:scaleType="fitXY" android:contentDescription="@null" />
+                    <ImageView android:id="@+id/widget_mtoday_42" android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="center" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                    <TextView android:id="@+id/widget_mday_42" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:text="" android:textSize="11sp" android:textStyle="bold" android:textColor="#FF222222" />
+                    <ImageView android:id="@+id/widget_mdot_42" android:layout_width="4dp" android:layout_height="4dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_dot" android:contentDescription="@null" />
+                </FrameLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

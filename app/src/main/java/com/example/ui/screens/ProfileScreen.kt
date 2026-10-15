@@ -2287,23 +2287,20 @@ private fun AddressFormDialog(
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     val allCountries = remember {
-        val isoCountries = Locale.getISOCountries()
-            .map { Locale("", it).displayCountry }
+        Locale.getISOCountries()
+            .map { Locale("", it).getDisplayCountry(Locale.ENGLISH) }
             .filter { it.isNotBlank() }
             .distinct()
             .sorted()
-        if (isoCountries.isNotEmpty()) isoCountries else listOf(
-            "Australia", "Austria", "Belgium", "Brazil", "Canada", "China", "Denmark",
-            "Finland", "France", "Germany", "Hong Kong", "Ireland", "Italy", "Japan",
-            "Mexico", "Netherlands", "New Zealand", "Norway", "Poland", "Portugal",
-            "Singapore", "South Korea", "Spain", "Sweden", "Switzerland", "Taiwan",
-            "United Kingdom", "United States"
-        )
     }
 
     val filteredCountries = remember(country, allCountries) {
-        if (country.isBlank()) allCountries
-        else allCountries.filter { it.contains(country, ignoreCase = true) }
+        if (country.isBlank()) {
+            allCountries
+        } else {
+            val query = country.trim()
+            allCountries.filter { it.contains(query, ignoreCase = true) }
+        }
     }
 
     val selectedForwardingService = forwardingServices.find { it.id == selectedForwardingServiceId }
@@ -2487,19 +2484,27 @@ private fun AddressFormDialog(
                         .testTag("address_form_postal")
                 )
 
-                // Country with Dropdown Menu
+                // Country with Dropdown Menu (Styled identically to User Profile country field)
                 Box(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
                         value = country,
-                        onValueChange = {
-                            country = it
+                        onValueChange = { newValue ->
+                            country = newValue
                             expandedCountryDropdown = true
-                            if (countryError && it.isNotBlank()) {
+                            if (countryError && newValue.isNotBlank()) {
                                 countryError = false
                             }
                         },
-                        label = { Text("Country *") },
-                        placeholder = { Text("Select or type country") },
+                        label = { Text("Country *", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        placeholder = { Text("Search or select country...") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("address_form_country")
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) {
+                                    expandedCountryDropdown = true
+                                }
+                            },
                         leadingIcon = { Icon(Icons.Default.Public, contentDescription = null) },
                         isError = countryError,
                         supportingText = if (countryError) {
@@ -2515,41 +2520,86 @@ private fun AddressFormDialog(
                                         modifier = Modifier.padding(end = 4.dp)
                                     )
                                 }
-                                IconButton(onClick = { expandedCountryDropdown = !expandedCountryDropdown }) {
+                                if (country.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = {
+                                            country = ""
+                                            expandedCountryDropdown = true
+                                            countryError = false
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Clear,
+                                            contentDescription = "Clear country",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { expandedCountryDropdown = !expandedCountryDropdown }
+                                ) {
                                     Icon(
                                         imageVector = if (expandedCountryDropdown) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                                        contentDescription = "Select country"
+                                        contentDescription = "Toggle country list",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
                         },
                         singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("address_form_country")
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { expandedCountryDropdown = false })
                     )
+
                     DropdownMenu(
                         expanded = expandedCountryDropdown,
                         onDismissRequest = { expandedCountryDropdown = false },
+                        properties = PopupProperties(focusable = false),
                         modifier = Modifier
-                            .fillMaxWidth(0.85f)
+                            .fillMaxWidth()
                             .heightIn(max = 280.dp)
                     ) {
                         if (filteredCountries.isEmpty()) {
                             DropdownMenuItem(
-                                text = { Text("No matching country found", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                onClick = {}
+                                text = { Text("No matching countries", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                onClick = { },
+                                enabled = false
                             )
                         } else {
-                            filteredCountries.take(50).forEach { item ->
+                            filteredCountries.take(80).forEach { countryName ->
                                 DropdownMenuItem(
-                                    text = { Text(item) },
-                                    leadingIcon = { Icon(Icons.Default.Place, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                    text = {
+                                        Text(
+                                            text = countryName,
+                                            fontWeight = if (countryName.equals(country, ignoreCase = true)) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
                                     onClick = {
-                                        country = item
+                                        country = countryName
                                         expandedCountryDropdown = false
                                         countryError = false
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.LocationOn,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = if (countryName.equals(country, ignoreCase = true)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
+                                )
+                            }
+                            if (filteredCountries.size > 80) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "Type to filter ${filteredCountries.size - 80} more...",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    },
+                                    onClick = { },
+                                    enabled = false
                                 )
                             }
                         }

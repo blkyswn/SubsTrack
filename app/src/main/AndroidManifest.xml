@@ -39,6 +39,26 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/calendar_bento_widget_info" />
         </receiver>
+
+        <receiver
+            android:name=".widget.UpcomingCalendarWidgetProvider"
+            android:label="@string/upcoming_calendar_widget_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.appwidget.action.APPWIDGET_OPTIONS_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="com.example.ACTION_CALENDAR_WIDGET_PREV" />
+                <action android:name="com.example.ACTION_CALENDAR_WIDGET_NEXT" />
+                <action android:name="com.example.ACTION_CALENDAR_WIDGET_TOGGLE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/upcoming_calendar_widget_info" />
+        </receiver>
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -538,4 +538,33 @@ class ExampleRobolectricTest {
     org.junit.Assert.assertEquals("Upcoming preorder before end date/time should remain Upcoming", "Upcoming", updatedFuture?.status)
     org.junit.Assert.assertEquals("Already preordered item should not be changed to Released", "Preordered", updatedPreordered?.status)
   }
+
+  @Test
+  fun `test upcoming calendar widget layout inflates without error`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val rvWidget = android.widget.RemoteViews(context.packageName, R.layout.upcoming_calendar_widget)
+    val viewWidget = rvWidget.apply(context, null)
+    org.junit.Assert.assertNotNull(viewWidget)
+
+    val rvPreview = android.widget.RemoteViews(context.packageName, R.layout.upcoming_calendar_widget_preview)
+    val viewPreview = rvPreview.apply(context, null)
+    org.junit.Assert.assertNotNull(viewPreview)
+  }
+
+  @Test
+  fun `test upcoming calendar widget trigger update`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    com.example.widget.UpcomingCalendarWidgetProvider.triggerUpdate(context)
+  }
+
+  @Test
+  fun `test country list format is consistent`() {
+    val isoCountries = java.util.Locale.getISOCountries()
+      .map { java.util.Locale("", it).getDisplayCountry(java.util.Locale.ENGLISH) }
+      .filter { it.isNotBlank() }
+      .distinct()
+      .sorted()
+    org.junit.Assert.assertTrue(isoCountries.contains("United States"))
+    org.junit.Assert.assertTrue(isoCountries.contains("United Kingdom"))
+  }
 }

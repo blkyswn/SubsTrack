@@ -34,6 +34,7 @@ import java.util.*
 fun UpcomingCalendarScreen(
     viewModel: BookishViewModel,
     onBack: () -> Unit,
+    initialDateStr: String? = null,
     modifier: Modifier = Modifier
 ) {
     val scheduled by viewModel.rawScheduledState.collectAsState()
@@ -46,7 +47,7 @@ fun UpcomingCalendarScreen(
 
     val dateFormatKey = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
     val todayStr = remember { dateFormatKey.format(Date()) }
-    var focusedDateStr by remember { mutableStateOf(todayStr) }
+    var focusedDateStr by remember(initialDateStr) { mutableStateOf(initialDateStr ?: todayStr) }
 
     val calendarLazyListState = rememberLazyListState()
 

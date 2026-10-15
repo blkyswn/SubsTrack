@@ -213,11 +213,12 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
-        // Automatically update homescreen widget whenever scheduled subs, preorders, or user preferences change
+        // Automatically update homescreen widgets whenever scheduled subs, preorders, or user preferences change
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(rawScheduledState, rawPreordersState, userState) { _, _, _ -> }
                 .collect {
                     com.example.widget.CalendarBentoWidgetProvider.triggerUpdate(application)
+                    com.example.widget.UpcomingCalendarWidgetProvider.triggerUpdate(application)
                 }
         }
 

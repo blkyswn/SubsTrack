@@ -31,9 +31,11 @@ import com.example.R
 
 class MainActivity : ComponentActivity() {
     private val viewModel: BookishViewModel by viewModels()
+    private val externalNavTargetState = mutableStateOf<Pair<String, String?>?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIntent(intent)
         
         // Create notification channel safely
         try {
@@ -67,8 +69,27 @@ class MainActivity : ComponentActivity() {
             }
 
             MyApplicationTheme(darkTheme = useDarkTheme, themeCombo = themeCombo) {
-                BookishApp(viewModel = viewModel)
+                val externalNavTarget by externalNavTargetState
+                BookishApp(
+                    viewModel = viewModel,
+                    externalNavTarget = externalNavTarget,
+                    onNavTargetHandled = { externalNavTargetState.value = null }
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: android.content.Intent?) {
+        val target = intent?.getStringExtra("NAV_TARGET")
+        val date = intent?.getStringExtra("SELECTED_DATE")
+        if (!target.isNullOrEmpty()) {
+            externalNavTargetState.value = Pair(target, date)
         }
     }
 }
@@ -81,8 +102,25 @@ data class NavigationItem(
 )
 
 @Composable
-fun BookishApp(viewModel: BookishViewModel) {
+fun BookishApp(
+    viewModel: BookishViewModel,
+    externalNavTarget: Pair<String, String?>? = null,
+    onNavTargetHandled: () -> Unit = {}
+) {
     val navController = rememberNavController()
+
+    LaunchedEffect(externalNavTarget) {
+        externalNavTarget?.let { (target, date) ->
+            if (target == "upcoming_calendar") {
+                val route = if (!date.isNullOrBlank()) "upcoming_calendar?date=$date" else "upcoming_calendar"
+                navController.navigate(route) {
+                    launchSingleTop = true
+                }
+                onNavTargetHandled()
+            }
+        }
+    }
+
     val alertMessage by viewModel.alertMessage.collectAsState()
 
     alertMessage?.let { msg ->
@@ -209,10 +247,28 @@ fun BookishApp(viewModel: BookishViewModel) {
                     }
                 )
             }
+            composable(
+                route = "upcoming_calendar?date={date}",
+                arguments = listOf(
+                    androidx.navigation.navArgument("date") {
+                        type = androidx.navigation.NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    }
+                )
+            ) { backStackEntry ->
+                val dateArg = backStackEntry.arguments?.getString("date")
+                UpcomingCalendarScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() },
+                    initialDateStr = dateArg
+                )
+            }
             composable("upcoming_calendar") {
                 UpcomingCalendarScreen(
                     viewModel = viewModel,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    initialDateStr = null
                 )
             }
             composable("subscriptions") {
