@@ -295,7 +295,8 @@ data class ScheduledSubscription(
     val status: String, // Upcoming, Skipped, Renewed, Forwarded, In Suit, Shipped, Received
     val isSkipped: Boolean = false,
     val picturePath: String? = null,
-    val rating: Double = 0.0
+    val rating: Double = 0.0,
+    val bookmark: Boolean = false
 )
 
 @Entity(
@@ -329,7 +330,7 @@ data class Preorder(
     val price: Double,
     val rangedSaleDateStart: Long, // timestamp
     val rangedSaleDateEnd: Long, // timestamp
-    val status: String, // Upcoming, Released, Preordered, Forwarded, In Suit, Shipped, Received
+    val status: String, // Upcoming, Released, Wishlist, Preordered, Forwarded, In Suite, Shipped, Received
     val reminderEnabled: Boolean = false,
     val reminderDDayOffset: Int = 0, // 0 to 5 (D-Day, D-1, ..., D-5)
     val reminderHour: Int = 8,
@@ -342,7 +343,8 @@ data class Preorder(
     val shippingPrice: Double? = null,
     val taxPrice: Double? = null,
     val forwardShippingPrice: Double? = null,
-    val forwardTaxPrice: Double? = null
+    val forwardTaxPrice: Double? = null,
+    val wishlist: Boolean = false
 )
 
 fun Preorder.getEffectiveEndTimestamp(): Long {

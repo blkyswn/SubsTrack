@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="true"
@@ -21,6 +24,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.example.ACTION_REMINDER" />
+                <action android:name="com.example.ACTION_MARK_PREORDERED" />
             </intent-filter>
         </receiver>
 
@@ -53,12 +57,52 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="com.example.ACTION_CALENDAR_WIDGET_PREV" />
                 <action android:name="com.example.ACTION_CALENDAR_WIDGET_NEXT" />
-                <action android:name="com.example.ACTION_CALENDAR_WIDGET_TOGGLE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/upcoming_calendar_widget_info" />
         </receiver>
+
+        <receiver
+            android:name=".widget.UpcomingListWidgetProvider"
+            android:label="@string/upcoming_list_widget_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/upcoming_list_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TodayPreordersWidgetProvider"
+            android:label="@string/today_preorders_widget_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.appwidget.action.APPWIDGET_OPTIONS_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.DATE_CHANGED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="com.example.ACTION_PREV_PREORDER" />
+                <action android:name="com.example.ACTION_NEXT_PREORDER" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/today_preorders_widget_info" />
+        </receiver>
+
+        <service
+            android:name=".widget.TodayPreordersWidgetService"
+            android:permission="android.permission.BIND_REMOTEVIEWS"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

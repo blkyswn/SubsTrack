@@ -333,7 +333,7 @@ private fun CalendarDayCell(
     val activeBgColor = if (isDark) {
         MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)
     } else {
-        Color(0xFFFF80AB).copy(alpha = 0.22f)
+        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
     }
 
     val cellBgColor = when {

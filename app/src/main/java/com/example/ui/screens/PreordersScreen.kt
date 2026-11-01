@@ -5,6 +5,9 @@ import com.example.ui.components.MultiSelectChipGroup
 import com.example.ui.components.OtherFormTabContent
 import com.example.ui.components.PackageDetailsDialog
 import com.example.ui.components.PackageTrackingQuickButton
+import com.example.ui.components.nextOnEnter
+import com.example.ui.components.rememberNextKeyboardActions
+import com.example.ui.components.nextKeyboardOptions
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.res.painterResource
 
@@ -95,6 +98,7 @@ fun PreordersScreen(
     var showFilterDialog by remember { mutableStateOf(false) }
     val searchQuery by viewModel.preorderSearch.collectAsState()
     var showSearchRow by remember { mutableStateOf(false) }
+    var expandedPreorderActionId by remember { mutableStateOf<Int?>(null) }
 
     // Calendar toggle
     val isCalendarView by viewModel.preorderIsCalendarView.collectAsState()
@@ -301,6 +305,30 @@ fun PreordersScreen(
             val statsCardBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
             val statsCardBorder = if (!isDark) BorderStroke(1.dp, Color(0xFFFF5722).copy(alpha = 0.15f)) else null
 
+            val upcomingPreorderListState = rememberLazyListState()
+            val pastPreorderListState = rememberLazyListState()
+            val allPreorderListState = rememberLazyListState()
+
+            val activePreorderListState = when (preorderListViewTab) {
+                0 -> upcomingPreorderListState
+                1 -> pastPreorderListState
+                else -> allPreorderListState
+            }
+
+            var isStatsFolded by remember { mutableStateOf(false) }
+
+            LaunchedEffect(activePreorderListState) {
+                var wasAtTop = activePreorderListState.firstVisibleItemIndex == 0 && activePreorderListState.firstVisibleItemScrollOffset <= 5
+                snapshotFlow {
+                    activePreorderListState.firstVisibleItemIndex == 0 && activePreorderListState.firstVisibleItemScrollOffset <= 5
+                }.collect { isAtTop ->
+                    if (isAtTop != wasAtTop) {
+                        wasAtTop = isAtTop
+                        isStatsFolded = !isAtTop
+                    }
+                }
+            }
+
             if (!isCalendarView) {
                 // Display Upper Stats grid with counters (supports swiping left/right to switch timeframe)
                 Card(
@@ -316,23 +344,40 @@ fun PreordersScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .animateContentSize()
                             .padding(12.dp)
                     ) {
                         val currentLabel = timeframes.getOrElse(preorderStatsPagerState.currentPage) { timeframes.first() }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 8.dp, start = 4.dp, end = 4.dp),
+                                .padding(bottom = if (isStatsFolded) 0.dp else 8.dp, start = 4.dp, end = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = currentLabel,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = contrastColor,
-                                modifier = Modifier.testTag("stats_timeframe_title")
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { isStatsFolded = !isStatsFolded }
+                                    .padding(vertical = 2.dp, horizontal = 2.dp)
+                                    .testTag("stats_fold_toggle")
+                            ) {
+                                Text(
+                                    text = currentLabel,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = contrastColor,
+                                    modifier = Modifier.testTag("stats_timeframe_title")
+                                )
+                                Icon(
+                                    imageVector = if (isStatsFolded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                                    contentDescription = if (isStatsFolded) "Unfold stats" else "Fold stats",
+                                    tint = contrastColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -366,10 +411,15 @@ fun PreordersScreen(
                             }
                         }
 
-                        HorizontalPager(
-                            state = preorderStatsPagerState,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { page ->
+                        AnimatedVisibility(
+                            visible = !isStatsFolded,
+                            enter = expandVertically(animationSpec = androidx.compose.animation.core.tween(220)) + fadeIn(animationSpec = androidx.compose.animation.core.tween(220)),
+                            exit = shrinkVertically(animationSpec = androidx.compose.animation.core.tween(180)) + fadeOut(animationSpec = androidx.compose.animation.core.tween(180))
+                        ) {
+                            HorizontalPager(
+                                state = preorderStatsPagerState,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { page ->
                             val pageLabel = timeframes.getOrElse(page) { timeframes.first() }
                             if (pageLabel == "Next Week & Month") {
                                 val thisWeekStart = Calendar.getInstance().apply {
@@ -732,18 +782,18 @@ fun PreordersScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Upcoming", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text("$upcoming", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFD84315) else MaterialTheme.colorScheme.outline)
+                                             Text("Upcoming", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                             Text("$upcoming", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFD84315) else MaterialTheme.colorScheme.outline)
                                         }
                                         Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Released", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text("$released", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFE65100) else Color(0xFFFF9800))
+                                             Text("Released", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                             Text("$released", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFFE65100) else Color(0xFFFF9800))
                                         }
                                         Divider(modifier = Modifier.height(28.dp).width(1.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Text("Preordered", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text("$preordered", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1976D2) else Color(0xFF2196F3))
+                                             Text("Preordered", fontSize = 11.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                             Text("$preordered", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (!isDark) Color(0xFF1976D2) else Color(0xFF2196F3))
                                         }
                                     }
 
@@ -811,6 +861,7 @@ fun PreordersScreen(
                             }
                         }
                     }
+                }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -949,7 +1000,11 @@ fun PreordersScreen(
                                 item = item,
                                 viewModel = viewModel,
                                 onDeleted = onDeletePreorder,
-                                onStateChanged = onPreorderStateChanged
+                                onStateChanged = onPreorderStateChanged,
+                                isActionsExpanded = expandedPreorderActionId == item.preorder.id,
+                                onToggleActionsExpanded = {
+                                    expandedPreorderActionId = if (expandedPreorderActionId == item.preorder.id) null else item.preorder.id
+                                }
                             )
                         }
                     }
@@ -1007,6 +1062,7 @@ fun PreordersScreen(
                         }
                     } else {
                         LazyColumn(
+                            state = upcomingPreorderListState,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
@@ -1028,7 +1084,11 @@ fun PreordersScreen(
                                         item = item,
                                         viewModel = viewModel,
                                         onDeleted = onDeletePreorder,
-                                        onStateChanged = onPreorderStateChanged
+                                        onStateChanged = onPreorderStateChanged,
+                                        isActionsExpanded = expandedPreorderActionId == item.preorder.id,
+                                        onToggleActionsExpanded = {
+                                            expandedPreorderActionId = if (expandedPreorderActionId == item.preorder.id) null else item.preorder.id
+                                        }
                                     )
                                 }
                             }
@@ -1046,6 +1106,7 @@ fun PreordersScreen(
                         }
                     } else {
                         LazyColumn(
+                            state = pastPreorderListState,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
@@ -1067,7 +1128,11 @@ fun PreordersScreen(
                                         item = item,
                                         viewModel = viewModel,
                                         onDeleted = onDeletePreorder,
-                                        onStateChanged = onPreorderStateChanged
+                                        onStateChanged = onPreorderStateChanged,
+                                        isActionsExpanded = expandedPreorderActionId == item.preorder.id,
+                                        onToggleActionsExpanded = {
+                                            expandedPreorderActionId = if (expandedPreorderActionId == item.preorder.id) null else item.preorder.id
+                                        }
                                     )
                                 }
                             }
@@ -1085,6 +1150,7 @@ fun PreordersScreen(
                         }
                     } else {
                         LazyColumn(
+                            state = allPreorderListState,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
@@ -1106,7 +1172,11 @@ fun PreordersScreen(
                                         item = item,
                                         viewModel = viewModel,
                                         onDeleted = onDeletePreorder,
-                                        onStateChanged = onPreorderStateChanged
+                                        onStateChanged = onPreorderStateChanged,
+                                        isActionsExpanded = expandedPreorderActionId == item.preorder.id,
+                                        onToggleActionsExpanded = {
+                                            expandedPreorderActionId = if (expandedPreorderActionId == item.preorder.id) null else item.preorder.id
+                                        }
                                     )
                                 }
                             }
@@ -1142,7 +1212,9 @@ fun PreorderItemRow(
     item: PreorderWithBookstore,
     viewModel: BookishViewModel,
     onDeleted: (Preorder) -> Unit,
-    onStateChanged: ((oldPreorder: Preorder, newPreorder: Preorder, message: String) -> Unit)? = null
+    onStateChanged: ((oldPreorder: Preorder, newPreorder: Preorder, message: String) -> Unit)? = null,
+    isActionsExpanded: Boolean = false,
+    onToggleActionsExpanded: (() -> Unit)? = null
 ) {
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
@@ -1150,7 +1222,17 @@ fun PreorderItemRow(
     val dateFormat = remember(userDateFormatPattern) { SimpleDateFormat(userDateFormatPattern, Locale.getDefault()) }
 
     val isDark = isSystemInDarkTheme()
+    var localIsActionsExpanded by remember { mutableStateOf(false) }
+    val effectiveIsActionsExpanded = if (onToggleActionsExpanded != null) isActionsExpanded else localIsActionsExpanded
+    val toggleActions = {
+        if (onToggleActionsExpanded != null) {
+            onToggleActionsExpanded()
+        } else {
+            localIsActionsExpanded = !localIsActionsExpanded
+        }
+    }
     var showEditDialog by remember { mutableStateOf(false) }
+    var showCopyAsDialog by remember { mutableStateOf(false) }
     var showViewerDialog by remember { mutableStateOf(false) }
 
     val activeImageModel = item.preorder.picturePath.takeIf { !it.isNullOrEmpty() }
@@ -1195,10 +1277,10 @@ fun PreorderItemRow(
 
     val accentColor = when (item.preorder.status.lowercase()) {
         "upcoming" -> Color(0xFF64748B) // Grey
+        "released" -> Color(0xFFF97316) // Orange
         "preordered" -> Color(0xFF2563EB) // Blue
         "forwarded" -> Color(0xFF0EA5E9) // Sky Blue
         "in suite" -> Color(0xFFD97706) // Amber
-        "released" -> Color(0xFFF97316) // Orange
         "shipped" -> Color(0xFF8B5CF6) // Purple
         "received" -> Color(0xFF10B981) // Green
         else -> Color(0xFF64748B)
@@ -1447,19 +1529,124 @@ fun PreorderItemRow(
                 }
             }
         ) {
-            Card(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showEditDialog = true }
-                    .padding(vertical = 6.dp),
-                shape = RoundedCornerShape(20.dp),
+                    .animateContentSize()
+                    .padding(vertical = 4.dp)
+            ) {
+                AnimatedVisibility(
+                    visible = effectiveIsActionsExpanded,
+                    enter = expandVertically(animationSpec = androidx.compose.animation.core.tween(220)) + fadeIn(animationSpec = androidx.compose.animation.core.tween(220)),
+                    exit = shrinkVertically(animationSpec = androidx.compose.animation.core.tween(180)) + fadeOut(animationSpec = androidx.compose.animation.core.tween(180))
+                ) {
+                    val statsCardBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
+                    val statsCardBorder = if (!isDark) BorderStroke(1.dp, Color(0xFFFF5722).copy(alpha = 0.15f)) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 2.dp),
+                        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+                        color = statsCardBg,
+                        border = statsCardBorder
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 1. Wishlist button
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable {
+                                        val newWishlist = !item.preorder.wishlist
+                                        viewModel.updatePreorder(item.preorder.copy(wishlist = newWishlist))
+                                    }
+                                    .testTag("preorder_wishlist_btn_${item.preorder.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (item.preorder.wishlist) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = "Wishlist",
+                                    modifier = Modifier.size(22.dp),
+                                    tint = if (item.preorder.wishlist) Color(0xFFEC4899) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            // Divider 1
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(24.dp)
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                            )
+
+                            // 2. Edit button
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable {
+                                        showEditDialog = true
+                                    }
+                                    .testTag("preorder_edit_btn_${item.preorder.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            // Divider 2
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(24.dp)
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                            )
+
+                            // 3. Copy As button
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable {
+                                        showCopyAsDialog = true
+                                    }
+                                    .testTag("preorder_copy_as_btn_${item.preorder.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = "Copy As",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { toggleActions() }
+                        .testTag("preorder_card_${item.preorder.id}"),
+                    shape = if (effectiveIsActionsExpanded) RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp) else RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = when (item.preorder.status.lowercase()) {
                         "upcoming" -> Color(0xFF64748B).copy(alpha = if (isDark) 0.12f else 0.06f)
+                        "released" -> Color(0xFFF97316).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "preordered" -> Color(0xFF2563EB).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "forwarded" -> Color(0xFF0EA5E9).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "in suite" -> Color(0xFFD97706).copy(alpha = if (isDark) 0.12f else 0.06f)
-                        "released" -> Color(0xFFF97316).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "shipped" -> Color(0xFF8B5CF6).copy(alpha = if (isDark) 0.12f else 0.06f)
                         "received" -> Color(0xFF10B981).copy(alpha = if (isDark) 0.12f else 0.06f)
                         else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
@@ -1585,20 +1772,20 @@ fun PreorderItemRow(
                         // Status Badge with icon before text & Price with dot spacer
                         val statusContainerColor = when (item.preorder.status.lowercase()) {
                             "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
+                            "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
                             "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
                             "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
                             "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
-                            "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
                             "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
                             "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
                             else -> MaterialTheme.colorScheme.surfaceVariant
                         }
                         val statusOnContainerColor = when (item.preorder.status.lowercase()) {
                             "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
+                            "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
                             "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
                             "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
                             "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
-                            "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
                             "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
                             "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -1653,6 +1840,21 @@ fun PreorderItemRow(
                                 fontSize = 11.5.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+
+                            if (item.preorder.wishlist) {
+                                Text(
+                                    text = "•",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.Bookmark,
+                                    contentDescription = "Wishlist",
+                                    tint = Color(0xFFEC4899),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
                         }
                     }
 
@@ -1718,6 +1920,7 @@ fun PreorderItemRow(
             }
         }
     }
+}
 
     if (showEditDialog) {
         EditPreorderDialog(
@@ -1727,6 +1930,15 @@ fun PreorderItemRow(
             onDismiss = { showEditDialog = false }
         )
     }
+
+    if (showCopyAsDialog) {
+        AddPreorderDialog(
+            viewModel = viewModel,
+            bookstores = viewModel.bookstoresState.collectAsState().value,
+            basePreorder = item.preorder,
+            onDismiss = { showCopyAsDialog = false }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1734,6 +1946,7 @@ fun PreorderItemRow(
 fun AddPreorderDialog(
     viewModel: BookishViewModel,
     bookstores: List<Bookstore>,
+    basePreorder: Preorder? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1742,21 +1955,47 @@ fun AddPreorderDialog(
     val userAddresses by viewModel.userAddressesState.collectAsState()
     val forwardingServices by viewModel.forwardingServicesState.collectAsState()
     val defaultAddrId = remember(userAddresses) { userAddresses.find { it.isDefault }?.id }
-    var selectedShippingAddressId by remember(defaultAddrId) { mutableStateOf(defaultAddrId) }
-    var selectedCurrency by remember { mutableStateOf(userState?.currency ?: "$") }
-    var basePriceStr by remember { mutableStateOf("") }
-    var discountedAmountStr by remember { mutableStateOf("") }
-    var shippingPriceStr by remember { mutableStateOf("") }
-    var taxPriceStr by remember { mutableStateOf("") }
-    var forwardShippingPriceStr by remember { mutableStateOf("") }
-    var forwardTaxPriceStr by remember { mutableStateOf("") }
+    var selectedShippingAddressId by remember(basePreorder, defaultAddrId) { mutableStateOf(basePreorder?.shippingAddressId ?: defaultAddrId) }
+    var selectedCurrency by remember(basePreorder) { mutableStateOf(basePreorder?.currency ?: (userState?.currency ?: "$")) }
+    var basePriceStr by remember(basePreorder) {
+        mutableStateOf(basePreorder?.basePrice?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format(Locale.US, "%.2f", it) } ?: "")
+    }
+    var discountedAmountStr by remember(basePreorder) {
+        mutableStateOf(basePreorder?.discountedAmount?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format(Locale.US, "%.2f", it) } ?: "")
+    }
+    var shippingPriceStr by remember(basePreorder) {
+        mutableStateOf(basePreorder?.shippingPrice?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format(Locale.US, "%.2f", it) } ?: "")
+    }
+    var taxPriceStr by remember(basePreorder) {
+        mutableStateOf(basePreorder?.taxPrice?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format(Locale.US, "%.2f", it) } ?: "")
+    }
+    var forwardShippingPriceStr by remember(basePreorder) {
+        mutableStateOf(basePreorder?.forwardShippingPrice?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format(Locale.US, "%.2f", it) } ?: "")
+    }
+    var forwardTaxPriceStr by remember(basePreorder) {
+        mutableStateOf(basePreorder?.forwardTaxPrice?.let { if (it % 1.0 == 0.0) it.toLong().toString() else String.format(Locale.US, "%.2f", it) } ?: "")
+    }
 
-    var selectedBookstoreId by remember { mutableStateOf(bookstores.firstOrNull()?.id ?: 0) }
-    var bookTitle by remember { mutableStateOf("") }
-    var bookAuthor by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var isPriceManuallyEdited by remember { mutableStateOf(false) }
-    var priceStr by remember { mutableStateOf("") }
+    var selectedBookstoreId by remember(basePreorder) { mutableStateOf(basePreorder?.bookstoreId ?: bookstores.firstOrNull()?.id ?: 0) }
+    var bookTitle by remember(basePreorder) { mutableStateOf(basePreorder?.bookTitle ?: "") }
+    var bookAuthor by remember(basePreorder) { mutableStateOf(basePreorder?.bookAuthor ?: "") }
+    var description by remember(basePreorder) { mutableStateOf(basePreorder?.description ?: "") }
+
+    val initialBase = basePreorder?.basePrice
+    val initialShipping = basePreorder?.shippingPrice ?: 0.0
+    val initialDiscount = basePreorder?.discountedAmount ?: 0.0
+    val initialTax = basePreorder?.taxPrice ?: 0.0
+    val initialCalc = if (initialBase != null) initialBase + initialShipping + initialTax - initialDiscount else null
+    val isInitiallyAuto = initialCalc != null && basePreorder != null && Math.abs(basePreorder.price - initialCalc) < 0.01
+
+    var isPriceManuallyEdited by remember(basePreorder) { mutableStateOf(basePreorder != null && !isInitiallyAuto && basePreorder.price > 0.0) }
+    var priceStr by remember(basePreorder) {
+        mutableStateOf(
+            if (basePreorder != null && basePreorder.price > 0.0) {
+                if (basePreorder.price % 1.0 == 0.0) basePreorder.price.toLong().toString() else String.format(Locale.US, "%.2f", basePreorder.price)
+            } else ""
+        )
+    }
 
     val updateDynamicPrice: (String, String, String, String) -> Unit = { newBase, newDiscount, newShipping, newTax ->
         if (!isPriceManuallyEdited) {
@@ -1773,19 +2012,24 @@ fun AddPreorderDialog(
         }
     }
     val calendar = Calendar.getInstance()
-    var saleDateStart by remember { mutableStateOf(calendar.timeInMillis) }
-    var saleDateEnd by remember { mutableStateOf(0L) }
+    var saleDateStart by remember(basePreorder) { mutableStateOf(basePreorder?.rangedSaleDateStart ?: calendar.timeInMillis) }
+    var saleDateEnd by remember(basePreorder) { mutableStateOf(basePreorder?.rangedSaleDateEnd ?: 0L) }
 
-    var imageUrl by remember { mutableStateOf("") }
-    var rating by remember { mutableStateOf(0.0) }
-    var reminderEnabled by remember { mutableStateOf(false) }
-    var reminderDDayOffset by remember { mutableStateOf(0) }
-    var reminderHour by remember { mutableStateOf(8) }
-    var reminderMinute by remember { mutableStateOf(0) }
+    var imageUrl by remember(basePreorder) { mutableStateOf(basePreorder?.picturePath ?: "") }
+    var rating by remember(basePreorder) { mutableStateOf(basePreorder?.rating ?: 0.0) }
+    var reminderEnabled by remember(basePreorder) { mutableStateOf(basePreorder?.reminderEnabled ?: false) }
+    var reminderDDayOffset by remember(basePreorder) { mutableStateOf(basePreorder?.reminderDDayOffset ?: 0) }
+    var reminderHour by remember(basePreorder) { mutableStateOf(basePreorder?.reminderHour ?: 8) }
+    var reminderMinute by remember(basePreorder) { mutableStateOf(basePreorder?.reminderMinute ?: 0) }
     var showTimePicker by remember { mutableStateOf(false) }
+    var isWishlist by remember(basePreorder) { mutableStateOf(basePreorder?.wishlist ?: false) }
 
     val initialTargetDate = if (saleDateEnd > 0L) saleDateEnd else saleDateStart
-    var status by remember { mutableStateOf(if (initialTargetDate > System.currentTimeMillis()) "Upcoming" else "Released") }
+    var status by remember(basePreorder) {
+        mutableStateOf(
+            basePreorder?.status ?: if (initialTargetDate > System.currentTimeMillis()) "Upcoming" else "Released"
+        )
+    }
     
     val isForwardingAddress = remember(selectedShippingAddressId, userAddresses) {
         userAddresses.find { it.id == selectedShippingAddressId }?.forwardingServiceId != null
@@ -1804,18 +2048,20 @@ fun AddPreorderDialog(
     }
 
     LaunchedEffect(saleDateStart, saleDateEnd) {
-        val temp = Preorder(
-            bookstoreId = 0,
-            picturePath = null,
-            bookTitle = "",
-            bookAuthor = "",
-            description = "",
-            price = 0.0,
-            rangedSaleDateStart = saleDateStart,
-            rangedSaleDateEnd = saleDateEnd,
-            status = "Upcoming"
-        )
-        status = if (temp.isEndPassed()) "Released" else "Upcoming"
+        if (basePreorder == null) {
+            val temp = Preorder(
+                bookstoreId = 0,
+                picturePath = null,
+                bookTitle = "",
+                bookAuthor = "",
+                description = "",
+                price = 0.0,
+                rangedSaleDateStart = saleDateStart,
+                rangedSaleDateEnd = saleDateEnd,
+                status = "Upcoming"
+            )
+            status = if (temp.isEndPassed()) "Released" else "Upcoming"
+        }
     }
 
     val userDateFormatPattern = viewModel.userState.collectAsState().value?.dateFormat ?: "yyyy-MM-dd"
@@ -1825,7 +2071,7 @@ fun AddPreorderDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Preorder", fontWeight = FontWeight.Bold) },
+        title = { Text(if (basePreorder != null) "Copy Preorder" else "Add Preorder", fontWeight = FontWeight.Bold) },
         text = {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
@@ -1909,7 +2155,10 @@ fun AddPreorderDialog(
                             value = bookTitle,
                             onValueChange = { bookTitle = it },
                             label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            modifier = Modifier.fillMaxWidth().testTag("add_preorder_title")
+                            singleLine = true,
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("add_preorder_title").nextOnEnter()
                         )
                     }
 
@@ -1918,7 +2167,10 @@ fun AddPreorderDialog(
                             value = bookAuthor,
                             onValueChange = { bookAuthor = it },
                             label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            modifier = Modifier.fillMaxWidth().testTag("add_preorder_author")
+                            singleLine = true,
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("add_preorder_author").nextOnEnter()
                         )
                     }
 
@@ -1960,8 +2212,10 @@ fun AddPreorderDialog(
                                 },
                                 label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f).testTag("add_preorder_price")
+                                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                keyboardActions = rememberNextKeyboardActions(),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).testTag("add_preorder_price").nextOnEnter()
                             )
                         }
                     }
@@ -1997,6 +2251,12 @@ fun AddPreorderDialog(
                                     onCheckedChange = { enabled ->
                                         reminderEnabled = enabled
                                         if (enabled) {
+                                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                                val perm = android.Manifest.permission.POST_NOTIFICATIONS
+                                                if (context.checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                                    (context as? android.app.Activity)?.requestPermissions(arrayOf(perm), 101)
+                                                }
+                                            }
                                             val startCal = Calendar.getInstance().apply { timeInMillis = saleDateStart }
                                             val hasTime = startCal.get(Calendar.HOUR_OF_DAY) != 0 || startCal.get(Calendar.MINUTE) != 0
                                             if (hasTime) {
@@ -2121,7 +2381,8 @@ fun AddPreorderDialog(
                             shippingPrice = shippingPriceStr.toDoubleOrNull(),
                             taxPrice = taxPriceStr.toDoubleOrNull(),
                             forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
-                            forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null
+                            forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null,
+                            wishlist = isWishlist
                         )
                         onDismiss()
                     }
@@ -2220,6 +2481,7 @@ fun EditPreorderDialog(
     var reminderHour by remember { mutableStateOf(pr.reminderHour) }
     var reminderMinute by remember { mutableStateOf(pr.reminderMinute) }
     var showTimePicker by remember { mutableStateOf(false) }
+    var isWishlist by remember(pr.id, pr.wishlist) { mutableStateOf(pr.wishlist) }
 
     var saleDateStart by remember { mutableStateOf(pr.rangedSaleDateStart) }
     var saleDateEnd by remember { mutableStateOf(pr.rangedSaleDateEnd) }
@@ -2340,7 +2602,10 @@ fun EditPreorderDialog(
                             value = bookTitle,
                             onValueChange = { bookTitle = it },
                             label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            modifier = Modifier.fillMaxWidth()
+                            singleLine = true,
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().nextOnEnter()
                         )
                     }
 
@@ -2349,7 +2614,10 @@ fun EditPreorderDialog(
                             value = bookAuthor,
                             onValueChange = { bookAuthor = it },
                             label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            modifier = Modifier.fillMaxWidth()
+                            singleLine = true,
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().nextOnEnter()
                         )
                     }
 
@@ -2391,8 +2659,10 @@ fun EditPreorderDialog(
                                 },
                                 label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f)
+                                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                keyboardActions = rememberNextKeyboardActions(),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).nextOnEnter()
                             )
                         }
                     }
@@ -2564,7 +2834,8 @@ fun EditPreorderDialog(
                                     shippingPrice = shippingPriceStr.toDoubleOrNull(),
                                     taxPrice = taxPriceStr.toDoubleOrNull(),
                                     forwardShippingPrice = if (hasForwarding) forwardShippingPriceStr.toDoubleOrNull() else null,
-                                    forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null
+                                    forwardTaxPrice = if (hasForwarding) forwardTaxPriceStr.toDoubleOrNull() else null,
+                                    wishlist = isWishlist
                                 )
                             )
                             onDismiss()
@@ -2586,6 +2857,7 @@ fun EditPreorderDialog(
             originId = pr.id,
             viewModel = viewModel,
             hasForwardingAddress = isForwardingAddress,
+            onStatusChanged = { newStatus -> status = newStatus },
             onDismiss = { showPackageDialog = false }
         )
     }
@@ -2657,14 +2929,20 @@ fun PreorderFilterDialog(
                     value = authorText,
                     onValueChange = { authorText = it },
                     label = { Text("Filter by Author Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    modifier = Modifier.fillMaxWidth()
+                    singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
+                    modifier = Modifier.fillMaxWidth().nextOnEnter()
                 )
 
                 OutlinedTextField(
                     value = bookText,
                     onValueChange = { bookText = it },
                     label = { Text("Filter by Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    modifier = Modifier.fillMaxWidth()
+                    singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
+                    modifier = Modifier.fillMaxWidth().nextOnEnter()
                 )
             }
         },
@@ -2745,21 +3023,9 @@ private fun <T> RevolverWheelPicker(
         snapPosition = SnapPosition.Center
     )
 
-    // Sync state when selectedItem changes externally
-    LaunchedEffect(selectedItem) {
-        val targetSelIdx = items.indexOf(selectedItem).coerceAtLeast(0)
-        val currentListIdx = listState.firstVisibleItemIndex
-        val currentSelIdx = currentListIdx % items.size
-        if (currentSelIdx != targetSelIdx) {
-            val diff = targetSelIdx - currentSelIdx
-            listState.scrollToItem(currentListIdx + diff)
-        }
-    }
-
-    // Capture scrolling finish & snap to center item
-    val isScrollInProgress = listState.isScrollInProgress
-    LaunchedEffect(isScrollInProgress) {
-        if (!isScrollInProgress) {
+    // Continuously compute the center item on every frame during scrolling
+    val currentCenterItem by remember(listState, items) {
+        androidx.compose.runtime.derivedStateOf {
             val layoutInfo = listState.layoutInfo
             val visibleItems = layoutInfo.visibleItemsInfo
             if (visibleItems.isNotEmpty()) {
@@ -2769,9 +3035,31 @@ private fun <T> RevolverWheelPicker(
                     kotlin.math.abs(itemMiddle - viewportMiddle)
                 }
                 if (closestItem != null) {
-                    val actualIndex = closestItem.index % items.size
-                    onItemSelected(items[actualIndex])
-                }
+                    items[closestItem.index % items.size]
+                } else selectedItem
+            } else selectedItem
+        }
+    }
+
+    // Immediately notify parent of value changes in real time so minute changes after hour changes are never dropped
+    LaunchedEffect(currentCenterItem) {
+        onItemSelected(currentCenterItem)
+    }
+
+    // Only scroll list if selectedItem changed from outside, not as a reflection of our own scroll
+    LaunchedEffect(selectedItem) {
+        if (selectedItem != currentCenterItem) {
+            val targetSelIdx = items.indexOf(selectedItem).coerceAtLeast(0)
+            val currentVisible = listState.layoutInfo.visibleItemsInfo
+            val viewportMiddle = listState.layoutInfo.viewportStartOffset + (listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset) / 2
+            val centerItem = currentVisible.minByOrNull {
+                kotlin.math.abs((it.offset + it.size / 2) - viewportMiddle)
+            }
+            val currentIdx = centerItem?.index ?: listState.firstVisibleItemIndex
+            val currentSelIdx = currentIdx % items.size
+            if (currentSelIdx != targetSelIdx) {
+                val diff = targetSelIdx - currentSelIdx
+                listState.scrollToItem((currentIdx + diff).coerceAtLeast(0))
             }
         }
     }
@@ -3019,8 +3307,8 @@ private fun ComposeTimePickerDialog(
     onTimeSelected: (Int, Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var tempHour by remember { mutableStateOf(initialHour) }
-    var tempMinute by remember { mutableStateOf(initialMinute) }
+    var tempHour by remember(initialHour) { mutableStateOf(initialHour) }
+    var tempMinute by remember(initialMinute) { mutableStateOf(initialMinute) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3114,8 +3402,7 @@ private fun GoogleCalendarStylePreorderPeriodPicker(
     var endMinute by remember { mutableStateOf(endCal.get(Calendar.MINUTE)) }
 
     val wasAllDay = startCal.get(Calendar.HOUR_OF_DAY) == 0 && startCal.get(Calendar.MINUTE) == 0 &&
-                    endCal.get(Calendar.HOUR_OF_DAY) == 0 && endCal.get(Calendar.MINUTE) == 0 &&
-                    initialEndDate > 0L
+                    (initialEndDate <= 0L || (endCal.get(Calendar.HOUR_OF_DAY) == 0 && endCal.get(Calendar.MINUTE) == 0))
 
     var isAllDay by remember { mutableStateOf(wasAllDay) }
     var isExpanded by remember { mutableStateOf(false) }

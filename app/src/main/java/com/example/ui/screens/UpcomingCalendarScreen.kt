@@ -53,6 +53,8 @@ fun UpcomingCalendarScreen(
 
     // Filter type for day list: "All", "Subscriptions", "Preorders"
     var filterType by remember { mutableStateOf("All") }
+    var expandedPreorderActionId by remember { mutableStateOf<Int?>(null) }
+    var expandedScheduledId by remember { mutableStateOf<Int?>(null) }
 
     // Combined markers for MonthCalendar
     val markerMap = remember(scheduled, preorders) {
@@ -86,10 +88,11 @@ fun UpcomingCalendarScreen(
             val dateStr = dateFormatKey.format(Date(item.preorder.rangedSaleDateStart))
             val statusColor = when (item.preorder.status.lowercase()) {
                 "upcoming" -> Color(0xFF64748B)
+                "released" -> Color(0xFFF97316)
+                "wishlist" -> Color(0xFFEC4899)
                 "preordered" -> Color(0xFF2563EB)
                 "forwarded" -> Color(0xFF0EA5E9)
                 "in suite" -> Color(0xFFD97706)
-                "released" -> Color(0xFFF97316)
                 "shipped" -> Color(0xFF8B5CF6)
                 "received" -> Color(0xFF10B981)
                 "canceled", "cancelled" -> Color(0xFFEF4444)
@@ -355,7 +358,11 @@ fun UpcomingCalendarScreen(
                                 item = item,
                                 viewModel = viewModel,
                                 onPromptSkip = { itemToPromptSkip = it },
-                                onStateChanged = onScheduledStateChanged
+                                onStateChanged = onScheduledStateChanged,
+                                isActionsExpanded = expandedScheduledId == item.scheduled.id,
+                                onToggleActionsExpanded = {
+                                    expandedScheduledId = if (expandedScheduledId == item.scheduled.id) null else item.scheduled.id
+                                }
                             )
                         }
                     }
@@ -377,7 +384,11 @@ fun UpcomingCalendarScreen(
                                 item = item,
                                 viewModel = viewModel,
                                 onDeleted = { viewModel.deletePreorder(it) },
-                                onStateChanged = onPreorderStateChanged
+                                onStateChanged = onPreorderStateChanged,
+                                isActionsExpanded = expandedPreorderActionId == item.preorder.id,
+                                onToggleActionsExpanded = {
+                                    expandedPreorderActionId = if (expandedPreorderActionId == item.preorder.id) null else item.preorder.id
+                                }
                             )
                         }
                     }

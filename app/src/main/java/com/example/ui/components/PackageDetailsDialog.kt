@@ -39,6 +39,7 @@ fun PackageDetailsDialog(
     originId: Int,
     viewModel: BookishViewModel,
     hasForwardingAddress: Boolean = false,
+    onStatusChanged: ((String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val packageItemFlow = remember(originTable, originId) {
@@ -195,11 +196,14 @@ fun PackageDetailsDialog(
                             placeholder = { Text("e.g. Royal Mail, FedEx, DHL") },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .menuAnchor(),
+                                .menuAnchor()
+                                .nextOnEnter(),
                             trailingIcon = {
                                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedCompanies)
                             },
                             singleLine = true,
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
                             colors = OutlinedTextFieldDefaults.colors()
                         )
 
@@ -248,13 +252,25 @@ fun PackageDetailsDialog(
                     ) {
                         OutlinedTextField(
                             value = storeTrackingNumber,
-                            onValueChange = { storeTrackingNumber = it },
+                            onValueChange = {
+                                val wasBlank = storeTrackingNumber.isBlank()
+                                storeTrackingNumber = it
+                                if (wasBlank && it.isNotBlank()) {
+                                    if (storeShippingDate == null) {
+                                        storeShippingDate = System.currentTimeMillis()
+                                    }
+                                    onStatusChanged?.invoke("Shipped")
+                                }
+                            },
                             label = { Text("Store Tracking Number") },
                             placeholder = { Text("e.g. TRK123456789") },
                             modifier = Modifier
                                 .weight(1f)
-                                .testTag("store_tracking_number_field"),
+                                .testTag("store_tracking_number_field")
+                                .nextOnEnter(),
                             singleLine = true,
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
                             trailingIcon = {
                                 if (storeTrackingNumber.isNotEmpty()) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -387,11 +403,14 @@ fun PackageDetailsDialog(
                                 placeholder = { Text("e.g. DHL Express, FedEx, UPS") },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .menuAnchor(),
+                                    .menuAnchor()
+                                    .nextOnEnter(),
                                 trailingIcon = {
                                     ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedForwarderCompanies)
                                 },
                                 singleLine = true,
+                                keyboardOptions = nextKeyboardOptions(),
+                                keyboardActions = rememberNextKeyboardActions(),
                                 colors = OutlinedTextFieldDefaults.colors()
                             )
 
@@ -440,13 +459,25 @@ fun PackageDetailsDialog(
                         ) {
                             OutlinedTextField(
                                 value = forwarderTrackingNumber,
-                                onValueChange = { forwarderTrackingNumber = it },
+                                onValueChange = {
+                                    val wasBlank = forwarderTrackingNumber.isBlank()
+                                    forwarderTrackingNumber = it
+                                    if (wasBlank && it.isNotBlank()) {
+                                        if (forwarderShippedDate == null) {
+                                            forwarderShippedDate = System.currentTimeMillis()
+                                        }
+                                        onStatusChanged?.invoke("Forwarded")
+                                    }
+                                },
                                 label = { Text("Forwarder Tracking Number") },
                                 placeholder = { Text("e.g. FWD987654321") },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .testTag("forwarder_tracking_number_field"),
+                                    .testTag("forwarder_tracking_number_field")
+                                    .nextOnEnter(),
                                 singleLine = true,
+                                keyboardOptions = nextKeyboardOptions(),
+                                keyboardActions = rememberNextKeyboardActions(),
                                 trailingIcon = {
                                     if (forwarderTrackingNumber.isNotEmpty()) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -555,19 +586,45 @@ fun PackageDetailsDialog(
                         originTable = originTable,
                         originId = originId
                     )
+                    var finalStoreShippingDate = storeShippingDate
+                    if (finalStoreShippingDate == null && storeTrackingNumber.isNotBlank()) {
+                        finalStoreShippingDate = System.currentTimeMillis()
+                    }
+
+                    var finalForwarderShippedDate = forwarderShippedDate
+                    if (finalForwarderShippedDate == null && forwarderTrackingNumber.isNotBlank()) {
+                        finalForwarderShippedDate = System.currentTimeMillis()
+                    }
+
                     val updated = basePkg.copy(
                         originTable = originTable, // Never allow changing origin table
                         originId = originId,       // Never allow changing origin id
                         purchaseDate = purchaseDate,
-                        storeShippingDate = storeShippingDate,
+                        storeShippingDate = finalStoreShippingDate,
                         storeShippingCompany = storeShippingCompany.trim().ifEmpty { null },
                         storeTrackingNumber = storeTrackingNumber.trim().ifEmpty { null },
                         forwarderReceivedDate = if (hasForwardingAddress) forwarderReceivedDate else null,
                         forwarderShippingCompany = if (hasForwardingAddress) forwarderShippingCompany.trim().ifEmpty { null } else null,
                         forwarderTrackingNumber = if (hasForwardingAddress) forwarderTrackingNumber.trim().ifEmpty { null } else null,
-                        forwarderShippedDate = if (hasForwardingAddress) forwarderShippedDate else null,
+                        forwarderShippedDate = if (hasForwardingAddress) finalForwarderShippedDate else null,
                         receivedDate = receivedDate
                     )
+
+                    val determinedStatus = when {
+                        receivedDate != null && currentPackage?.receivedDate != receivedDate -> "Received"
+                        hasForwardingAddress && finalForwarderShippedDate != null && currentPackage?.forwarderShippedDate != finalForwarderShippedDate -> "Forwarded"
+                        hasForwardingAddress && forwarderReceivedDate != null && currentPackage?.forwarderReceivedDate != forwarderReceivedDate -> "In Suite"
+                        finalStoreShippingDate != null && currentPackage?.storeShippingDate != finalStoreShippingDate -> "Shipped"
+                        receivedDate != null -> "Received"
+                        hasForwardingAddress && finalForwarderShippedDate != null -> "Forwarded"
+                        hasForwardingAddress && forwarderReceivedDate != null -> "In Suite"
+                        finalStoreShippingDate != null -> "Shipped"
+                        else -> null
+                    }
+                    if (determinedStatus != null) {
+                        onStatusChanged?.invoke(determinedStatus)
+                    }
+
                     viewModel.updatePackage(updated)
                     onDismiss()
                 }
@@ -598,10 +655,22 @@ fun PackageDetailsDialog(
             onDateSelected = { selectedMillis ->
                 when (showDatePickerTarget) {
                     "purchase" -> purchaseDate = selectedMillis
-                    "storeShipping" -> storeShippingDate = selectedMillis
-                    "forwarderReceived" -> forwarderReceivedDate = selectedMillis
-                    "forwarderShipped" -> forwarderShippedDate = selectedMillis
-                    "received" -> receivedDate = selectedMillis
+                    "storeShipping" -> {
+                        storeShippingDate = selectedMillis
+                        onStatusChanged?.invoke("Shipped")
+                    }
+                    "forwarderReceived" -> {
+                        forwarderReceivedDate = selectedMillis
+                        onStatusChanged?.invoke("In Suite")
+                    }
+                    "forwarderShipped" -> {
+                        forwarderShippedDate = selectedMillis
+                        onStatusChanged?.invoke("Forwarded")
+                    }
+                    "received" -> {
+                        receivedDate = selectedMillis
+                        onStatusChanged?.invoke("Received")
+                    }
                 }
                 showDatePickerTarget = null
             },

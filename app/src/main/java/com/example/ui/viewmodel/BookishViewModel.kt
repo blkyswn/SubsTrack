@@ -219,6 +219,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                 .collect {
                     com.example.widget.CalendarBentoWidgetProvider.triggerUpdate(application)
                     com.example.widget.UpcomingCalendarWidgetProvider.triggerUpdate(application)
+                    com.example.widget.UpcomingListWidgetProvider.triggerUpdate(application)
+                    com.example.widget.TodayPreordersWidgetProvider.triggerUpdate(application)
                 }
         }
 
@@ -706,7 +708,21 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                         )
                     )
 
-                    if (reminderEnabled && occurrenceDate >= todayStart) {
+                    syncPastScheduledSubPackage(
+                        schedId = schedId.toInt(),
+                        occurrenceDate = occurrenceDate,
+                        shippingAddressId = shippingAddressId,
+                        forwardShippingPrice = forwardShippingPrice,
+                        forwardTaxPrice = forwardTaxPrice
+                    )
+
+                    val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
+                        occurrenceDate,
+                        reminderDDayOffset,
+                        reminderHour,
+                        reminderMinute
+                    )
+                    if (reminderEnabled && reminderTime > System.currentTimeMillis()) {
                         com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
                             getApplication(),
                             schedId.toInt(),
@@ -719,6 +735,39 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                         )
                     }
                 }
+            }
+        }
+    }
+
+    private suspend fun syncPastScheduledSubPackage(
+        schedId: Int,
+        occurrenceDate: Long,
+        shippingAddressId: Int?,
+        forwardShippingPrice: Double?,
+        forwardTaxPrice: Double?
+    ) {
+        val todayStart = getTodayStartMs()
+        if (occurrenceDate < todayStart) {
+            val userAddresses = userAddressesState.value
+            val hasForwarding = (userAddresses.find { it.id == shippingAddressId }?.forwardingServiceId != null) ||
+                    (forwardShippingPrice != null && forwardShippingPrice > 0.0) ||
+                    (forwardTaxPrice != null && forwardTaxPrice > 0.0)
+
+            val existingPkg = repository.getPackageDirect("scheduled_subs", schedId)
+            val pastPkg = (existingPkg ?: com.example.data.PackageItem(
+                originTable = "scheduled_subs",
+                originId = schedId
+            )).copy(
+                purchaseDate = occurrenceDate,
+                storeShippingDate = occurrenceDate,
+                receivedDate = occurrenceDate,
+                forwarderReceivedDate = if (hasForwarding) occurrenceDate else null,
+                forwarderShippedDate = if (hasForwarding) occurrenceDate else null
+            )
+            if (existingPkg != null) {
+                repository.updatePackage(pastPkg)
+            } else {
+                repository.insertPackage(pastPkg)
             }
         }
     }
@@ -853,6 +902,13 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                                 status = if (itemToReuse.status == "Upcoming") newStatus else itemToReuse.status
                             )
                         )
+                        syncPastScheduledSubPackage(
+                            schedId = itemToReuse.id,
+                            occurrenceDate = missingDate,
+                            shippingAddressId = subscription.shippingAddressId,
+                            forwardShippingPrice = subscription.forwardShippingPrice,
+                            forwardTaxPrice = subscription.forwardTaxPrice
+                        )
                     } else {
                         val scheduledStatus = if (isSameDay(System.currentTimeMillis(), missingDate)) {
                             "Renewed"
@@ -861,7 +917,7 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                         } else {
                             "Upcoming"
                         }
-                        repository.insertScheduledSubscription(
+                        val insertedId = repository.insertScheduledSubscription(
                             ScheduledSubscription(
                                 subscriptionTypeId = subscription.id,
                                 bookTitle = "",
@@ -872,6 +928,13 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                                 isSkipped = false,
                                 picturePath = null
                             )
+                        )
+                        syncPastScheduledSubPackage(
+                            schedId = insertedId.toInt(),
+                            occurrenceDate = missingDate,
+                            shippingAddressId = subscription.shippingAddressId,
+                            forwardShippingPrice = subscription.forwardShippingPrice,
+                            forwardTaxPrice = subscription.forwardTaxPrice
                         )
                     }
                 }
@@ -888,23 +951,40 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             // Resync number of skips left in corresponding skips register
             repository.resyncSkipsLeftForSubscriptionType(subscription.id)
 
-            // Re-schedule remaining future ones if reminder is enabled
-            if (subscription.reminderEnabled) {
-                val updatedScheduled = repository.getScheduledSubscriptionsForType(subscription.id)
-                val todayStart = getTodayStartMs()
+            // Re-schedule remaining future ones if reminder is enabled and subscription is Active
+            val updatedScheduled = repository.getScheduledSubscriptionsForType(subscription.id)
+            if (subscription.reminderEnabled && subscription.status.equals("Active", ignoreCase = true)) {
+                val now = System.currentTimeMillis()
                 updatedScheduled.forEach { sched ->
-                    if (sched.dueDate >= todayStart && !sched.status.equals("Skipped", ignoreCase = true) && !sched.isSkipped) {
-                        com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
-                            getApplication(),
-                            sched.id,
-                            subscription.title,
-                            sched.bookTitle,
+                    val isEligibleStatus = sched.status.equals("Upcoming", ignoreCase = true) || sched.status.equals("Renewed", ignoreCase = true)
+                    if (!sched.status.equals("Skipped", ignoreCase = true) && !sched.isSkipped && isEligibleStatus) {
+                        val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
                             sched.dueDate,
                             subscription.reminderDDayOffset,
                             subscription.reminderHour,
                             subscription.reminderMinute
                         )
+                        if (reminderTime > now) {
+                            com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
+                                getApplication(),
+                                sched.id,
+                                subscription.title,
+                                sched.bookTitle,
+                                sched.dueDate,
+                                subscription.reminderDDayOffset,
+                                subscription.reminderHour,
+                                subscription.reminderMinute
+                            )
+                        } else {
+                            com.example.receiver.ReminderScheduler.cancelScheduledSubReminder(getApplication(), sched.id)
+                        }
+                    } else {
+                        com.example.receiver.ReminderScheduler.cancelScheduledSubReminder(getApplication(), sched.id)
                     }
+                }
+            } else {
+                updatedScheduled.forEach { sched ->
+                    com.example.receiver.ReminderScheduler.cancelScheduledSubReminder(getApplication(), sched.id)
                 }
             }
 
@@ -987,7 +1067,21 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                         )
                     )
 
-                    if (sub.reminderEnabled && occurrenceDate >= todayStart) {
+                    syncPastScheduledSubPackage(
+                        schedId = schedId.toInt(),
+                        occurrenceDate = occurrenceDate,
+                        shippingAddressId = sub.shippingAddressId,
+                        forwardShippingPrice = sub.forwardShippingPrice,
+                        forwardTaxPrice = sub.forwardTaxPrice
+                    )
+
+                    val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
+                        occurrenceDate,
+                        sub.reminderDDayOffset,
+                        sub.reminderHour,
+                        sub.reminderMinute
+                    )
+                    if (sub.reminderEnabled && reminderTime > System.currentTimeMillis()) {
                         com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
                             getApplication(),
                             schedId.toInt(),
@@ -1117,7 +1211,23 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                         )
                     )
 
-                    if (sub.reminderEnabled && occurrenceDate >= todayStart) {
+                    // For past scheduled subs, use same date as in due date for purchase date, store shipping date,
+                    // received date, and forwarder shipping date & forwarder received date (if applies)
+                    syncPastScheduledSubPackage(
+                        schedId = schedId.toInt(),
+                        occurrenceDate = occurrenceDate,
+                        shippingAddressId = sub.shippingAddressId,
+                        forwardShippingPrice = sub.forwardShippingPrice,
+                        forwardTaxPrice = sub.forwardTaxPrice
+                    )
+
+                    val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
+                        occurrenceDate,
+                        sub.reminderDDayOffset,
+                        sub.reminderHour,
+                        sub.reminderMinute
+                    )
+                    if (sub.reminderEnabled && reminderTime > System.currentTimeMillis()) {
                         com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
                             getApplication(),
                             schedId.toInt(),
@@ -1143,7 +1253,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         dueDate: Long,
         status: String,
         picturePath: String? = null,
-        rating: Double = 0.0
+        rating: Double = 0.0,
+        bookmark: Boolean = false
     ) {
         viewModelScope.launch {
             val isNowSkipped = status.equals("Skipped", ignoreCase = true)
@@ -1156,7 +1267,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                 status = status,
                 isSkipped = isNowSkipped,
                 picturePath = picturePath,
-                rating = rating
+                rating = rating,
+                bookmark = bookmark
             )
             val pattern = userState.value?.dateFormat ?: "yyyy-MM-dd"
             if (isNowSkipped) {
@@ -1167,6 +1279,28 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             val newId = repository.insertScheduledSubscription(newSched)
+            val parentSub = repository.getSubscriptionTypeById(subscriptionTypeId)
+            val isNewEligible = status.equals("Upcoming", ignoreCase = true) || status.equals("Renewed", ignoreCase = true)
+            if (parentSub != null && parentSub.reminderEnabled && parentSub.status.equals("Active", ignoreCase = true) && !isNowSkipped && isNewEligible) {
+                val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
+                    dueDate,
+                    parentSub.reminderDDayOffset,
+                    parentSub.reminderHour,
+                    parentSub.reminderMinute
+                )
+                if (reminderTime > System.currentTimeMillis()) {
+                    com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
+                        getApplication(),
+                        newId.toInt(),
+                        parentSub.title,
+                        bookTitle,
+                        dueDate,
+                        parentSub.reminderDDayOffset,
+                        parentSub.reminderHour,
+                        parentSub.reminderMinute
+                    )
+                }
+            }
             syncStorageReminderForOrigin("scheduled_subs", newId.toInt())
         }
     }
@@ -1193,19 +1327,28 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             // Cancel old reminder
             com.example.receiver.ReminderScheduler.cancelScheduledSubReminder(getApplication(), scheduled.id)
             
-            // Re-schedule reminder if parent subscription type has reminders enabled
+            // Re-schedule reminder if parent subscription type has reminders enabled and reminder time is in future
             val subType = repository.getSubscriptionTypeById(scheduled.subscriptionTypeId)
-            if (subType != null && subType.reminderEnabled && !isNowSkipped) {
-                com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
-                    getApplication(),
-                    scheduled.id,
-                    subType.title,
-                    scheduled.bookTitle,
+            val isEligibleStatus = scheduled.status.equals("Upcoming", ignoreCase = true) || scheduled.status.equals("Renewed", ignoreCase = true)
+            if (subType != null && subType.reminderEnabled && subType.status.equals("Active", ignoreCase = true) && !isNowSkipped && isEligibleStatus) {
+                val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
                     scheduled.dueDate,
                     subType.reminderDDayOffset,
                     subType.reminderHour,
                     subType.reminderMinute
                 )
+                if (reminderTime > System.currentTimeMillis()) {
+                    com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
+                        getApplication(),
+                        scheduled.id,
+                        subType.title,
+                        scheduled.bookTitle,
+                        scheduled.dueDate,
+                        subType.reminderDDayOffset,
+                        subType.reminderHour,
+                        subType.reminderMinute
+                    )
+                }
             }
             syncStorageReminderForOrigin("scheduled_subs", scheduled.id)
         }
@@ -1250,19 +1393,28 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             }
 
             com.example.receiver.ReminderScheduler.cancelScheduledSubReminder(getApplication(), scheduled.id)
-            if (!updated.isSkipped) {
+            val isEligibleAfterToggle = updated.status.equals("Upcoming", ignoreCase = true) || updated.status.equals("Renewed", ignoreCase = true)
+            if (!updated.isSkipped && isEligibleAfterToggle) {
                 val subType = repository.getSubscriptionTypeById(scheduled.subscriptionTypeId)
-                if (subType != null && subType.reminderEnabled) {
-                    com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
-                        getApplication(),
-                        scheduled.id,
-                        subType.title,
-                        scheduled.bookTitle,
+                if (subType != null && subType.reminderEnabled && subType.status.equals("Active", ignoreCase = true)) {
+                    val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
                         scheduled.dueDate,
                         subType.reminderDDayOffset,
                         subType.reminderHour,
                         subType.reminderMinute
                     )
+                    if (reminderTime > System.currentTimeMillis()) {
+                        com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
+                            getApplication(),
+                            scheduled.id,
+                            subType.title,
+                            scheduled.bookTitle,
+                            scheduled.dueDate,
+                            subType.reminderDDayOffset,
+                            subType.reminderHour,
+                            subType.reminderMinute
+                        )
+                    }
                 }
             }
         }
@@ -1297,10 +1449,12 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
         shippingPrice: Double? = null,
         taxPrice: Double? = null,
         forwardShippingPrice: Double? = null,
-        forwardTaxPrice: Double? = null
+        forwardTaxPrice: Double? = null,
+        wishlist: Boolean = false
     ) {
         viewModelScope.launch {
             val today = System.currentTimeMillis()
+            val isWishlist = wishlist
             val tempPreorder = Preorder(
                 bookstoreId = bookstoreId,
                 picturePath = picturePath,
@@ -1310,7 +1464,8 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                 price = 0.0,
                 rangedSaleDateStart = saleDateStart,
                 rangedSaleDateEnd = saleDateEnd,
-                status = status
+                status = status,
+                wishlist = isWishlist
             )
             val finalStatus = if (status.equals("Upcoming", ignoreCase = true) && tempPreorder.isEndPassed(today)) "Released" else status
 
@@ -1343,20 +1498,29 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
                     shippingPrice = shippingPrice,
                     taxPrice = taxPrice,
                     forwardShippingPrice = forwardShippingPrice,
-                    forwardTaxPrice = forwardTaxPrice
+                    forwardTaxPrice = forwardTaxPrice,
+                    wishlist = isWishlist
                 )
             )
 
             if (reminderEnabled) {
-                com.example.receiver.ReminderScheduler.schedulePreorderReminder(
-                    getApplication(),
-                    preorderId.toInt(),
-                    bookTitle,
+                val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
                     saleDateStart,
                     reminderDDayOffset,
                     reminderHour,
                     reminderMinute
                 )
+                if (reminderTime > System.currentTimeMillis()) {
+                    com.example.receiver.ReminderScheduler.schedulePreorderReminder(
+                        getApplication(),
+                        preorderId.toInt(),
+                        bookTitle,
+                        saleDateStart,
+                        reminderDDayOffset,
+                        reminderHour,
+                        reminderMinute
+                    )
+                }
             }
             syncStorageReminderForOrigin("preorders", preorderId.toInt())
         }
@@ -1371,19 +1535,29 @@ class BookishViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 preorder.price
             }
-            val preorderToSave = preorder.copy(price = effectivePrice, status = finalStatus)
+            val isWishlist = preorder.wishlist
+            val preorderToSave = preorder.copy(price = effectivePrice, status = finalStatus, wishlist = isWishlist)
             repository.updatePreorder(preorderToSave)
             com.example.receiver.ReminderScheduler.cancelPreorderReminder(getApplication(), preorder.id)
-            if (preorder.reminderEnabled) {
-                com.example.receiver.ReminderScheduler.schedulePreorderReminder(
-                    getApplication(),
-                    preorder.id,
-                    preorder.bookTitle,
+            val isPreorderEligible = preorderToSave.status.equals("Upcoming", ignoreCase = true) || preorderToSave.status.equals("Released", ignoreCase = true)
+            if (preorder.reminderEnabled && isPreorderEligible) {
+                val reminderTime = com.example.receiver.ReminderScheduler.calculateReminderTime(
                     preorder.rangedSaleDateStart,
                     preorder.reminderDDayOffset,
                     preorder.reminderHour,
                     preorder.reminderMinute
                 )
+                if (reminderTime > now) {
+                    com.example.receiver.ReminderScheduler.schedulePreorderReminder(
+                        getApplication(),
+                        preorder.id,
+                        preorder.bookTitle,
+                        preorder.rangedSaleDateStart,
+                        preorder.reminderDDayOffset,
+                        preorder.reminderHour,
+                        preorder.reminderMinute
+                    )
+                }
             }
             syncStorageReminderForOrigin("preorders", preorder.id)
         }

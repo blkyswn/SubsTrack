@@ -48,13 +48,6 @@
                 android:padding="4dp"
                 android:src="@drawable/ic_chevron_right"
                 android:contentDescription="Next" />
-
-            <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:padding="4dp"
-                android:src="@drawable/ic_expand_more"
-                android:contentDescription="Toggle" />
         </LinearLayout>
 
         <!-- Weekday Headers -->
@@ -81,28 +74,33 @@
             android:layout_weight="1"
             android:orientation="horizontal">
 
-            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="2dp" android:text="11" android:textSize="11sp" android:textColor="#FF222222" />
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1.5dp">
+                <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_normal" android:scaleType="fitXY" android:contentDescription="@null" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3.5dp" android:text="11" android:textSize="11.5sp" android:textColor="#FF222222" />
             </FrameLayout>
 
-            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="2dp" android:text="12" android:textSize="11sp" android:textColor="#FF222222" />
-                <ImageView android:layout_width="16dp" android:layout_height="22dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_day_cell_bg" android:contentDescription="@null" />
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1.5dp">
+                <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_event" android:scaleType="fitXY" android:contentDescription="@null" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3.5dp" android:text="12" android:textSize="11.5sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <ImageView android:layout_width="18dp" android:layout_height="24dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:src="@drawable/widget_calendar_bg" android:contentDescription="@null" />
             </FrameLayout>
 
-            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="2dp" android:text="13" android:textSize="11sp" android:textColor="#FF222222" />
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1.5dp">
+                <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_normal" android:scaleType="fitXY" android:contentDescription="@null" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3.5dp" android:text="13" android:textSize="11.5sp" android:textColor="#FF222222" />
             </FrameLayout>
 
-            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="2dp" android:text="14" android:textSize="11sp" android:textColor="#FF222222" />
-                <ImageView android:layout_width="16dp" android:layout_height="22dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_day_cell_bg" android:contentDescription="@null" />
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1.5dp">
+                <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_event" android:scaleType="fitXY" android:contentDescription="@null" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3.5dp" android:text="14" android:textSize="11.5sp" android:textStyle="bold" android:textColor="#FF222222" />
+                <ImageView android:layout_width="18dp" android:layout_height="24dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:src="@drawable/widget_calendar_bg" android:contentDescription="@null" />
             </FrameLayout>
 
-            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">
-                <ImageView android:layout_width="18dp" android:layout_height="18dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="1dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
-                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="2dp" android:text="15" android:textSize="11sp" android:textStyle="bold" android:textColor="#FFFFFFFF" />
-                <ImageView android:layout_width="16dp" android:layout_height="22dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="2dp" android:src="@drawable/widget_day_cell_bg" android:contentDescription="@null" />
+            <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1.5dp">
+                <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/widget_day_cell_event" android:scaleType="fitXY" android:contentDescription="@null" />
+                <ImageView android:layout_width="20dp" android:layout_height="20dp" android:layout_gravity="top|center_horizontal" android:layout_marginTop="2dp" android:src="@drawable/widget_day_circle" android:contentDescription="@null" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:layout_marginTop="3.5dp" android:text="15" android:textSize="11.5sp" android:textStyle="bold" android:textColor="#FFFFFFFF" />
+                <ImageView android:layout_width="18dp" android:layout_height="24dp" android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="4dp" android:src="@drawable/widget_calendar_bg" android:contentDescription="@null" />
             </FrameLayout>
 
             <FrameLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="1dp">

@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/today_preorders_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Empty State View: "No preorders today" matching Home screen -->
+    <FrameLayout
+        android:id="@+id/today_preorders_empty_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/today_preorders_empty_bg"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:src="@drawable/widget_preorder_card_bg"
+            android:scaleType="fitXY"
+            android:contentDescription="@null" />
+
+        <LinearLayout
+            android:id="@+id/today_preorders_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <ImageView
+                android:id="@+id/today_preorders_empty_icon"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:src="@drawable/ic_status_shopping_bag"
+                android:contentDescription="@null" />
+
+            <TextView
+                android:id="@+id/today_preorders_empty_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="No preorders today"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFFFF" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Main Preorder Card View (Shown when today's preorders exist) -->
+    <LinearLayout
+        android:id="@+id/widget_preorder_item_root"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingVertical="2dp"
+        android:visibility="gone">
+
+        <!-- Card Container matching Home screen PreorderTileView -->
+        <FrameLayout
+            android:id="@+id/widget_preorder_card_container"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+
+            <!-- Card Background with 20dp rounded corners and subtle border matching home screen preorder card -->
+            <ImageView
+                android:id="@+id/widget_preorder_item_bg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:src="@drawable/widget_card_bg_preordered"
+                android:scaleType="fitXY"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:id="@+id/widget_preorder_card_content"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="10dp">
+
+                <!-- Asymmetric Left Indicator Bar (Always visible inside card, matching home screen) -->
+                <ImageView
+                    android:id="@+id/widget_preorder_bar"
+                    android:layout_width="3.5dp"
+                    android:layout_height="match_parent"
+                    android:minHeight="30dp"
+                    android:layout_marginEnd="10dp"
+                    android:layout_marginVertical="3dp"
+                    android:src="@drawable/widget_vertical_bar"
+                    android:scaleType="fitXY"
+                    android:contentDescription="@null" />
+
+                <!-- Cover / Bookstore Picture Box (Rounded 10dp) -->
+                <FrameLayout
+                    android:id="@+id/widget_preorder_thumb_container"
+                    android:layout_width="54dp"
+                    android:layout_height="match_parent"
+                    android:minHeight="36dp"
+                    android:layout_marginVertical="2dp"
+                    android:layout_gravity="center_vertical">
+
+                    <!-- Rounded background placeholder -->
+                    <ImageView
+                        android:id="@+id/widget_preorder_thumb_bg"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:src="@drawable/widget_thumb_box_bg"
+                        android:scaleType="fitXY"
+                        android:contentDescription="@null" />
+
+                    <!-- Initial letter fallback -->
+                    <TextView
+                        android:id="@+id/widget_preorder_thumb_initial"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="P"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:textColor="#FF2563EB" />
+
+                    <!-- Actual Cover Image (Small thumbnail loaded with 10dp corners) -->
+                    <ImageView
+                        android:id="@+id/widget_preorder_thumb_img"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:scaleType="fitXY"
+                        android:contentDescription="Book Cover"
+                        android:visibility="gone" />
+                </FrameLayout>
+
+                <!-- Middle Column: Title, Author, Bookstore, Status+Price -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:layout_marginEnd="8dp"
+                    android:orientation="vertical"
+                    android:gravity="center_vertical">
+
+                    <!-- Title -->
+                    <TextView
+                        android:id="@+id/widget_preorder_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Book Title"
+                        android:textSize="12.5sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:singleLine="true"
+                        android:ellipsize="end" />
+
+                    <!-- Author -->
+                    <TextView
+                        android:id="@+id/widget_preorder_author"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="0.5dp"
+                        android:text="By Author"
+                        android:textSize="10.5sp"
+                        android:textColor="#FFCCCCCC"
+                        android:singleLine="true"
+                        android:ellipsize="end" />
+
+                    <!-- Bookstore -->
+                    <TextView
+                        android:id="@+id/widget_preorder_bookstore"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="0.5dp"
+                        android:text="Bookstore"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:textColor="#FF60A5FA"
+                        android:singleLine="true"
+                        android:ellipsize="end" />
+
+                    <!-- Status Badge + Price Row -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2.5dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <!-- Filled Status Pill -->
+                        <FrameLayout
+                            android:id="@+id/widget_preorder_status_pill_container"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content">
+
+                            <ImageView
+                                android:id="@+id/widget_preorder_status_pill_bg"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:src="@drawable/widget_status_pill_bg"
+                                android:scaleType="fitXY"
+                                android:contentDescription="@null" />
+
+                            <LinearLayout
+                                android:id="@+id/widget_preorder_status_pill"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:paddingLeft="4.5dp"
+                                android:paddingRight="4.5dp"
+                                android:paddingTop="1.5dp"
+                                android:paddingBottom="1.5dp"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <ImageView
+                                    android:id="@+id/widget_preorder_status_icon"
+                                    android:layout_width="8.5dp"
+                                    android:layout_height="8.5dp"
+                                    android:layout_marginEnd="2.5dp"
+                                    android:src="@drawable/ic_status_shopping_bag"
+                                    android:contentDescription="@null" />
+
+                                <TextView
+                                    android:id="@+id/widget_preorder_status"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="Preordered"
+                                    android:textSize="8.5sp"
+                                    android:textStyle="bold"
+                                    android:textColor="#FFFFFFFF" />
+                            </LinearLayout>
+                        </FrameLayout>
+
+                        <TextView
+                            android:id="@+id/widget_preorder_dot_separator"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="3dp"
+                            android:layout_marginEnd="3dp"
+                            android:text="•"
+                            android:textSize="9sp"
+                            android:textStyle="bold"
+                            android:textColor="#88FFFFFF" />
+
+                        <TextView
+                            android:id="@+id/widget_preorder_price"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="$0.00"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:textColor="#FFFFFFFF" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Right Column: Date Card Box -->
+                <FrameLayout
+                    android:id="@+id/widget_preorder_date_card"
+                    android:layout_width="56dp"
+                    android:layout_height="match_parent"
+                    android:minHeight="36dp"
+                    android:layout_marginStart="10dp"
+                    android:layout_marginVertical="2dp"
+                    android:layout_gravity="center_vertical">
+
+                    <ImageView
+                        android:id="@+id/widget_preorder_date_card_bg"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:src="@drawable/widget_date_box_preordered"
+                        android:scaleType="fitXY"
+                        android:contentDescription="@null" />
+
+                    <LinearLayout
+                        android:id="@+id/widget_preorder_date_card_content"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="vertical"
+                        android:gravity="center"
+                        android:paddingVertical="6dp"
+                        android:paddingHorizontal="6dp">
+
+                        <TextView
+                            android:id="@+id/widget_preorder_date_month"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="OCT"
+                            android:textSize="8.5sp"
+                            android:textStyle="bold"
+                            android:textColor="#FF60A5FA" />
+
+                        <TextView
+                            android:id="@+id/widget_preorder_date_day"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="19"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="#FFFFFFFF" />
+
+                        <TextView
+                            android:id="@+id/widget_preorder_date_time"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="00:00"
+                            android:textSize="8.5sp"
+                            android:textStyle="bold"
+                            android:textColor="#FF60A5FA" />
+                    </LinearLayout>
+                </FrameLayout>
+
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Right Slider Indicator Dots & Tap Zone (Moved to the right side) -->
+        <FrameLayout
+            android:id="@+id/widget_preorder_dots_touch_area"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="center_vertical"
+            android:paddingStart="6dp"
+            android:paddingEnd="2dp">
+
+            <ImageView
+                android:id="@+id/widget_preorder_slider_dots_img"
+                android:layout_width="4dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:scaleType="centerInside"
+                android:visibility="gone"
+                android:contentDescription="Next preorder" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

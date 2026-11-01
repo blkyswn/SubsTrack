@@ -601,6 +601,7 @@ object ExcelImporter {
             val status = getString(row, "status") ?: "Upcoming"
             val isSkipped = parseBoolean(getString(row, "is skipped", "skipped"))
             val rating = getDouble(row, "rating") ?: 0.0
+            val bookmark = parseBoolean(getString(row, "bookmark", "is bookmark", "wishlist", "is wishlist"))
             val picturePath = getString(row, "picture path", "picture")
 
             ScheduledSubscription(
@@ -613,7 +614,8 @@ object ExcelImporter {
                 status = status,
                 isSkipped = isSkipped,
                 picturePath = picturePath?.ifBlank { null },
-                rating = rating
+                rating = rating,
+                bookmark = bookmark
             )
         }
         val scheduledTitleToId = scheduledSubscriptions.associate { it.bookTitle.lowercase(Locale.ROOT) to it.id }
@@ -646,6 +648,7 @@ object ExcelImporter {
             val (hour, minute) = parseHourMinute(reminderTimeStr) ?: (8 to 0)
 
             val rating = getDouble(row, "rating") ?: 0.0
+            val isWishlist = parseBoolean(getString(row, "wishlist", "is wishlist")) || status.equals("Wishlist", ignoreCase = true)
             val addrStr = getString(row, "shipping address")?.lowercase(Locale.ROOT)
             val shippingAddressId = getInt(row, "shipping address id")
                 ?: addrStr?.let { addressMatchToId[it] }
@@ -674,7 +677,8 @@ object ExcelImporter {
                 shippingPrice = shipping,
                 taxPrice = tax,
                 forwardShippingPrice = fwdShipping,
-                forwardTaxPrice = fwdTax
+                forwardTaxPrice = fwdTax,
+                wishlist = isWishlist
             )
         }
         val preorderTitleToId = preorders.associate { it.bookTitle.lowercase(Locale.ROOT) to it.id }

@@ -601,6 +601,7 @@ object ExcelExporter {
     <Cell ss:StyleID="Header"><Data ss:Type="String">Status</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Is Skipped</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Rating</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Bookmark</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Picture Path</Data></Cell>
    </Row>
 """)
@@ -619,6 +620,7 @@ object ExcelExporter {
     <Cell><Data ss:Type="String">${escapeXml(sc.status)}</Data></Cell>
     <Cell><Data ss:Type="String">${if (sc.isSkipped) "Yes" else "No"}</Data></Cell>
     <Cell><Data ss:Type="Number">${sc.rating}</Data></Cell>
+    <Cell><Data ss:Type="String">${if (sc.bookmark) "Yes" else "No"}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(sc.picturePath ?: "")}</Data></Cell>
    </Row>
 """)
@@ -673,6 +675,7 @@ object ExcelExporter {
     <Cell ss:StyleID="Header"><Data ss:Type="String">Reminder Offset</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Reminder Time</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Rating</Data></Cell>
+    <Cell ss:StyleID="Header"><Data ss:Type="String">Wishlist</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Picture Path</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Shipping Address ID</Data></Cell>
     <Cell ss:StyleID="Header"><Data ss:Type="String">Shipping Address</Data></Cell>
@@ -708,6 +711,7 @@ object ExcelExporter {
     <Cell><Data ss:Type="Number">${pr.reminderDDayOffset}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(timeStr)}</Data></Cell>
     <Cell><Data ss:Type="Number">${pr.rating}</Data></Cell>
+    <Cell><Data ss:Type="String">${if (pr.wishlist || pr.status.equals("Wishlist", ignoreCase = true)) "Yes" else "No"}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(pr.picturePath ?: "")}</Data></Cell>
     <Cell><Data ss:Type="String">${pr.shippingAddressId?.toString() ?: ""}</Data></Cell>
     <Cell><Data ss:Type="String">${escapeXml(shippingAddrStr)}</Data></Cell>

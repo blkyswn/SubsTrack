@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,29 +52,50 @@ fun InlineReminderSelector(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Icon(
-                    imageVector = Icons.Default.Notifications,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
-                val ddayLabel = if (reminderDDayOffset != null) {
-                    if (dDayLabelFormatter != null) dDayLabelFormatter(reminderDDayOffset)
-                    else if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
-                } else null
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    val timeLabel = String.format("%02d:%02d", reminderHour, reminderMinute)
+                    val ddayLabel = if (reminderDDayOffset != null) {
+                        if (dDayLabelFormatter != null) dDayLabelFormatter(reminderDDayOffset)
+                        else if (reminderDDayOffset == 0) "D-Day" else "$reminderDDayOffset days before"
+                    } else null
 
-                val headerText = if (ddayLabel != null) "Alert on $ddayLabel at $timeLabel" else "Delivery Time: $timeLabel"
+                    val headerText = if (ddayLabel != null) "Alert on $ddayLabel at $timeLabel" else "Delivery Time: $timeLabel"
 
-                Text(
-                    text = headerText,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                    Text(
+                        text = headerText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                val currentContext = androidx.compose.ui.platform.LocalContext.current
+                FilledTonalButton(
+                    onClick = {
+                        val sampleType = if (dDayLabelFormatter != null) "forwarding_storage" else if (reminderDDayOffset != null) "preorder" else "subscription"
+                        com.example.receiver.ReminderReceiver.sendTestNotification(
+                            context = currentContext,
+                            type = sampleType,
+                            title = "Preorder Release Alert"
+                        )
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp).testTag("test_reminder_btn")
+                ) {
+                    Text("Test", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -184,31 +206,36 @@ fun <T> RevolverWheelPicker(
         snapPosition = SnapPosition.Center
     )
 
-    LaunchedEffect(selectedItem) {
-        val targetSelIdx = items.indexOf(selectedItem).coerceAtLeast(0)
-        val currentListIdx = listState.firstVisibleItemIndex
-        val currentSelIdx = currentListIdx % items.size
-        if (currentSelIdx != targetSelIdx) {
-            val diff = targetSelIdx - currentSelIdx
-            listState.scrollToItem(currentListIdx + diff)
+    // Real-time center item detection
+    val currentCenterItem by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val visibleItems = layoutInfo.visibleItemsInfo
+            if (visibleItems.isEmpty()) return@derivedStateOf selectedItem
+            val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+            val centerItem = visibleItems.minByOrNull { abs((it.offset + it.size / 2) - viewportCenter) }
+            if (centerItem != null) {
+                items[centerItem.index % items.size]
+            } else {
+                selectedItem
+            }
         }
     }
 
-    val isScrollInProgress = listState.isScrollInProgress
-    LaunchedEffect(isScrollInProgress) {
-        if (!isScrollInProgress) {
-            val layoutInfo = listState.layoutInfo
-            val visibleItems = layoutInfo.visibleItemsInfo
-            if (visibleItems.isNotEmpty()) {
-                val viewportMiddle = layoutInfo.viewportStartOffset + (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset) / 2
-                val closestItem = visibleItems.minByOrNull {
-                    val itemMiddle = it.offset + it.size / 2
-                    abs(itemMiddle - viewportMiddle)
-                }
-                if (closestItem != null) {
-                    val actualIndex = closestItem.index % items.size
-                    onItemSelected(items[actualIndex])
-                }
+    LaunchedEffect(currentCenterItem) {
+        if (currentCenterItem != selectedItem) {
+            onItemSelected(currentCenterItem)
+        }
+    }
+
+    LaunchedEffect(selectedItem) {
+        if (!listState.isScrollInProgress && currentCenterItem != selectedItem) {
+            val targetSelIdx = items.indexOf(selectedItem).coerceAtLeast(0)
+            val currentListIdx = listState.firstVisibleItemIndex
+            val currentSelIdx = currentListIdx % items.size
+            if (currentSelIdx != targetSelIdx) {
+                val diff = targetSelIdx - currentSelIdx
+                listState.scrollToItem(currentListIdx + diff)
             }
         }
     }

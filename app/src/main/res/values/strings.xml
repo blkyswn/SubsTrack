@@ -4,4 +4,8 @@
     <string name="calendar_widget_description">Displays today\'s and upcoming book subscriptions and preorders.</string>
     <string name="upcoming_calendar_widget_name">Upcoming Calendar</string>
     <string name="upcoming_calendar_widget_description">Interactive calendar displaying book subscriptions and preorders with monthly and weekly views.</string>
+    <string name="upcoming_list_widget_name">Upcoming List</string>
+    <string name="upcoming_list_widget_description">Displays the next 5 upcoming book subscriptions and preorders styled after the homescreen timeline.</string>
+    <string name="today_preorders_widget_name">Today\'s Preorders</string>
+    <string name="today_preorders_widget_description">Scroll through today\'s preorders</string>
 </resources>

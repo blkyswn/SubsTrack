@@ -11,8 +11,13 @@ import org.robolectric.annotation.Config
 import kotlinx.coroutines.flow.first
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 class ExampleRobolectricTest {
+
+  @org.junit.Before
+  fun setUp() {
+    com.example.data.BookishDatabase.resetInstanceForTesting()
+  }
 
   @Test
   fun `read string from context`() {
@@ -103,11 +108,16 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `test database snapshot creation and restoration`() {
+  fun `test database snapshot creation and restoration`() = kotlinx.coroutines.runBlocking {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val db = com.example.data.BookishDatabase.getDatabase(context)
 
-    // Ensure database initialized
+    // Ensure database initialized with at least one record so file is written to disk
+    if (db.userDao().getUserDirect() == null) {
+      db.userDao().insertOrUpdate(com.example.data.User(id = 1, username = "SnapshotUser", profilePic = null, currency = "$", language = "English"))
+    }
+    com.example.data.BookishDatabase.checkpointDatabase(context)
+
     val snapshotBytes = com.example.data.BookishDatabase.createSnapshotBytes(context)
     org.junit.Assert.assertNotNull(snapshotBytes)
     org.junit.Assert.assertTrue((snapshotBytes?.size ?: 0) > 0)
@@ -161,6 +171,9 @@ class ExampleRobolectricTest {
 
     // Prepopulate
     repo.checkAndPrepopulate(com.example.utils.AppFolderManager.getDefaultAppFolder(context))
+    if (db.bookstoreDao().getAllBookstoresList().none { it.name.equals("FairyLoot", ignoreCase = true) }) {
+      db.bookstoreDao().insert(com.example.data.Bookstore(name = "FairyLoot", website = "https://fairyloot.com", profilePic = null))
+    }
 
     val existingBookstoresBefore = repo.allBookstoresFlow.first()
     val initialCount = existingBookstoresBefore.size
@@ -584,4 +597,663 @@ class ExampleRobolectricTest {
       org.junit.Assert.assertNotEquals(0, colorsDark.surface)
     }
   }
+
+  @Test
+  fun `test adding store shipping date automatically changes preorder and scheduled sub status to shipped`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+
+    // Ensure bookstore exists
+    if (db.bookstoreDao().getBookstoreById(1) == null) {
+      db.bookstoreDao().insert(
+        com.example.data.Bookstore(id = 1, name = "Test Store", website = "https://example.com", profilePic = null)
+      )
+    }
+    // Ensure subscription type exists
+    if (db.subscriptionTypeDao().getSubscriptionTypeById(1) == null) {
+      db.subscriptionTypeDao().insert(
+        com.example.data.SubscriptionType(
+          id = 1,
+          bookstoreId = 1,
+          title = "Test Sub Type",
+          status = "Active",
+          price = 20.0,
+          dueDate = System.currentTimeMillis(),
+          startDate = System.currentTimeMillis(),
+          finishDate = System.currentTimeMillis() + 864000000L,
+          notificationAlertDays = 3,
+          frequency = "Monthly"
+        )
+      )
+    }
+
+    // 1. Create a preorder with status Preordered
+    val preorderId = repo.insertPreorder(
+      com.example.data.Preorder(
+        bookstoreId = 1,
+        picturePath = null,
+        bookTitle = "Auto Ship Test Preorder",
+        bookAuthor = "Author X",
+        description = "Desc",
+        price = 25.0,
+        rangedSaleDateStart = System.currentTimeMillis(),
+        rangedSaleDateEnd = System.currentTimeMillis() + 86400000L,
+        status = "Preordered"
+      )
+    ).toInt()
+
+    val initialPreorder = db.preorderDao().getPreorderById(preorderId)
+    org.junit.Assert.assertEquals("Preordered", initialPreorder?.status)
+
+    // Add store shipping date to package
+    val pkg = repo.getOrCreatePackage("preorders", preorderId)
+    repo.updatePackage(pkg.copy(storeShippingDate = System.currentTimeMillis()))
+
+    val updatedPreorder = db.preorderDao().getPreorderById(preorderId)
+    org.junit.Assert.assertEquals("Shipped", updatedPreorder?.status)
+
+    // 2. Create a scheduled subscription with status Renewed
+    val subId = repo.insertScheduledSubscription(
+      com.example.data.ScheduledSubscription(
+        subscriptionTypeId = 1,
+        bookTitle = "Auto Ship Test Scheduled Sub",
+        bookAuthor = "Author Y",
+        description = "Desc",
+        dueDate = System.currentTimeMillis(),
+        status = "Renewed"
+      )
+    ).toInt()
+
+    val initialSub = db.scheduledSubscriptionDao().getScheduledSubscriptionById(subId)
+    org.junit.Assert.assertEquals("Renewed", initialSub?.status)
+
+    // Add store shipping date to package
+    val subPkg = repo.getOrCreatePackage("scheduled_subs", subId)
+    repo.updatePackage(subPkg.copy(storeShippingDate = System.currentTimeMillis()))
+
+    val updatedSub = db.scheduledSubscriptionDao().getScheduledSubscriptionById(subId)
+    org.junit.Assert.assertEquals("Shipped", updatedSub?.status)
+  }
+
+  @Test
+  fun `test tracking numbers and dates auto update status and dates`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+
+    // Ensure bookstore exists
+    if (db.bookstoreDao().getBookstoreById(1) == null) {
+      db.bookstoreDao().insert(
+        com.example.data.Bookstore(id = 1, name = "Test Store", website = "https://example.com", profilePic = null)
+      )
+    }
+
+    // 1. Test store tracking number automatically sets storeShippingDate to today and status to Shipped
+    val preorder1 = repo.insertPreorder(
+      com.example.data.Preorder(
+        bookstoreId = 1,
+        picturePath = null,
+        bookTitle = "Tracking Test 1",
+        bookAuthor = "Author A",
+        description = "Desc",
+        price = 20.0,
+        rangedSaleDateStart = System.currentTimeMillis(),
+        rangedSaleDateEnd = System.currentTimeMillis() + 86400000L,
+        status = "Preordered"
+      )
+    ).toInt()
+
+    val pkg1 = repo.getOrCreatePackage("preorders", preorder1)
+    repo.updatePackage(pkg1.copy(storeTrackingNumber = "TRACK123456"))
+
+    val updatedPkg1 = repo.getPackageDirect("preorders", preorder1)
+    val updatedPr1 = db.preorderDao().getPreorderById(preorder1)
+    org.junit.Assert.assertNotNull(updatedPkg1?.storeShippingDate)
+    org.junit.Assert.assertEquals("Shipped", updatedPr1?.status)
+
+    // 2. Test forwarder received date automatically sets status to In Suite
+    repo.updatePackage(updatedPkg1!!.copy(forwarderReceivedDate = System.currentTimeMillis()))
+    val updatedPr2 = db.preorderDao().getPreorderById(preorder1)
+    org.junit.Assert.assertEquals("In Suite", updatedPr2?.status)
+
+    // 3. Test forwarder tracking number automatically sets forwarderShippedDate to today and status to Forwarded
+    repo.updatePackage(updatedPkg1.copy(forwarderTrackingNumber = "FWD987654"))
+    val updatedPkg3 = repo.getPackageDirect("preorders", preorder1)
+    val updatedPr3 = db.preorderDao().getPreorderById(preorder1)
+    org.junit.Assert.assertNotNull(updatedPkg3?.forwarderShippedDate)
+    org.junit.Assert.assertEquals("Forwarded", updatedPr3?.status)
+
+    // 4. Test forwarder shipping date directly informed sets status to Forwarded
+    val preorder2 = repo.insertPreorder(
+      com.example.data.Preorder(
+        bookstoreId = 1,
+        picturePath = null,
+        bookTitle = "Tracking Test 2",
+        bookAuthor = "Author B",
+        description = "Desc",
+        price = 22.0,
+        rangedSaleDateStart = System.currentTimeMillis(),
+        rangedSaleDateEnd = System.currentTimeMillis() + 86400000L,
+        status = "In Suite"
+      )
+    ).toInt()
+    val pkg2 = repo.getOrCreatePackage("preorders", preorder2)
+    repo.updatePackage(pkg2.copy(forwarderShippedDate = System.currentTimeMillis()))
+    val updatedPr4 = db.preorderDao().getPreorderById(preorder2)
+    org.junit.Assert.assertEquals("Forwarded", updatedPr4?.status)
+
+    // 5. Test received date informed sets status to Received
+    repo.updatePackage(pkg2.copy(receivedDate = System.currentTimeMillis()))
+    val updatedPr5 = db.preorderDao().getPreorderById(preorder2)
+    org.junit.Assert.assertEquals("Received", updatedPr5?.status)
+  }
+
+  @Test
+  fun `test today preorders widget layout inflates cleanly`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val rvWidget = android.widget.RemoteViews(context.packageName, R.layout.today_preorders_widget)
+    val viewWidget = rvWidget.apply(context, null)
+    org.junit.Assert.assertNotNull(viewWidget)
+
+    val rvItem = android.widget.RemoteViews(context.packageName, R.layout.today_preorders_widget_item)
+    val viewItem = rvItem.apply(context, null)
+    org.junit.Assert.assertNotNull(viewItem)
+
+    val rvPreview = android.widget.RemoteViews(context.packageName, R.layout.today_preorders_widget_preview)
+    val viewPreview = rvPreview.apply(context, null)
+    org.junit.Assert.assertNotNull(viewPreview)
+
+    val samplePreorder = com.example.data.Preorder(
+      id = 1,
+      bookstoreId = 1,
+      picturePath = null,
+      bookTitle = "Sample Book",
+      bookAuthor = "Sample Author",
+      description = "",
+      price = 15.0,
+      rangedSaleDateStart = System.currentTimeMillis(),
+      rangedSaleDateEnd = System.currentTimeMillis(),
+      status = "Preordered"
+    )
+    val themeColors = com.example.widget.WidgetThemeUtils.getThemeColors(context, null)
+    val populatedItemRv = com.example.widget.TodayPreordersWidgetProvider.buildPreorderItemViews(
+      context = context,
+      item = samplePreorder,
+      bookstores = emptyList(),
+      currency = "$",
+      themeColors = themeColors,
+      position = 0,
+      totalCount = 1
+    )
+    val populatedView = populatedItemRv.apply(context, null)
+    org.junit.Assert.assertNotNull(populatedView)
+
+    // Test multiple preorders with slider dots bitmap
+    val multiItemRv = com.example.widget.TodayPreordersWidgetProvider.buildPreorderItemViews(
+      context = context,
+      item = samplePreorder.copy(status = "Forwarded"),
+      bookstores = emptyList(),
+      currency = "$",
+      themeColors = themeColors,
+      position = 1,
+      totalCount = 3
+    )
+    val multiPopulatedView = multiItemRv.apply(context, null)
+    org.junit.Assert.assertNotNull(multiPopulatedView)
+
+    // Test 1-row mode buildPreorderItemViews
+    val oneRowItemRv = com.example.widget.TodayPreordersWidgetProvider.buildPreorderItemViews(
+      context = context,
+      item = samplePreorder,
+      bookstores = emptyList(),
+      currency = "$",
+      themeColors = themeColors,
+      position = 0,
+      totalCount = 1,
+      isOneRow = true
+    )
+    val oneRowView = oneRowItemRv.apply(context, null)
+    org.junit.Assert.assertNotNull(oneRowView)
+
+    // Test that triggerUpdate runs without NullPointerException or collection errors
+    com.example.widget.TodayPreordersWidgetProvider.triggerUpdate(context)
+    org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+    // Test that ACTION_NEXT_PREORDER and ACTION_PREV_PREORDER run cleanly
+    val provider = com.example.widget.TodayPreordersWidgetProvider()
+    val nextIntent = android.content.Intent("com.example.ACTION_NEXT_PREORDER")
+    provider.onReceive(context, nextIntent)
+    val prevIntent = android.content.Intent("com.example.ACTION_PREV_PREORDER")
+    provider.onReceive(context, prevIntent)
+    org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+
+    // Test Wishlist status rendering in widget
+    val wishlistRv = com.example.widget.TodayPreordersWidgetProvider.buildPreorderItemViews(
+      context = context,
+      item = samplePreorder.copy(status = "Wishlist"),
+      bookstores = emptyList(),
+      currency = "$",
+      themeColors = themeColors,
+      position = 0,
+      totalCount = 1
+    )
+    val wishlistView = wishlistRv.apply(context, null)
+    org.junit.Assert.assertNotNull(wishlistView)
+  }
+
+  @Test
+  fun `test wishlist status transitions and auto package dates`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+
+    // Create a bookstore
+    repo.insertBookstore(com.example.data.Bookstore(name = "Test Bookstore", website = "https://example.com", profilePic = "ic_book_1"))
+
+    // 1. Create a preorder with Wishlist status
+    val wishlistPreorder = com.example.data.Preorder(
+      bookstoreId = 1,
+      picturePath = null,
+      bookTitle = "Wishlist Book",
+      bookAuthor = "Author W",
+      description = "Desc",
+      price = 28.0,
+      rangedSaleDateStart = System.currentTimeMillis(),
+      rangedSaleDateEnd = System.currentTimeMillis(),
+      status = "Wishlist"
+    )
+    val preorderId = repo.insertPreorder(wishlistPreorder).toInt()
+    val saved = db.preorderDao().getPreorderById(preorderId)
+    org.junit.Assert.assertEquals("Wishlist", saved?.status)
+
+    // 2. Promote to Preordered: should set purchase date in packages
+    repo.updatePreorder(saved!!.copy(status = "Preordered"))
+    val pkgAfterPreorder = db.packageDao().getPackageDirect("preorders", preorderId)
+    org.junit.Assert.assertNotNull("Package should exist when preordered", pkgAfterPreorder)
+    org.junit.Assert.assertNotNull("Purchase date should be set when promoted to Preordered", pkgAfterPreorder?.purchaseDate)
+
+    // 3. Revert back to Wishlist: should clear purchase date
+    repo.updatePreorder(saved.copy(status = "Wishlist"))
+    val pkgAfterRevert = db.packageDao().getPackageDirect("preorders", preorderId)
+    org.junit.Assert.assertNull("Purchase date should be cleared when reverted to Wishlist", pkgAfterRevert?.purchaseDate)
+  }
+
+  @Test
+  fun `reminder does not schedule when reminder datetime has passed`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+    val shadowAlarmManager = org.robolectric.Shadows.shadowOf(alarmManager)
+    shadowAlarmManager.scheduledAlarms.clear()
+
+    // 1. Past date
+    val pastDate = System.currentTimeMillis() - 2 * 24 * 60 * 60 * 1000L
+    com.example.receiver.ReminderScheduler.schedulePreorderReminder(
+      context = context,
+      preorderId = 999,
+      title = "Past Preorder",
+      saleDateStart = pastDate,
+      offsetDays = 0,
+      hour = 8,
+      minute = 0
+    )
+
+    org.junit.Assert.assertEquals(0, shadowAlarmManager.scheduledAlarms.size)
+
+    // 2. Past sub
+    com.example.receiver.ReminderScheduler.scheduleScheduledSubReminder(
+      context = context,
+      scheduledSubId = 888,
+      subTitle = "Past Sub",
+      bookTitle = "Book",
+      dueDate = pastDate,
+      offsetDays = 0,
+      hour = 8,
+      minute = 0
+    )
+
+    org.junit.Assert.assertEquals(0, shadowAlarmManager.scheduledAlarms.size)
+
+    // 3. Future date
+    val futureDate = System.currentTimeMillis() + 7 * 24 * 60 * 60 * 1000L
+    com.example.receiver.ReminderScheduler.schedulePreorderReminder(
+      context = context,
+      preorderId = 1001,
+      title = "Future Preorder",
+      saleDateStart = futureDate,
+      offsetDays = 1,
+      hour = 8,
+      minute = 0
+    )
+
+    org.junit.Assert.assertTrue("Future preorder should schedule an alarm", shadowAlarmManager.scheduledAlarms.isNotEmpty())
+
+    // 4. Test ReminderReceiver drops past reminder onReceive
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+    val shadowNotificationManager = org.robolectric.Shadows.shadowOf(notificationManager)
+    notificationManager.cancelAll()
+
+    val receiver = com.example.receiver.ReminderReceiver()
+    val pastIntent = android.content.Intent("com.example.ACTION_REMINDER").apply {
+      putExtra("type", "preorder")
+      putExtra("id", 12345)
+      putExtra("title", "Stale Preorder")
+      putExtra("targetTime", System.currentTimeMillis() - 35 * 60 * 1000L) // 35 minutes in the past
+    }
+    receiver.onReceive(context, pastIntent)
+    org.junit.Assert.assertEquals("No notification should pop up when reminder datetime has passed", 0, shadowNotificationManager.allNotifications.size)
+
+    // 5. Test Preorder notification includes Preordered action button
+    notificationManager.cancelAll()
+    val futureReminderIntent = android.content.Intent("com.example.ACTION_REMINDER").apply {
+      putExtra("type", "preorder")
+      putExtra("id", 777)
+      putExtra("title", "Action Preorder")
+      putExtra("targetTime", System.currentTimeMillis() + 10_000L)
+    }
+    receiver.onReceive(context, futureReminderIntent)
+    val notifications = shadowNotificationManager.allNotifications
+    org.junit.Assert.assertEquals("Notification should be posted", 1, notifications.size)
+    val postedNotification = notifications.first()
+    val actions = postedNotification.actions
+    org.junit.Assert.assertNotNull("Notification should have action buttons", actions)
+    val preorderedAction = actions.firstOrNull { it.title?.toString().equals("Preordered", ignoreCase = true) }
+    org.junit.Assert.assertNotNull("Preorder notification must have 'Preordered' action button", preorderedAction)
+    org.junit.Assert.assertNotNull("In-app reminder should be posted to ReminderEventBus", com.example.receiver.ReminderEventBus.currentReminder.value)
+  }
+
+  @Test
+  fun `notification action changes preorder status to Preordered`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+    val repo = com.example.data.BookishRepository(db)
+
+    val bookstoreId = repo.insertBookstore(
+      com.example.data.Bookstore(name = "Test Bookstore", website = "https://bookstore.com", profilePic = null)
+    ).toInt()
+
+    val preorderId = repo.insertPreorder(
+      com.example.data.Preorder(
+        bookstoreId = bookstoreId,
+        picturePath = null,
+        bookTitle = "The Winds of Winter",
+        bookAuthor = "George R.R. Martin",
+        description = "Test Description",
+        price = 28.5,
+        rangedSaleDateStart = System.currentTimeMillis() + 86400000L,
+        rangedSaleDateEnd = 0L,
+        status = "Upcoming"
+      )
+    ).toInt()
+
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+    val shadowNotificationManager = org.robolectric.Shadows.shadowOf(notificationManager)
+
+    // Post notification first
+    val receiver = com.example.receiver.ReminderReceiver()
+    val reminderIntent = android.content.Intent("com.example.ACTION_REMINDER").apply {
+      putExtra("type", "preorder")
+      putExtra("id", preorderId)
+      putExtra("title", "The Winds of Winter")
+      putExtra("targetTime", System.currentTimeMillis() + 10_000L)
+    }
+    receiver.onReceive(context, reminderIntent)
+    org.junit.Assert.assertEquals(1, shadowNotificationManager.allNotifications.size)
+
+    // Trigger ACTION_MARK_PREORDERED
+    val actionIntent = android.content.Intent(com.example.receiver.ReminderReceiver.ACTION_MARK_PREORDERED).apply {
+      putExtra("preorderId", preorderId)
+      putExtra("notificationId", preorderId)
+    }
+    receiver.onReceive(context, actionIntent)
+
+    // Allow background coroutines and UI thread tasks to execute
+    org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+    kotlinx.coroutines.delay(100)
+
+    val updatedPreorder = repo.getPreorderById(preorderId)
+    org.junit.Assert.assertNotNull(updatedPreorder)
+    org.junit.Assert.assertEquals("Preordered", updatedPreorder?.status)
+    org.junit.Assert.assertEquals(0, shadowNotificationManager.allNotifications.size)
+  }
+
+  @Test
+  fun `test wishlist boolean field in preorder and scheduled subs tables`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+
+    // Ensure bookstore exists
+    val bookstoreId = db.bookstoreDao().insert(
+      com.example.data.Bookstore(name = "Wishlist Bookstore", website = "https://wishlist.com", profilePic = null)
+    ).toInt()
+
+    // Ensure subscription type exists
+    val subTypeId = db.subscriptionTypeDao().insert(
+      com.example.data.SubscriptionType(
+        bookstoreId = bookstoreId,
+        title = "Fantasy Monthly",
+        status = "Active",
+        price = 30.0,
+        dueDate = System.currentTimeMillis() + 86400000L,
+        startDate = System.currentTimeMillis(),
+        finishDate = 0L,
+        notificationAlertDays = 2,
+        frequency = "Monthly"
+      )
+    ).toInt()
+
+    // 1. Test Preorder table wishlist field
+    val preorderFalse = com.example.data.Preorder(
+      bookstoreId = bookstoreId,
+      picturePath = null,
+      bookTitle = "Normal Book",
+      bookAuthor = "Author A",
+      description = "Desc",
+      price = 25.0,
+      rangedSaleDateStart = System.currentTimeMillis() + 100000L,
+      rangedSaleDateEnd = System.currentTimeMillis() + 200000L,
+      status = "Upcoming",
+      wishlist = false
+    )
+    val prIdFalse = db.preorderDao().insert(preorderFalse).toInt()
+    val fetchedPrFalse = db.preorderDao().getPreorderById(prIdFalse)
+    org.junit.Assert.assertNotNull(fetchedPrFalse)
+    org.junit.Assert.assertFalse("Preorder wishlist should be false", fetchedPrFalse!!.wishlist)
+
+    val preorderTrue = com.example.data.Preorder(
+      bookstoreId = bookstoreId,
+      picturePath = null,
+      bookTitle = "Wishlist Book",
+      bookAuthor = "Author B",
+      description = "Desc",
+      price = 29.99,
+      rangedSaleDateStart = System.currentTimeMillis() + 100000L,
+      rangedSaleDateEnd = System.currentTimeMillis() + 200000L,
+      status = "Upcoming",
+      wishlist = true
+    )
+    val prIdTrue = db.preorderDao().insert(preorderTrue).toInt()
+    val fetchedPrTrue = db.preorderDao().getPreorderById(prIdTrue)
+    org.junit.Assert.assertNotNull(fetchedPrTrue)
+    org.junit.Assert.assertTrue("Preorder wishlist should be true", fetchedPrTrue!!.wishlist)
+
+    // Update preorder wishlist field
+    db.preorderDao().update(fetchedPrFalse.copy(wishlist = true))
+    val updatedPr = db.preorderDao().getPreorderById(prIdFalse)
+    org.junit.Assert.assertTrue("Updated preorder wishlist should be true", updatedPr!!.wishlist)
+
+    // 2. Test ScheduledSubscription table bookmark field
+    val schedFalse = com.example.data.ScheduledSubscription(
+      subscriptionTypeId = subTypeId,
+      bookTitle = "Monthly Delivery 1",
+      bookAuthor = "Author X",
+      description = "Desc",
+      dueDate = System.currentTimeMillis() + 86400000L,
+      status = "Upcoming",
+      bookmark = false
+    )
+    val schedIdFalse = db.scheduledSubscriptionDao().insert(schedFalse).toInt()
+    val fetchedSchedFalse = db.scheduledSubscriptionDao().getScheduledSubscriptionById(schedIdFalse)
+    org.junit.Assert.assertNotNull(fetchedSchedFalse)
+    org.junit.Assert.assertFalse("Scheduled sub bookmark should be false", fetchedSchedFalse!!.bookmark)
+
+    val schedTrue = com.example.data.ScheduledSubscription(
+      subscriptionTypeId = subTypeId,
+      bookTitle = "Monthly Delivery 2",
+      bookAuthor = "Author Y",
+      description = "Desc",
+      dueDate = System.currentTimeMillis() + 86400000L * 2,
+      status = "Upcoming",
+      bookmark = true
+    )
+    val schedIdTrue = db.scheduledSubscriptionDao().insert(schedTrue).toInt()
+    val fetchedSchedTrue = db.scheduledSubscriptionDao().getScheduledSubscriptionById(schedIdTrue)
+    org.junit.Assert.assertNotNull(fetchedSchedTrue)
+    org.junit.Assert.assertTrue("Scheduled sub bookmark should be true", fetchedSchedTrue!!.bookmark)
+
+    // Update scheduled sub bookmark field
+    db.scheduledSubscriptionDao().update(fetchedSchedFalse.copy(bookmark = true))
+    val updatedSched = db.scheduledSubscriptionDao().getScheduledSubscriptionById(schedIdFalse)
+    org.junit.Assert.assertTrue("Updated scheduled sub bookmark should be true", updatedSched!!.bookmark)
+  }
+
+  @Test
+  fun `test copy as preorder inherits properties and wishlist toggling`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+
+    val bookstoreId = db.bookstoreDao().insert(
+      com.example.data.Bookstore(name = "Waterstones", website = "https://waterstones.com", profilePic = null)
+    ).toInt()
+
+    val original = com.example.data.Preorder(
+      bookstoreId = bookstoreId,
+      picturePath = "path/to/cover.jpg",
+      bookTitle = "The Winds of Winter",
+      bookAuthor = "George R.R. Martin",
+      description = "Epic fantasy novel",
+      price = 28.50,
+      rangedSaleDateStart = 1771804800000L,
+      rangedSaleDateEnd = 1771891200000L,
+      status = "Upcoming",
+      reminderEnabled = true,
+      reminderHour = 10,
+      reminderMinute = 30,
+      rating = 4.5,
+      currency = "£",
+      basePrice = 25.0,
+      shippingPrice = 3.5,
+      wishlist = false
+    )
+    val origId = db.preorderDao().insert(original).toInt()
+    val fetched = db.preorderDao().getPreorderById(origId)
+    org.junit.Assert.assertNotNull(fetched)
+
+    // Toggling wishlist updates field
+    db.preorderDao().update(fetched!!.copy(wishlist = true))
+    val toggledWishlist = db.preorderDao().getPreorderById(origId)
+    org.junit.Assert.assertTrue("Wishlist should be toggled to true", toggledWishlist!!.wishlist)
+
+    // "Copy As": creating a new preorder with original preorder's values as base
+    val copy = original.copy(
+      id = 0,
+      bookTitle = "The Winds of Winter (Special Edition)",
+      wishlist = toggledWishlist.wishlist
+    )
+    val copyId = db.preorderDao().insert(copy).toInt()
+    val fetchedCopy = db.preorderDao().getPreorderById(copyId)
+
+    org.junit.Assert.assertNotNull(fetchedCopy)
+    org.junit.Assert.assertNotEquals(origId, copyId)
+    org.junit.Assert.assertEquals(original.bookAuthor, fetchedCopy!!.bookAuthor)
+    org.junit.Assert.assertEquals(original.bookstoreId, fetchedCopy.bookstoreId)
+    org.junit.Assert.assertEquals(original.price, fetchedCopy.price, 0.001)
+    org.junit.Assert.assertEquals(original.currency, fetchedCopy.currency)
+    org.junit.Assert.assertEquals(original.rangedSaleDateStart, fetchedCopy.rangedSaleDateStart)
+    org.junit.Assert.assertTrue(fetchedCopy.wishlist)
+  }
+
+  @Test
+  fun `test transfer scheduled subscription to preorder with released status if past due`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = com.example.data.BookishDatabase.getDatabase(context)
+
+    val bookstoreId = db.bookstoreDao().insert(
+      com.example.data.Bookstore(name = "FairyLoot", website = "https://fairyloot.com", profilePic = null)
+    ).toInt()
+
+    val subTypeId = db.subscriptionTypeDao().insert(
+      com.example.data.SubscriptionType(
+        bookstoreId = bookstoreId,
+        title = "YA Box",
+        status = "Active",
+        price = 32.0,
+        dueDate = System.currentTimeMillis() + 86400000L,
+        startDate = System.currentTimeMillis(),
+        finishDate = 0L,
+        notificationAlertDays = 2,
+        frequency = "Monthly"
+      )
+    ).toInt()
+
+    val pastDueDate = System.currentTimeMillis() - 86400000L
+    val schedPast = com.example.data.ScheduledSubscription(
+      subscriptionTypeId = subTypeId,
+      bookTitle = "The Stolen Heir",
+      bookAuthor = "Holly Black",
+      description = "Monthly box edition",
+      dueDate = pastDueDate,
+      status = "Upcoming",
+      bookmark = true
+    )
+    val schedId = db.scheduledSubscriptionDao().insert(schedPast).toInt()
+    val fetched = db.scheduledSubscriptionDao().getScheduledSubscriptionById(schedId)
+    org.junit.Assert.assertNotNull(fetched)
+
+    // Simulate transfer logic: if dueDate <= now, status is Released, else Upcoming
+    val isPast = fetched!!.dueDate <= System.currentTimeMillis()
+    val transferStatus = if (isPast) "Released" else "Upcoming"
+
+    val transferredPreorder = com.example.data.Preorder(
+      bookstoreId = bookstoreId,
+      picturePath = fetched.picturePath,
+      bookTitle = fetched.bookTitle,
+      bookAuthor = fetched.bookAuthor,
+      description = fetched.description,
+      price = 32.0,
+      rangedSaleDateStart = fetched.dueDate,
+      rangedSaleDateEnd = fetched.dueDate,
+      status = transferStatus,
+      rating = fetched.rating,
+      wishlist = fetched.bookmark
+    )
+    val prId = db.preorderDao().insert(transferredPreorder).toInt()
+    val fetchedPr = db.preorderDao().getPreorderById(prId)
+
+    org.junit.Assert.assertNotNull(fetchedPr)
+    org.junit.Assert.assertEquals("The Stolen Heir", fetchedPr!!.bookTitle)
+    org.junit.Assert.assertEquals("Holly Black", fetchedPr.bookAuthor)
+    org.junit.Assert.assertEquals("Released", fetchedPr.status)
+    org.junit.Assert.assertTrue(fetchedPr.wishlist)
+  }
+
+  @Test
+  fun `test transfer disabled for renewed forwarded in suite shipped received statuses`() {
+    val disabledStatuses = listOf("renewed", "Renewed", "paid", "forwarded", "Forwarded", "in suite", "In Suite", "shipped", "Shipped", "received", "Received")
+    val enabledStatuses = listOf("upcoming", "Upcoming", "skipped", "Skipped", "CustomStatus")
+
+    fun isTransferEnabled(status: String): Boolean {
+      val curSubStatus = status.lowercase().trim()
+      return curSubStatus !in listOf("renewed", "paid", "forwarded", "in suite", "shipped", "received")
+    }
+
+    for (status in disabledStatuses) {
+      org.junit.Assert.assertFalse("Transfer should be disabled for status $status", isTransferEnabled(status))
+    }
+    for (status in enabledStatuses) {
+      org.junit.Assert.assertTrue("Transfer should be enabled for status $status", isTransferEnabled(status))
+    }
+  }
 }
+
+

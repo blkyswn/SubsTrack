@@ -5,10 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -24,7 +23,15 @@ import androidx.navigation.compose.rememberNavController
 import com.example.ui.screens.*
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.BookishViewModel
-
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.zIndex
+import com.example.receiver.ReminderEventBus
+import com.example.receiver.ReminderReceiver
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.res.vectorResource
 import com.example.R
@@ -117,6 +124,11 @@ fun BookishApp(
                     launchSingleTop = true
                 }
                 onNavTargetHandled()
+            } else if (target == "preorders") {
+                navController.navigate("preorders") {
+                    launchSingleTop = true
+                }
+                onNavTargetHandled()
             }
         }
     }
@@ -144,144 +156,170 @@ fun BookishApp(
         NavigationItem("profile", "Profile", Icons.Default.Person, "nav_profile")
     )
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        bottomBar = {
-            NavigationBar(
-                modifier = Modifier.testTag("app_navigation_bar"),
-                containerColor = MaterialTheme.colorScheme.surface
-            ) {
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route
+    val context = LocalContext.current
 
-                navItems.forEach { item ->
-                    val isHome = item.route == "home"
-                    val isSelected = currentRoute == item.route || (isHome && currentRoute == "upcoming_calendar")
-                    NavigationBarItem(
-                        selected = isSelected,
-                        onClick = {
-                            if (item.route == "preorders") {
-                                viewModel.preorderIsCalendarView.value = false
-                            } else if (item.route == "subscriptions") {
-                                viewModel.subOverviewIsCalendarView.value = false
-                                viewModel.subIsCalendarView.value = false
-                                if (viewModel.subSelectedTab.value == 1) {
-                                    viewModel.subSelectedTab.value = 0
-                                }
-                            }
-                            if (currentRoute == "upcoming_calendar") {
-                                viewModel.resetHomeScreenToTop()
-                                navController.popBackStack()
-                            }
-                            if (isHome) {
-                                viewModel.resetHomeScreenToTop()
-                                if (currentRoute != "home" && currentRoute != "upcoming_calendar") {
-                                    navController.navigate("home") {
-                                        popUpTo(navController.graph.startDestinationId) {
-                                            saveState = false
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = false
-                                    }
-                                }
-                            } else if (currentRoute != item.route) {
-                                navController.navigate(item.route) {
-                                    popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            }
-                        },
-                        icon = {
-                            Icon(
-                                imageVector = item.icon,
-                                contentDescription = item.label,
-                                modifier = if (isHome) Modifier.size(28.dp) else Modifier
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = item.label,
-                                fontWeight = if (isHome) androidx.compose.ui.text.font.FontWeight.Bold else null
-                            )
-                        },
-                        colors = if (isHome) {
-                            NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                                unselectedTextColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                            )
-                        } else {
-                            NavigationBarItemDefaults.colors()
-                        },
-                        modifier = Modifier.testTag(item.testTag)
-                    )
-                }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val permission = android.Manifest.permission.POST_NOTIFICATIONS
+            if (context.checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(permission)
             }
         }
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = "home",
-            modifier = Modifier.padding(innerPadding)
-        ) {
-            composable("home") {
-                HomeScreen(
-                    viewModel = viewModel,
-                    onNavigateToSubscriptions = {
-                        navController.navigate("subscriptions") {
-                            popUpTo(navController.graph.startDestinationId) {
-                                saveState = true
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                NavigationBar(
+                    modifier = Modifier.testTag("app_navigation_bar"),
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) {
+                    val navBackStackEntry by navController.currentBackStackEntryAsState()
+                    val currentRoute = navBackStackEntry?.destination?.route
+
+                    navItems.forEach { item ->
+                        val isHome = item.route == "home"
+                        val isSelected = currentRoute == item.route || (isHome && currentRoute == "upcoming_calendar")
+                        NavigationBarItem(
+                            selected = isSelected,
+                            onClick = {
+                                if (item.route == "preorders") {
+                                    viewModel.preorderIsCalendarView.value = false
+                                } else if (item.route == "subscriptions") {
+                                    viewModel.subOverviewIsCalendarView.value = false
+                                    viewModel.subIsCalendarView.value = false
+                                    if (viewModel.subSelectedTab.value == 1) {
+                                        viewModel.subSelectedTab.value = 0
+                                    }
+                                }
+                                if (currentRoute == "upcoming_calendar") {
+                                    viewModel.resetHomeScreenToTop()
+                                    navController.popBackStack()
+                                }
+                                if (isHome) {
+                                    viewModel.resetHomeScreenToTop()
+                                    if (currentRoute != "home" && currentRoute != "upcoming_calendar") {
+                                        navController.navigate("home") {
+                                            popUpTo(navController.graph.startDestinationId) {
+                                                saveState = false
+                                            }
+                                            launchSingleTop = true
+                                            restoreState = false
+                                        }
+                                    }
+                                } else if (currentRoute != item.route) {
+                                    navController.navigate(item.route) {
+                                        popUpTo(navController.graph.startDestinationId) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                }
+                            },
+                            icon = {
+                                Icon(
+                                    imageVector = item.icon,
+                                    contentDescription = item.label,
+                                    modifier = if (isHome) Modifier.size(28.dp) else Modifier
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = item.label,
+                                    fontWeight = if (isHome) androidx.compose.ui.text.font.FontWeight.Bold else null
+                                )
+                            },
+                            colors = if (isHome) {
+                                NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primary,
+                                    unselectedIconColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                                    unselectedTextColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                                )
+                            } else {
+                                NavigationBarItemDefaults.colors()
+                            },
+                            modifier = Modifier.testTag(item.testTag)
+                        )
+                    }
+                }
+            }
+        ) { innerPadding ->
+            NavHost(
+                navController = navController,
+                startDestination = "home",
+                modifier = Modifier.padding(innerPadding)
+            ) {
+                composable("home") {
+                    HomeScreen(
+                        viewModel = viewModel,
+                        onNavigateToSubscriptions = {
+                            navController.navigate("subscriptions") {
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
                             }
-                            launchSingleTop = true
-                            restoreState = true
+                        },
+                        onNavigateToUpcomingCalendar = {
+                            navController.navigate("upcoming_calendar")
+                        },
+                        onNavigateToPreorders = {
+                            navController.navigate("preorders") {
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
-                    },
-                    onNavigateToUpcomingCalendar = {
-                        navController.navigate("upcoming_calendar")
-                    }
-                )
-            }
-            composable(
-                route = "upcoming_calendar?date={date}",
-                arguments = listOf(
-                    androidx.navigation.navArgument("date") {
-                        type = androidx.navigation.NavType.StringType
-                        nullable = true
-                        defaultValue = null
-                    }
-                )
-            ) { backStackEntry ->
-                val dateArg = backStackEntry.arguments?.getString("date")
-                UpcomingCalendarScreen(
-                    viewModel = viewModel,
-                    onBack = { navController.popBackStack() },
-                    initialDateStr = dateArg
-                )
-            }
-            composable("upcoming_calendar") {
-                UpcomingCalendarScreen(
-                    viewModel = viewModel,
-                    onBack = { navController.popBackStack() },
-                    initialDateStr = null
-                )
-            }
-            composable("subscriptions") {
-                SubscriptionsScreen(viewModel = viewModel)
-            }
-            composable("preorders") {
-                PreordersScreen(viewModel = viewModel)
-            }
-            composable("bookstores") {
-                BookstoresScreen(viewModel = viewModel)
-            }
-            composable("profile") {
-                ProfileScreen(viewModel = viewModel)
+                    )
+                }
+                composable(
+                    route = "upcoming_calendar?date={date}",
+                    arguments = listOf(
+                        androidx.navigation.navArgument("date") {
+                            type = androidx.navigation.NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        }
+                    )
+                ) { backStackEntry ->
+                    val dateArg = backStackEntry.arguments?.getString("date")
+                    UpcomingCalendarScreen(
+                        viewModel = viewModel,
+                        onBack = { navController.popBackStack() },
+                        initialDateStr = dateArg
+                    )
+                }
+                composable("upcoming_calendar") {
+                    UpcomingCalendarScreen(
+                        viewModel = viewModel,
+                        onBack = { navController.popBackStack() },
+                        initialDateStr = null
+                    )
+                }
+                composable("subscriptions") {
+                    SubscriptionsScreen(viewModel = viewModel)
+                }
+                composable("preorders") {
+                    PreordersScreen(viewModel = viewModel)
+                }
+                composable("bookstores") {
+                    BookstoresScreen(viewModel = viewModel)
+                }
+                composable("profile") {
+                    ProfileScreen(viewModel = viewModel)
+                }
             }
         }
     }

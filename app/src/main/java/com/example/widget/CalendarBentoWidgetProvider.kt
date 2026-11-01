@@ -12,6 +12,7 @@ import android.widget.RemoteViews
 import com.example.MainActivity
 import com.example.R
 import com.example.data.BookishDatabase
+import com.example.data.User
 import com.example.ui.screens.UpcomingEvent
 import com.example.ui.screens.isUpcomingEvent
 import kotlinx.coroutines.CoroutineScope
@@ -197,9 +198,9 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
 
                 val views = RemoteViews(context.packageName, R.layout.calendar_bento_widget)
 
-                // Background tint matching user theme
+                // Background tint matching user theme surface
                 val themeColors = WidgetThemeUtils.getThemeColors(context, user)
-                views.setInt(R.id.widget_bg_image, "setColorFilter", themeColors.primary)
+                views.setInt(R.id.widget_bg_image, "setColorFilter", themeColors.surface)
 
                 // Open App on Click
                 val clickIntent = Intent(context, MainActivity::class.java).apply {
@@ -213,19 +214,24 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                 )
                 views.setOnClickPendingIntent(R.id.widget_root, pendingIntent)
 
-                // --- LEFT COLUMN: Today Header & Events ---
+                // --- LEFT COLUMN: Today Header & Events (Theme text colors matching app) ---
                 views.setTextViewText(R.id.widget_today_day_name, todayDayName)
+                views.setTextColor(R.id.widget_today_day_name, themeColors.primary)
+
                 views.setTextViewText(R.id.widget_today_day_number, todayDayNumber)
+                views.setTextColor(R.id.widget_today_day_number, themeColors.onSurface)
 
                 if (sortedTodayEvents.size > 1) {
                     views.setViewVisibility(R.id.widget_today_grouped_indicator, View.VISIBLE)
                     views.setTextViewText(R.id.widget_today_grouped_indicator, "${sortedTodayEvents.size} items")
+                    views.setTextColor(R.id.widget_today_grouped_indicator, themeColors.onSurfaceVariant)
                 } else {
                     views.setViewVisibility(R.id.widget_today_grouped_indicator, View.GONE)
                 }
 
                 if (sortedTodayEvents.isEmpty()) {
                     views.setViewVisibility(R.id.widget_today_empty, View.VISIBLE)
+                    views.setTextColor(R.id.widget_today_empty, themeColors.onSurfaceVariant)
                     views.setViewVisibility(R.id.widget_today_event_1, View.GONE)
                     views.setViewVisibility(R.id.widget_today_event_2, View.GONE)
                     views.setViewVisibility(R.id.widget_today_more, View.GONE)
@@ -236,14 +242,18 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                     val e1 = sortedTodayEvents[0]
                     views.setViewVisibility(R.id.widget_today_event_1, View.VISIBLE)
                     views.setTextViewText(R.id.widget_today_event_1_title, formatEventTitle(e1, displayAmounts, currency))
+                    views.setTextColor(R.id.widget_today_event_1_title, themeColors.onSurface)
                     views.setTextViewText(R.id.widget_today_event_1_time, formatEventSubtitle(e1, todayStart))
+                    views.setTextColor(R.id.widget_today_event_1_time, themeColors.onSurfaceVariant)
 
                     // Event 2
                     if (sortedTodayEvents.size > 1) {
                         val e2 = sortedTodayEvents[1]
                         views.setViewVisibility(R.id.widget_today_event_2, View.VISIBLE)
                         views.setTextViewText(R.id.widget_today_event_2_title, formatEventTitle(e2, displayAmounts, currency))
+                        views.setTextColor(R.id.widget_today_event_2_title, themeColors.onSurface)
                         views.setTextViewText(R.id.widget_today_event_2_time, formatEventSubtitle(e2, todayStart))
+                        views.setTextColor(R.id.widget_today_event_2_time, themeColors.onSurfaceVariant)
                     } else {
                         views.setViewVisibility(R.id.widget_today_event_2, View.GONE)
                     }
@@ -252,6 +262,7 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                     if (sortedTodayEvents.size > 2) {
                         views.setViewVisibility(R.id.widget_today_more, View.VISIBLE)
                         views.setTextViewText(R.id.widget_today_more, "+${sortedTodayEvents.size - 2} more")
+                        views.setTextColor(R.id.widget_today_more, themeColors.primary)
                     } else {
                         views.setViewVisibility(R.id.widget_today_more, View.GONE)
                     }
@@ -260,6 +271,8 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                 // --- RIGHT COLUMN: Grouped Future Events ---
                 if (futureEventsList.isEmpty()) {
                     views.setViewVisibility(R.id.widget_future_empty_container, View.VISIBLE)
+                    views.setTextColor(R.id.widget_future_empty_header, themeColors.onSurface)
+                    views.setTextColor(R.id.widget_future_empty_text, themeColors.onSurfaceVariant)
                     views.setViewVisibility(R.id.widget_g1_container, View.GONE)
                     views.setViewVisibility(R.id.widget_g2_container, View.GONE)
                     views.setViewVisibility(R.id.widget_g3_container, View.GONE)
@@ -324,9 +337,11 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         val g1 = displayedDayGroups[0]
                         views.setViewVisibility(R.id.widget_g1_container, View.VISIBLE)
                         views.setTextViewText(R.id.widget_g1_header, getHeaderTitle(g1.dayStartTs))
+                        views.setTextColor(R.id.widget_g1_header, themeColors.primary)
                         if (g1.totalCount > 1) {
                             views.setViewVisibility(R.id.widget_g1_count, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g1_count, "${g1.totalCount} items")
+                            views.setTextColor(R.id.widget_g1_count, themeColors.onSurfaceVariant)
                         } else {
                             views.setViewVisibility(R.id.widget_g1_count, View.GONE)
                         }
@@ -335,14 +350,18 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         val fe1 = g1.shownEvents[0]
                         views.setViewVisibility(R.id.widget_g1_e1, View.VISIBLE)
                         views.setTextViewText(R.id.widget_g1_e1_title, formatEventTitle(fe1, displayAmounts, currency))
+                        views.setTextColor(R.id.widget_g1_e1_title, themeColors.onSurface)
                         views.setTextViewText(R.id.widget_g1_e1_time, formatEventSubtitle(fe1, g1.dayStartTs))
+                        views.setTextColor(R.id.widget_g1_e1_time, themeColors.onSurfaceVariant)
 
                         // Event 2
                         if (g1.shownEvents.size > 1) {
                             val fe2 = g1.shownEvents[1]
                             views.setViewVisibility(R.id.widget_g1_e2, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g1_e2_title, formatEventTitle(fe2, displayAmounts, currency))
+                            views.setTextColor(R.id.widget_g1_e2_title, themeColors.onSurface)
                             views.setTextViewText(R.id.widget_g1_e2_time, formatEventSubtitle(fe2, g1.dayStartTs))
+                            views.setTextColor(R.id.widget_g1_e2_time, themeColors.onSurfaceVariant)
                         } else {
                             views.setViewVisibility(R.id.widget_g1_e2, View.GONE)
                         }
@@ -352,7 +371,9 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                             val fe3 = g1.shownEvents[2]
                             views.setViewVisibility(R.id.widget_g1_e3, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g1_e3_title, formatEventTitle(fe3, displayAmounts, currency))
+                            views.setTextColor(R.id.widget_g1_e3_title, themeColors.onSurface)
                             views.setTextViewText(R.id.widget_g1_e3_time, formatEventSubtitle(fe3, g1.dayStartTs))
+                            views.setTextColor(R.id.widget_g1_e3_time, themeColors.onSurfaceVariant)
                         } else {
                             views.setViewVisibility(R.id.widget_g1_e3, View.GONE)
                         }
@@ -361,6 +382,7 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         if (g1.leftoverCount > 0) {
                             views.setViewVisibility(R.id.widget_g1_more, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g1_more, "+${g1.leftoverCount} more")
+                            views.setTextColor(R.id.widget_g1_more, themeColors.primary)
                         } else {
                             views.setViewVisibility(R.id.widget_g1_more, View.GONE)
                         }
@@ -373,9 +395,11 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         val g2 = displayedDayGroups[1]
                         views.setViewVisibility(R.id.widget_g2_container, View.VISIBLE)
                         views.setTextViewText(R.id.widget_g2_header, getHeaderTitle(g2.dayStartTs))
+                        views.setTextColor(R.id.widget_g2_header, themeColors.primary)
                         if (g2.totalCount > 1) {
                             views.setViewVisibility(R.id.widget_g2_count, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g2_count, "${g2.totalCount} items")
+                            views.setTextColor(R.id.widget_g2_count, themeColors.onSurfaceVariant)
                         } else {
                             views.setViewVisibility(R.id.widget_g2_count, View.GONE)
                         }
@@ -384,14 +408,18 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         val fe1 = g2.shownEvents[0]
                         views.setViewVisibility(R.id.widget_g2_e1, View.VISIBLE)
                         views.setTextViewText(R.id.widget_g2_e1_title, formatEventTitle(fe1, displayAmounts, currency))
+                        views.setTextColor(R.id.widget_g2_e1_title, themeColors.onSurface)
                         views.setTextViewText(R.id.widget_g2_e1_time, formatEventSubtitle(fe1, g2.dayStartTs))
+                        views.setTextColor(R.id.widget_g2_e1_time, themeColors.onSurfaceVariant)
 
                         // Event 2
                         if (g2.shownEvents.size > 1) {
                             val fe2 = g2.shownEvents[1]
                             views.setViewVisibility(R.id.widget_g2_e2, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g2_e2_title, formatEventTitle(fe2, displayAmounts, currency))
+                            views.setTextColor(R.id.widget_g2_e2_title, themeColors.onSurface)
                             views.setTextViewText(R.id.widget_g2_e2_time, formatEventSubtitle(fe2, g2.dayStartTs))
+                            views.setTextColor(R.id.widget_g2_e2_time, themeColors.onSurfaceVariant)
                         } else {
                             views.setViewVisibility(R.id.widget_g2_e2, View.GONE)
                         }
@@ -400,6 +428,7 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         if (g2.leftoverCount > 0) {
                             views.setViewVisibility(R.id.widget_g2_more, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g2_more, "+${g2.leftoverCount} more")
+                            views.setTextColor(R.id.widget_g2_more, themeColors.primary)
                         } else {
                             views.setViewVisibility(R.id.widget_g2_more, View.GONE)
                         }
@@ -412,9 +441,11 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         val g3 = displayedDayGroups[2]
                         views.setViewVisibility(R.id.widget_g3_container, View.VISIBLE)
                         views.setTextViewText(R.id.widget_g3_header, getHeaderTitle(g3.dayStartTs))
+                        views.setTextColor(R.id.widget_g3_header, themeColors.primary)
                         if (g3.totalCount > 1) {
                             views.setViewVisibility(R.id.widget_g3_count, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g3_count, "${g3.totalCount} items")
+                            views.setTextColor(R.id.widget_g3_count, themeColors.onSurfaceVariant)
                         } else {
                             views.setViewVisibility(R.id.widget_g3_count, View.GONE)
                         }
@@ -423,12 +454,15 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
                         val fe1 = g3.shownEvents[0]
                         views.setViewVisibility(R.id.widget_g3_e1, View.VISIBLE)
                         views.setTextViewText(R.id.widget_g3_e1_title, formatEventTitle(fe1, displayAmounts, currency))
+                        views.setTextColor(R.id.widget_g3_e1_title, themeColors.onSurface)
                         views.setTextViewText(R.id.widget_g3_e1_time, formatEventSubtitle(fe1, g3.dayStartTs))
+                        views.setTextColor(R.id.widget_g3_e1_time, themeColors.onSurfaceVariant)
 
                         // More
                         if (g3.leftoverCount > 0) {
                             views.setViewVisibility(R.id.widget_g3_more, View.VISIBLE)
                             views.setTextViewText(R.id.widget_g3_more, "+${g3.leftoverCount} more")
+                            views.setTextColor(R.id.widget_g3_more, themeColors.primary)
                         } else {
                             views.setViewVisibility(R.id.widget_g3_more, View.GONE)
                         }
@@ -491,23 +525,8 @@ class CalendarBentoWidgetProvider : AppWidgetProvider() {
         }
     }
 
-    private fun getThemePrimaryColor(themeCombo: String?, isDark: Boolean): Int {
-        return when (themeCombo?.lowercase(Locale.getDefault())) {
-            "summer" -> if (isDark) 0xFFE0B48A.toInt() else 0xFFD4A373.toInt()
-            "cozy" -> if (isDark) 0xFFEBAF94.toInt() else 0xFFD19E82.toInt()
-            "winter" -> if (isDark) 0xFFDDD3C1.toInt() else 0xFFC4B69E.toInt()
-            "serenity" -> if (isDark) 0xFFE6D7AB.toInt() else 0xFFD4C294.toInt()
-            "green_serenity" -> if (isDark) 0xFFA1CCA5.toInt() else 0xFF588157.toInt()
-            "blood_moon" -> if (isDark) 0xFF9DC7C8.toInt() else 0xFF6A3937.toInt()
-            "earthy_harmony" -> if (isDark) 0xFFDDC8C4.toInt() else 0xFF896A67.toInt()
-            "chocolate_sunset" -> if (isDark) 0xFFCB9173.toInt() else 0xFF8E443D.toInt()
-            "red_sunburst" -> if (isDark) 0xFFCE4257.toInt() else 0xFFCE4257.toInt()
-            "earthy_forest" -> if (isDark) 0xFFA3B18A.toInt() else 0xFF344E41.toInt()
-            "deep_sea" -> if (isDark) 0xFF778DA9.toInt() else 0xFF415A77.toInt()
-            "soft_lavender" -> if (isDark) 0xFFC9ADA7.toInt() else 0xFF4A4E69.toInt()
-            "default" -> if (isDark) 0xFFD0BCFF.toInt() else 0xFF6650A4.toInt()
-            else -> 0xFFD4A373.toInt() // Golden Summer / default
-        }
+    private fun getThemePrimaryColor(context: Context, user: User?): Int {
+        return WidgetThemeUtils.getThemeColors(context, user).primary
     }
 
     companion object {

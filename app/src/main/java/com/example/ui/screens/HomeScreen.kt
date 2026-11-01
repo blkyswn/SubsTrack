@@ -5,6 +5,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import com.example.R
 import androidx.compose.foundation.rememberScrollState
@@ -56,6 +58,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.*
+import com.example.ui.components.TodayPreordersWidget
 import com.example.ui.viewmodel.BookishViewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -63,6 +66,8 @@ import java.util.*
 
 private data class SubGraphData(
     val title: String,
+    val fullTitle: String,
+    val bookstoreName: String?,
     val countOther: Int,
     val countSkipped: Int,
     val countUpcoming: Int
@@ -74,12 +79,15 @@ fun HomeScreen(
     viewModel: BookishViewModel,
     onNavigateToSubscriptions: () -> Unit = {},
     onNavigateToUpcomingCalendar: () -> Unit = {},
+    onNavigateToPreorders: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val user by viewModel.userState.collectAsState()
     val scheduled by viewModel.rawScheduledState.collectAsState()
     val subscriptions by viewModel.rawSubscriptionsState.collectAsState()
     val preorders by viewModel.rawPreordersState.collectAsState()
+    val allPackages by viewModel.allPackagesState.collectAsState()
+    val userAddresses by viewModel.userAddressesState.collectAsState()
 
     val currency = user?.currency ?: "$"
     val bookstores by viewModel.bookstoresState.collectAsState()
@@ -91,6 +99,7 @@ fun HomeScreen(
     var statusFilterTitle by remember { mutableStateOf<String?>(null) }
     var statusFilterScheduledItems by remember { mutableStateOf<List<ScheduledWithDetails>?>(null) }
     var statusFilterSubItems by remember { mutableStateOf<List<SubscriptionWithBookstore>?>(null) }
+    var statusFilterPreorderItems by remember { mutableStateOf<List<PreorderWithBookstore>?>(null) }
 
     var selectedPreorderForEdit by remember { mutableStateOf<PreorderWithBookstore?>(null) }
     var selectedScheduledForEdit by remember { mutableStateOf<ScheduledWithDetails?>(null) }
@@ -101,6 +110,8 @@ fun HomeScreen(
     val statsPagerState = rememberPagerState(pageCount = { 2 })
     val topActiveSubsPagerState = rememberPagerState(pageCount = { 2 })
     val spendsPagerState = rememberPagerState(pageCount = { 2 })
+    val preorderStatsPagerState = rememberPagerState(pageCount = { 2 })
+    val scheduledStatsPagerState = rememberPagerState(pageCount = { 2 })
 
     var discreteToastMessage by remember { mutableStateOf<String?>(null) }
 
@@ -735,6 +746,19 @@ fun HomeScreen(
                 }
             }
 
+            // Today's Preorders Widget
+            item {
+                TodayPreordersWidget(
+                    viewModel = viewModel,
+                    onPreorderClick = {
+                        selectedPreorderForEdit = it
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                )
+            }
+
             // Bento Row 1: Subscription Types Overview (Hero - full width)
             item {
                 val isDark = isSystemInDarkTheme()
@@ -1047,7 +1071,7 @@ fun HomeScreen(
                 // Monthly spend: this month up to today
                 val monthlySpend = if (subscriptions.isEmpty() && preorders.isEmpty()) 0.0 else (
                     preordersThisMonth
-                        .filter { it.preorder.rangedSaleDateStart <= endOfTodayMs && !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) && !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
+                        .filter { it.preorder.rangedSaleDateStart <= endOfTodayMs && !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) && !it.preorder.status.equals("Wishlist", ignoreCase = true) && !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
                         .sumOf { it.preorder.price } +
                     scheduledThisMonth
                         .filter { it.scheduled.dueDate <= endOfTodayMs && !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
@@ -1067,7 +1091,7 @@ fun HomeScreen(
                 // Yearly spend: this year up to today
                 val yearlySpend = if (subscriptions.isEmpty() && preorders.isEmpty()) 0.0 else (
                     preordersThisYear
-                        .filter { it.preorder.rangedSaleDateStart <= endOfTodayMs && !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) && !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
+                        .filter { it.preorder.rangedSaleDateStart <= endOfTodayMs && !it.preorder.status.equals("Upcoming", ignoreCase = true) && !it.preorder.status.equals("Released", ignoreCase = true) && !it.preorder.status.equals("Wishlist", ignoreCase = true) && !it.preorder.status.equals("Canceled", ignoreCase = true) && !it.preorder.status.equals("Cancelled", ignoreCase = true) && !it.preorder.status.equals("Skipped", ignoreCase = true) }
                         .sumOf { it.preorder.price } +
                     scheduledThisYear
                         .filter { it.scheduled.dueDate <= endOfTodayMs && !it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.status.equals("Skipped", ignoreCase = true) }
@@ -1117,9 +1141,13 @@ fun HomeScreen(
                         val countUpcoming = subSched.count {
                             it.scheduled.status.equals("Upcoming", ignoreCase = true)
                         }
+                        val fullTitle = sub.subscription.title.trim().ifEmpty { sub.bookstore?.name ?: "Subscription" }
                         val title = sub.subscription.title.ifEmpty { sub.bookstore?.name ?: "Sub" }
+                        val bookstoreName = sub.bookstore?.name?.trim()?.takeIf { it.isNotBlank() }
                         SubGraphData(
                             title = title,
+                            fullTitle = fullTitle,
+                            bookstoreName = bookstoreName,
                             countOther = countOther,
                             countSkipped = countSkipped,
                             countUpcoming = countUpcoming
@@ -1814,7 +1842,16 @@ fun HomeScreen(
 
                                                         Box(
                                                             modifier = Modifier
-                                                                .rotate(-35f),
+                                                                .rotate(-35f)
+                                                                .clip(RoundedCornerShape(4.dp))
+                                                                .clickable {
+                                                                    discreteToastMessage = if (!subData.bookstoreName.isNullOrBlank() && !subData.fullTitle.equals(subData.bookstoreName, ignoreCase = true)) {
+                                                                        "${subData.fullTitle} • ${subData.bookstoreName}"
+                                                                    } else {
+                                                                        subData.fullTitle
+                                                                    }
+                                                                }
+                                                                .padding(horizontal = 4.dp, vertical = 2.dp),
                                                             contentAlignment = Alignment.Center
                                                         ) {
                                                             Text(
@@ -1837,6 +1874,756 @@ fun HomeScreen(
                     }
                 }
             }
+
+            // Bento Row: Scheduled Subscriptions Status Counters Widget
+            item {
+                val packagesByScheduledId = remember(allPackages) {
+                    allPackages.filter { it.originTable == "scheduled_subs" }.associateBy { it.originId }
+                }
+                val addressesById = remember(userAddresses) {
+                    userAddresses.associateBy { it.id }
+                }
+
+                val currentCal = Calendar.getInstance()
+                val currentYear = currentCal.get(Calendar.YEAR)
+                val currentMonth = currentCal.get(Calendar.MONTH)
+
+                val getScheduledEffectiveDate: (ScheduledWithDetails) -> Long = { item ->
+                    val status = item.scheduled.status.lowercase().trim()
+                    val pkg = packagesByScheduledId[item.scheduled.id]
+                    when (status) {
+                        "renewed", "paid" -> pkg?.purchaseDate ?: item.scheduled.dueDate
+                        "forwarded" -> pkg?.storeShippingDate ?: item.scheduled.dueDate
+                        "in suite" -> pkg?.forwarderReceivedDate ?: item.scheduled.dueDate
+                        "shipped" -> {
+                            val hasForwarding = item.subscriptionType?.shippingAddressId?.let { addrId ->
+                                addressesById[addrId]?.forwardingServiceId != null
+                            } ?: false
+                            if (hasForwarding) pkg?.forwarderShippedDate ?: pkg?.storeShippingDate ?: item.scheduled.dueDate
+                            else pkg?.storeShippingDate ?: item.scheduled.dueDate
+                        }
+                        "received" -> pkg?.receivedDate ?: item.scheduled.dueDate
+                        else -> item.scheduled.dueDate
+                    }
+                }
+
+                val isScheduledInMonth: (ScheduledWithDetails, Int, Int) -> Boolean = { item, y, m ->
+                    val date = getScheduledEffectiveDate(item)
+                    val cal = Calendar.getInstance().apply { timeInMillis = date }
+                    cal.get(Calendar.YEAR) == y && cal.get(Calendar.MONTH) == m
+                }
+
+                val isScheduledInYear: (ScheduledWithDetails, Int) -> Boolean = { item, y ->
+                    val date = getScheduledEffectiveDate(item)
+                    val cal = Calendar.getInstance().apply { timeInMillis = date }
+                    cal.get(Calendar.YEAR) == y
+                }
+
+                val monthScheduledOverviewList = remember(scheduled, packagesByScheduledId, addressesById, currentYear, currentMonth) {
+                    scheduled.filter { isScheduledInMonth(it, currentYear, currentMonth) }
+                }
+                val yearScheduledOverviewList = remember(scheduled, packagesByScheduledId, addressesById, currentYear) {
+                    scheduled.filter { isScheduledInYear(it, currentYear) }
+                }
+
+                val monthUpcomingSchedList = monthScheduledOverviewList.filter { it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.isSkipped }
+                val monthRenewedSchedList = monthScheduledOverviewList.filter { (it.scheduled.status.equals("Renewed", ignoreCase = true) || it.scheduled.status.equals("Paid", ignoreCase = true)) && !it.scheduled.isSkipped }
+                val monthForwardedSchedList = monthScheduledOverviewList.filter { it.scheduled.status.equals("Forwarded", ignoreCase = true) && !it.scheduled.isSkipped }
+                val monthInSuiteSchedList = monthScheduledOverviewList.filter { it.scheduled.status.equals("In Suite", ignoreCase = true) && !it.scheduled.isSkipped }
+                val monthShippedSchedList = monthScheduledOverviewList.filter { it.scheduled.status.equals("Shipped", ignoreCase = true) && !it.scheduled.isSkipped }
+                val monthReceivedSchedList = monthScheduledOverviewList.filter { it.scheduled.status.equals("Received", ignoreCase = true) && !it.scheduled.isSkipped }
+                val monthSkippedSchedList = monthScheduledOverviewList.filter { it.scheduled.status.equals("Skipped", ignoreCase = true) || it.scheduled.isSkipped }
+
+                val yearUpcomingSchedList = yearScheduledOverviewList.filter { it.scheduled.status.equals("Upcoming", ignoreCase = true) && !it.scheduled.isSkipped }
+                val yearRenewedSchedList = yearScheduledOverviewList.filter { (it.scheduled.status.equals("Renewed", ignoreCase = true) || it.scheduled.status.equals("Paid", ignoreCase = true)) && !it.scheduled.isSkipped }
+                val yearForwardedSchedList = yearScheduledOverviewList.filter { it.scheduled.status.equals("Forwarded", ignoreCase = true) && !it.scheduled.isSkipped }
+                val yearInSuiteSchedList = yearScheduledOverviewList.filter { it.scheduled.status.equals("In Suite", ignoreCase = true) && !it.scheduled.isSkipped }
+                val yearShippedSchedList = yearScheduledOverviewList.filter { it.scheduled.status.equals("Shipped", ignoreCase = true) && !it.scheduled.isSkipped }
+                val yearReceivedSchedList = yearScheduledOverviewList.filter { it.scheduled.status.equals("Received", ignoreCase = true) && !it.scheduled.isSkipped }
+                val yearSkippedSchedList = yearScheduledOverviewList.filter { it.scheduled.status.equals("Skipped", ignoreCase = true) || it.scheduled.isSkipped }
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                        .clickable { onNavigateToSubscriptions() }
+                        .testTag("home_stat_scheduled_subs_widget"),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = ImageVector.vectorResource(R.drawable.ic_subscriptions_auto_stories),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            Text(
+                                text = "Active Subs Overview",
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                letterSpacing = (-0.3).sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = if (scheduledStatsPagerState.currentPage == 0) "This month" else "This year",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (scheduledStatsPagerState.currentPage == 0) 7.dp else 5.dp)
+                                        .clip(CircleShape)
+                                        .background(if (scheduledStatsPagerState.currentPage == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                        .clickable { coroutineScope.launch { scheduledStatsPagerState.animateScrollToPage(0) } }
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (scheduledStatsPagerState.currentPage == 1) 7.dp else 5.dp)
+                                        .clip(CircleShape)
+                                        .background(if (scheduledStatsPagerState.currentPage == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                        .clickable { coroutineScope.launch { scheduledStatsPagerState.animateScrollToPage(1) } }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        HorizontalPager(
+                            state = scheduledStatsPagerState,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { page ->
+                            if (page == 0) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    MiniStatusDot(
+                                        color = Color(0xFFFF9800),
+                                        count = monthUpcomingSchedList.size,
+                                        label = "Upcoming",
+                                        icon = Icons.Default.Schedule,
+                                        onClick = {
+                                            statusFilterTitle = "Upcoming Deliveries (${monthUpcomingSchedList.size})"
+                                            statusFilterScheduledItems = monthUpcomingSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF8B5CF6),
+                                        count = monthRenewedSchedList.size,
+                                        label = "Renewed",
+                                        icon = Icons.Default.Payments,
+                                        onClick = {
+                                            statusFilterTitle = "Renewed Deliveries (${monthRenewedSchedList.size})"
+                                            statusFilterScheduledItems = monthRenewedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF0EA5E9),
+                                        count = monthForwardedSchedList.size,
+                                        label = "Forwarded",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_alt_route),
+                                        onClick = {
+                                            statusFilterTitle = "Forwarded Deliveries (${monthForwardedSchedList.size})"
+                                            statusFilterScheduledItems = monthForwardedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFFD97706),
+                                        count = monthInSuiteSchedList.size,
+                                        label = "In Suite",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_warehouse),
+                                        onClick = {
+                                            statusFilterTitle = "In Suite Deliveries (${monthInSuiteSchedList.size})"
+                                            statusFilterScheduledItems = monthInSuiteSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF2196F3),
+                                        count = monthShippedSchedList.size,
+                                        label = "Shipped",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_local_shipping),
+                                        onClick = {
+                                            statusFilterTitle = "Shipped Deliveries (${monthShippedSchedList.size})"
+                                            statusFilterScheduledItems = monthShippedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF10B981),
+                                        count = monthReceivedSchedList.size,
+                                        label = "Received",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_check_circle),
+                                        onClick = {
+                                            statusFilterTitle = "Received Deliveries (${monthReceivedSchedList.size})"
+                                            statusFilterScheduledItems = monthReceivedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFFEF4444),
+                                        count = monthSkippedSchedList.size,
+                                        label = "Skipped",
+                                        icon = Icons.Default.Block,
+                                        onClick = {
+                                            statusFilterTitle = "Skipped Deliveries (${monthSkippedSchedList.size})"
+                                            statusFilterScheduledItems = monthSkippedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    MiniStatusDot(
+                                        color = Color(0xFFFF9800),
+                                        count = yearUpcomingSchedList.size,
+                                        label = "Upcoming",
+                                        icon = Icons.Default.Schedule,
+                                        onClick = {
+                                            statusFilterTitle = "Upcoming Deliveries (${yearUpcomingSchedList.size})"
+                                            statusFilterScheduledItems = yearUpcomingSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF8B5CF6),
+                                        count = yearRenewedSchedList.size,
+                                        label = "Renewed",
+                                        icon = Icons.Default.Payments,
+                                        onClick = {
+                                            statusFilterTitle = "Renewed Deliveries (${yearRenewedSchedList.size})"
+                                            statusFilterScheduledItems = yearRenewedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF0EA5E9),
+                                        count = yearForwardedSchedList.size,
+                                        label = "Forwarded",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_alt_route),
+                                        onClick = {
+                                            statusFilterTitle = "Forwarded Deliveries (${yearForwardedSchedList.size})"
+                                            statusFilterScheduledItems = yearForwardedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFFD97706),
+                                        count = yearInSuiteSchedList.size,
+                                        label = "In Suite",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_warehouse),
+                                        onClick = {
+                                            statusFilterTitle = "In Suite Deliveries (${yearInSuiteSchedList.size})"
+                                            statusFilterScheduledItems = yearInSuiteSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF2196F3),
+                                        count = yearShippedSchedList.size,
+                                        label = "Shipped",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_local_shipping),
+                                        onClick = {
+                                            statusFilterTitle = "Shipped Deliveries (${yearShippedSchedList.size})"
+                                            statusFilterScheduledItems = yearShippedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFF10B981),
+                                        count = yearReceivedSchedList.size,
+                                        label = "Received",
+                                        icon = ImageVector.vectorResource(R.drawable.ic_status_check_circle),
+                                        onClick = {
+                                            statusFilterTitle = "Received Deliveries (${yearReceivedSchedList.size})"
+                                            statusFilterScheduledItems = yearReceivedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    MiniStatusDot(
+                                        color = Color(0xFFEF4444),
+                                        count = yearSkippedSchedList.size,
+                                        label = "Skipped",
+                                        icon = Icons.Default.Block,
+                                        onClick = {
+                                            statusFilterTitle = "Skipped Deliveries (${yearSkippedSchedList.size})"
+                                            statusFilterScheduledItems = yearSkippedSchedList
+                                            statusFilterPreorderItems = null
+                                            statusFilterSubItems = null
+                                        },
+                                        onZeroClick = { discreteToastMessage = "$it: 0" },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bento Row: Preorders Status Counters Widget
+            item {
+                val packagesByPreorderId = remember(allPackages) {
+                    allPackages.filter { it.originTable == "preorders" }.associateBy { it.originId }
+                }
+                val addressesById = remember(userAddresses) {
+                    userAddresses.associateBy { it.id }
+                }
+
+                val currentCal = Calendar.getInstance()
+                val currentYear = currentCal.get(Calendar.YEAR)
+                val currentMonth = currentCal.get(Calendar.MONTH)
+
+                val getPreorderEffectiveDate: (PreorderWithBookstore) -> Long = { item ->
+                    val status = item.preorder.status.lowercase().trim()
+                    val pkg = packagesByPreorderId[item.preorder.id]
+                    when (status) {
+                        "preordered" -> pkg?.purchaseDate ?: item.preorder.rangedSaleDateStart
+                        "forwarded" -> pkg?.storeShippingDate ?: item.preorder.rangedSaleDateStart
+                        "in suite" -> pkg?.forwarderReceivedDate ?: item.preorder.rangedSaleDateStart
+                        "shipped" -> {
+                            val hasForwarding = item.preorder.shippingAddressId?.let { addrId ->
+                                addressesById[addrId]?.forwardingServiceId != null
+                            } ?: false
+                            if (hasForwarding) pkg?.forwarderShippedDate ?: pkg?.storeShippingDate ?: item.preorder.rangedSaleDateStart
+                            else pkg?.storeShippingDate ?: item.preorder.rangedSaleDateStart
+                        }
+                        "received" -> pkg?.receivedDate ?: item.preorder.rangedSaleDateStart
+                        else -> item.preorder.rangedSaleDateStart
+                    }
+                }
+
+                val isPreorderInMonth: (PreorderWithBookstore, Int, Int) -> Boolean = { item, y, m ->
+                    val date = getPreorderEffectiveDate(item)
+                    val cal = Calendar.getInstance().apply { timeInMillis = date }
+                    cal.get(Calendar.YEAR) == y && cal.get(Calendar.MONTH) == m
+                }
+
+                val isPreorderInYear: (PreorderWithBookstore, Int) -> Boolean = { item, y ->
+                    val date = getPreorderEffectiveDate(item)
+                    val cal = Calendar.getInstance().apply { timeInMillis = date }
+                    cal.get(Calendar.YEAR) == y
+                }
+
+                val monthPreorderList = remember(preorders, packagesByPreorderId, addressesById, currentYear, currentMonth) {
+                    preorders.filter { isPreorderInMonth(it, currentYear, currentMonth) }
+                }
+                val yearPreorderList = remember(preorders, packagesByPreorderId, addressesById, currentYear) {
+                    preorders.filter { isPreorderInYear(it, currentYear) }
+                }
+
+                val monthUpcomingList = monthPreorderList.filter { it.preorder.status.equals("Upcoming", ignoreCase = true) }
+                val monthReleasedList = monthPreorderList.filter { it.preorder.status.equals("Released", ignoreCase = true) }
+                val monthPreorderedList = monthPreorderList.filter { it.preorder.status.equals("Preordered", ignoreCase = true) }
+                val monthForwardedList = monthPreorderList.filter { it.preorder.status.equals("Forwarded", ignoreCase = true) }
+                val monthInSuiteList = monthPreorderList.filter { it.preorder.status.equals("In Suite", ignoreCase = true) }
+                val monthShippedList = monthPreorderList.filter { it.preorder.status.equals("Shipped", ignoreCase = true) }
+                val monthReceivedList = monthPreorderList.filter { it.preorder.status.equals("Received", ignoreCase = true) }
+
+                val yearUpcomingList = yearPreorderList.filter { it.preorder.status.equals("Upcoming", ignoreCase = true) }
+                val yearReleasedList = yearPreorderList.filter { it.preorder.status.equals("Released", ignoreCase = true) }
+                val yearPreorderedList = yearPreorderList.filter { it.preorder.status.equals("Preordered", ignoreCase = true) }
+                val yearForwardedList = yearPreorderList.filter { it.preorder.status.equals("Forwarded", ignoreCase = true) }
+                val yearInSuiteList = yearPreorderList.filter { it.preorder.status.equals("In Suite", ignoreCase = true) }
+                val yearShippedList = yearPreorderList.filter { it.preorder.status.equals("Shipped", ignoreCase = true) }
+                val yearReceivedList = yearPreorderList.filter { it.preorder.status.equals("Received", ignoreCase = true) }
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                        .clickable { onNavigateToPreorders() }
+                        .testTag("home_stat_preorders_widget"),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = ImageVector.vectorResource(R.drawable.ic_book_5),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            Text(
+                                text = "Preorders Overview",
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                letterSpacing = (-0.3).sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = if (preorderStatsPagerState.currentPage == 0) "This month" else "This year",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (preorderStatsPagerState.currentPage == 0) 7.dp else 5.dp)
+                                        .clip(CircleShape)
+                                        .background(if (preorderStatsPagerState.currentPage == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                        .clickable { coroutineScope.launch { preorderStatsPagerState.animateScrollToPage(0) } }
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (preorderStatsPagerState.currentPage == 1) 7.dp else 5.dp)
+                                        .clip(CircleShape)
+                                        .background(if (preorderStatsPagerState.currentPage == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                                        .clickable { coroutineScope.launch { preorderStatsPagerState.animateScrollToPage(1) } }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                            HorizontalPager(
+                                state = preorderStatsPagerState,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { page ->
+                                if (page == 0) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        MiniStatusDot(
+                                            color = Color(0xFFFF9800),
+                                            count = monthUpcomingList.size,
+                                            label = "Upcoming",
+                                            icon = Icons.Default.Schedule,
+                                            onClick = {
+                                                statusFilterTitle = "Upcoming Preorders (${monthUpcomingList.size})"
+                                                statusFilterPreorderItems = monthUpcomingList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFFE65100),
+                                            count = monthReleasedList.size,
+                                            label = "Released",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_new_releases),
+                                            onClick = {
+                                                statusFilterTitle = "Released Preorders (${monthReleasedList.size})"
+                                                statusFilterPreorderItems = monthReleasedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF2196F3),
+                                            count = monthPreorderedList.size,
+                                            label = "Preordered",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_shopping_bag),
+                                            onClick = {
+                                                statusFilterTitle = "Preordered Items (${monthPreorderedList.size})"
+                                                statusFilterPreorderItems = monthPreorderedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF0EA5E9),
+                                            count = monthForwardedList.size,
+                                            label = "Forwarded",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_alt_route),
+                                            onClick = {
+                                                statusFilterTitle = "Forwarded Preorders (${monthForwardedList.size})"
+                                                statusFilterPreorderItems = monthForwardedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFFD97706),
+                                            count = monthInSuiteList.size,
+                                            label = "In Suite",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_warehouse),
+                                            onClick = {
+                                                statusFilterTitle = "In Suite Preorders (${monthInSuiteList.size})"
+                                                statusFilterPreorderItems = monthInSuiteList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF8B5CF6),
+                                            count = monthShippedList.size,
+                                            label = "Shipped",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_local_shipping),
+                                            onClick = {
+                                                statusFilterTitle = "Shipped Preorders (${monthShippedList.size})"
+                                                statusFilterPreorderItems = monthShippedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF10B981),
+                                            count = monthReceivedList.size,
+                                            label = "Received",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_check_circle),
+                                            onClick = {
+                                                statusFilterTitle = "Received Preorders (${monthReceivedList.size})"
+                                                statusFilterPreorderItems = monthReceivedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                } else {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        MiniStatusDot(
+                                            color = Color(0xFFFF9800),
+                                            count = yearUpcomingList.size,
+                                            label = "Upcoming",
+                                            icon = Icons.Default.Schedule,
+                                            onClick = {
+                                                statusFilterTitle = "Upcoming Preorders (${yearUpcomingList.size})"
+                                                statusFilterPreorderItems = yearUpcomingList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFFE65100),
+                                            count = yearReleasedList.size,
+                                            label = "Released",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_new_releases),
+                                            onClick = {
+                                                statusFilterTitle = "Released Preorders (${yearReleasedList.size})"
+                                                statusFilterPreorderItems = yearReleasedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF2196F3),
+                                            count = yearPreorderedList.size,
+                                            label = "Preordered",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_shopping_bag),
+                                            onClick = {
+                                                statusFilterTitle = "Preordered Items (${yearPreorderedList.size})"
+                                                statusFilterPreorderItems = yearPreorderedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF0EA5E9),
+                                            count = yearForwardedList.size,
+                                            label = "Forwarded",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_alt_route),
+                                            onClick = {
+                                                statusFilterTitle = "Forwarded Preorders (${yearForwardedList.size})"
+                                                statusFilterPreorderItems = yearForwardedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFFD97706),
+                                            count = yearInSuiteList.size,
+                                            label = "In Suite",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_warehouse),
+                                            onClick = {
+                                                statusFilterTitle = "In Suite Preorders (${yearInSuiteList.size})"
+                                                statusFilterPreorderItems = yearInSuiteList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF8B5CF6),
+                                            count = yearShippedList.size,
+                                            label = "Shipped",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_local_shipping),
+                                            onClick = {
+                                                statusFilterTitle = "Shipped Preorders (${yearShippedList.size})"
+                                                statusFilterPreorderItems = yearShippedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        MiniStatusDot(
+                                            color = Color(0xFF10B981),
+                                            count = yearReceivedList.size,
+                                            label = "Received",
+                                            icon = ImageVector.vectorResource(R.drawable.ic_status_check_circle),
+                                            onClick = {
+                                                statusFilterTitle = "Received Preorders (${yearReceivedList.size})"
+                                                statusFilterPreorderItems = yearReceivedList
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                            },
+                                            onZeroClick = { discreteToastMessage = "$it: 0" },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
             // Bento Row 3: Upcoming Timeline Section Header
             item {
@@ -2170,6 +2957,7 @@ fun HomeScreen(
                     statusFilterTitle = null
                     statusFilterScheduledItems = null
                     statusFilterSubItems = null
+                    statusFilterPreorderItems = null
                 },
                 title = {
                     Row(
@@ -2257,16 +3045,28 @@ fun HomeScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Column(modifier = Modifier.weight(1f)) {
+                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                                val subscriptionTitle = item.subscriptionType?.title?.ifBlank { null } ?: "Delivery Issue"
+                                                val bookTitle = item.scheduled.bookTitle.trim()
+                                                val bookAuthor = item.scheduled.bookAuthor.trim()
+
                                                 Text(
-                                                    text = item.scheduled.bookTitle.ifEmpty { item.subscriptionType?.title ?: "Delivery Issue" },
+                                                    text = subscriptionTitle,
                                                     fontWeight = FontWeight.Bold,
                                                     fontSize = 14.sp,
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
-                                                if (item.scheduled.bookAuthor.isNotEmpty()) {
+                                                if (bookTitle.isNotBlank()) {
                                                     Text(
-                                                        text = "by ${item.scheduled.bookAuthor}",
+                                                        text = bookTitle,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                if (bookAuthor.isNotBlank()) {
+                                                    Text(
+                                                        text = if (bookAuthor.startsWith("by ", ignoreCase = true)) bookAuthor else "by $bookAuthor",
                                                         fontSize = 12.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
@@ -2375,6 +3175,110 @@ fun HomeScreen(
                                     }
                                 }
                             }
+                        } else if (!statusFilterPreorderItems.isNullOrEmpty()) {
+                            val preItems = statusFilterPreorderItems!!
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(preItems) { item ->
+                                    val statusColor = when (item.preorder.status.lowercase().trim()) {
+                                        "upcoming" -> Color(0xFFFF9800)
+                                        "released" -> Color(0xFFE65100)
+                                        "preordered" -> Color(0xFF2196F3)
+                                        "forwarded" -> Color(0xFF0EA5E9)
+                                        "in suite" -> Color(0xFFD97706)
+                                        "shipped" -> Color(0xFF8B5CF6)
+                                        "received" -> Color(0xFF10B981)
+                                        else -> Color(0xFF64748B)
+                                    }
+                                    val statusBgColor = when (item.preorder.status.lowercase().trim()) {
+                                        "upcoming" -> if (isDark) Color(0xFF451A03) else Color(0xFFFFEDD5)
+                                        "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
+                                        "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
+                                        "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
+                                        "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
+                                        "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
+                                        "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
+                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                    val statusTextColor = when (item.preorder.status.lowercase().trim()) {
+                                        "upcoming" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
+                                        "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
+                                        "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
+                                        "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
+                                        "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
+                                        "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
+                                        "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                selectedPreorderForEdit = item
+                                                statusFilterTitle = null
+                                                statusFilterScheduledItems = null
+                                                statusFilterSubItems = null
+                                                statusFilterPreorderItems = null
+                                            },
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        ),
+                                        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.3f))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                                Text(
+                                                    text = item.preorder.bookTitle,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 14.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (item.preorder.bookAuthor.isNotBlank()) {
+                                                    Text(
+                                                        text = if (item.preorder.bookAuthor.startsWith("by ", ignoreCase = true)) item.preorder.bookAuthor else "by ${item.preorder.bookAuthor}",
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                if (item.bookstore != null && item.bookstore.name.isNotBlank()) {
+                                                    Text(
+                                                        text = item.bookstore.name,
+                                                        fontSize = 12.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "${currency}${String.format("%.2f", item.preorder.price)} • ${displayFormat.format(Date(item.preorder.rangedSaleDateStart))}",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(statusBgColor)
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = item.preorder.status,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = statusTextColor
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             Box(
                                 modifier = Modifier
@@ -2397,6 +3301,7 @@ fun HomeScreen(
                             statusFilterTitle = null
                             statusFilterScheduledItems = null
                             statusFilterSubItems = null
+                            statusFilterPreorderItems = null
                         }
                     ) {
                         Text("Close")
@@ -2476,10 +3381,11 @@ fun HomeScreen(
                                 val statusLower = event.status.lowercase()
                                 val statusColor = when (statusLower) {
                                     "upcoming" -> Color(0xFF64748B)
+                                    "released" -> Color(0xFFEA580C)
+                                    "wishlist" -> Color(0xFFEC4899)
                                     "renewed", "paid", "preordered" -> Color(0xFF2563EB)
                                     "forwarded" -> Color(0xFF0EA5E9)
                                     "in suite" -> Color(0xFFD97706)
-                                    "released" -> Color(0xFFEA580C)
                                     "skipped" -> Color(0xFFEF4444)
                                     "shipped" -> Color(0xFF8B5CF6)
                                     "received" -> Color(0xFF10B981)
@@ -2487,10 +3393,11 @@ fun HomeScreen(
                                 }
                                 val statusBgColor = when (statusLower) {
                                     "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
+                                    "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
+                                    "wishlist" -> if (isDark) Color(0xFF831843) else Color(0xFFFCE7F3)
                                     "renewed", "paid", "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
                                     "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
                                     "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
-                                    "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
                                     "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
                                     "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
                                     "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
@@ -2498,10 +3405,11 @@ fun HomeScreen(
                                 }
                                 val statusTextColor = when (statusLower) {
                                     "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
+                                    "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
+                                    "wishlist" -> if (isDark) Color(0xFFFCE7F3) else Color(0xFF9D174D)
                                     "renewed", "paid", "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
                                     "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
                                     "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
-                                    "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
                                     "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
                                     "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
                                     "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
@@ -2897,10 +3805,11 @@ fun BentoTimelineItem(
 
     val statusBgColor = when (statusLower) {
         "upcoming" -> if (isDark) Color(0xFF334155) else Color(0xFFF1F5F9)
+        "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
+        "wishlist" -> if (isDark) Color(0xFF831843) else Color(0xFFFCE7F3)
         "renewed", "paid", "preordered" -> if (isDark) Color(0xFF1E3A8A) else Color(0xFFDBEAFE)
         "forwarded" -> if (isDark) Color(0xFF0C4A6E) else Color(0xFFE0F2FE)
         "in suite" -> if (isDark) Color(0xFF78350F) else Color(0xFFFEF3C7)
-        "released" -> if (isDark) Color(0xFF7C2D12) else Color(0xFFFFEDD5)
         "skipped" -> if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
         "shipped" -> if (isDark) Color(0xFF4C1D95) else Color(0xFFF3E8FF)
         "received" -> if (isDark) Color(0xFF064E3B) else Color(0xFFD1FAE5)
@@ -2908,10 +3817,11 @@ fun BentoTimelineItem(
     }
     val statusTextColor = when (statusLower) {
         "upcoming" -> if (isDark) Color(0xFFF1F5F9) else Color(0xFF334155)
+        "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
+        "wishlist" -> if (isDark) Color(0xFFFCE7F3) else Color(0xFF9D174D)
         "renewed", "paid", "preordered" -> if (isDark) Color(0xFFDBEAFE) else Color(0xFF1E40AF)
         "forwarded" -> if (isDark) Color(0xFFE0F2FE) else Color(0xFF0369A1)
         "in suite" -> if (isDark) Color(0xFFFEF3C7) else Color(0xFF92400E)
-        "released" -> if (isDark) Color(0xFFFFEDD5) else Color(0xFF9A3412)
         "skipped" -> if (isDark) Color(0xFFFEE2E2) else Color(0xFF991B1B)
         "shipped" -> if (isDark) Color(0xFFF3E8FF) else Color(0xFF5B21B6)
         "received" -> if (isDark) Color(0xFFD1FAE5) else Color(0xFF065F46)
@@ -2919,11 +3829,12 @@ fun BentoTimelineItem(
     }
     val statusIcon = when (statusLower) {
         "upcoming" -> if (event.type == "scheduled") Icons.Default.Schedule else Icons.Default.ShoppingBag
+        "released" -> Icons.Default.NewReleases
+        "wishlist" -> Icons.Default.Favorite
         "preordered" -> Icons.Default.ShoppingBag
         "renewed", "paid" -> Icons.Default.Payments
         "forwarded" -> Icons.Default.AltRoute
         "in suite" -> Icons.Default.Warehouse
-        "released" -> Icons.Default.NewReleases
         "shipped" -> Icons.Default.LocalShipping
         "received" -> Icons.Default.CheckCircle
         "skipped" -> Icons.Default.Block

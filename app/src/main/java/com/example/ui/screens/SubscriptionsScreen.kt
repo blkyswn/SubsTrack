@@ -5,6 +5,9 @@ import com.example.ui.components.MultiSelectChipGroup
 import com.example.ui.components.OtherFormTabContent
 import com.example.ui.components.PackageDetailsDialog
 import com.example.ui.components.PackageTrackingQuickButton
+import com.example.ui.components.nextOnEnter
+import com.example.ui.components.rememberNextKeyboardActions
+import com.example.ui.components.nextKeyboardOptions
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.res.painterResource
 import com.example.R
@@ -161,6 +164,7 @@ fun SubscriptionsScreen(
     var currentOverviewTimeframe by remember { mutableStateOf(0) } // 0 = 7 days, 1 = monthly (30d), 2 = yearly (365d)
 
     var subListViewTab by remember { mutableStateOf(0) } // 0 = Upcoming, 1 = Past, 2 = All
+    var expandedScheduledId by remember { mutableStateOf<Int?>(null) }
     val todayStart = remember {
         Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
@@ -385,6 +389,30 @@ fun SubscriptionsScreen(
                 val cardContrastBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
                 val cardBorder = if (!isDark) BorderStroke(1.dp, Color(0xFFFF5722).copy(alpha = 0.15f)) else null
 
+                val upcomingSubListState = rememberLazyListState()
+                val pastSubListState = rememberLazyListState()
+                val allSubListState = rememberLazyListState()
+
+                val activeSubListState = when (subListViewTab) {
+                    0 -> upcomingSubListState
+                    1 -> pastSubListState
+                    else -> allSubListState
+                }
+
+                var isStatsFolded by remember { mutableStateOf(false) }
+
+                LaunchedEffect(activeSubListState) {
+                    var wasAtTop = activeSubListState.firstVisibleItemIndex == 0 && activeSubListState.firstVisibleItemScrollOffset <= 5
+                    snapshotFlow {
+                        activeSubListState.firstVisibleItemIndex == 0 && activeSubListState.firstVisibleItemScrollOffset <= 5
+                    }.collect { isAtTop ->
+                        if (isAtTop != wasAtTop) {
+                            wasAtTop = isAtTop
+                            isStatsFolded = !isAtTop
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
 
                 if (!isOverviewCalendar) {
@@ -401,6 +429,7 @@ fun SubscriptionsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .animateContentSize()
                             .padding(12.dp)
                     ) {
                         val currentLabel = timeframes.getOrElse(subOverviewPagerState.currentPage) { timeframes.first() }
@@ -408,17 +437,33 @@ fun SubscriptionsScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 8.dp, start = 4.dp, end = 4.dp),
+                                .padding(bottom = if (isStatsFolded) 0.dp else 8.dp, start = 4.dp, end = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = currentLabel,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = cardContrastColor,
-                                modifier = Modifier.testTag("stats_timeframe_title")
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { isStatsFolded = !isStatsFolded }
+                                    .padding(vertical = 2.dp, horizontal = 2.dp)
+                                    .testTag("stats_fold_toggle")
+                            ) {
+                                Text(
+                                    text = currentLabel,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = cardContrastColor,
+                                    modifier = Modifier.testTag("stats_timeframe_title")
+                                )
+                                Icon(
+                                    imageVector = if (isStatsFolded) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                                    contentDescription = if (isStatsFolded) "Unfold stats" else "Fold stats",
+                                    tint = cardContrastColor,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -431,7 +476,7 @@ fun SubscriptionsScreen(
                                         .size(18.dp)
                                         .clickable { showCosts = !showCosts }
                                         .testTag("toggle_show_costs")
-                                )
+                                    )
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -452,10 +497,15 @@ fun SubscriptionsScreen(
                             }
                         }
 
-                        HorizontalPager(
-                            state = subOverviewPagerState,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { page ->
+                        AnimatedVisibility(
+                            visible = !isStatsFolded,
+                            enter = expandVertically(animationSpec = androidx.compose.animation.core.tween(220)) + fadeIn(animationSpec = androidx.compose.animation.core.tween(220)),
+                            exit = shrinkVertically(animationSpec = androidx.compose.animation.core.tween(180)) + fadeOut(animationSpec = androidx.compose.animation.core.tween(180))
+                        ) {
+                            HorizontalPager(
+                                state = subOverviewPagerState,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { page ->
                             val pageLabel = timeframes.getOrElse(page) { timeframes.first() }
                             val currency = userState?.currency ?: "$"
 
@@ -1064,6 +1114,7 @@ fun SubscriptionsScreen(
                         }
                     }
                 }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -1199,7 +1250,11 @@ fun SubscriptionsScreen(
                                 item = item,
                                 viewModel = viewModel,
                                 onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
-                                onStateChanged = onScheduledStateChanged
+                                onStateChanged = onScheduledStateChanged,
+                                isActionsExpanded = expandedScheduledId == item.scheduled.id,
+                                onToggleActionsExpanded = {
+                                    expandedScheduledId = if (expandedScheduledId == item.scheduled.id) null else item.scheduled.id
+                                }
                             )
                         }
                     }
@@ -1257,6 +1312,7 @@ fun SubscriptionsScreen(
                             }
                         } else {
                             LazyColumn(
+                                state = upcomingSubListState,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f)
@@ -1281,7 +1337,11 @@ fun SubscriptionsScreen(
                                             item = item,
                                             viewModel = viewModel,
                                             onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
-                                            onStateChanged = onScheduledStateChanged
+                                            onStateChanged = onScheduledStateChanged,
+                                            isActionsExpanded = expandedScheduledId == item.scheduled.id,
+                                            onToggleActionsExpanded = {
+                                                expandedScheduledId = if (expandedScheduledId == item.scheduled.id) null else item.scheduled.id
+                                            }
                                         )
                                     }
                                 }
@@ -1299,6 +1359,7 @@ fun SubscriptionsScreen(
                             }
                         } else {
                             LazyColumn(
+                                state = pastSubListState,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f)
@@ -1323,7 +1384,11 @@ fun SubscriptionsScreen(
                                             item = item,
                                             viewModel = viewModel,
                                             onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
-                                            onStateChanged = onScheduledStateChanged
+                                            onStateChanged = onScheduledStateChanged,
+                                            isActionsExpanded = expandedScheduledId == item.scheduled.id,
+                                            onToggleActionsExpanded = {
+                                                expandedScheduledId = if (expandedScheduledId == item.scheduled.id) null else item.scheduled.id
+                                            }
                                         )
                                     }
                                 }
@@ -1341,6 +1406,7 @@ fun SubscriptionsScreen(
                             }
                         } else {
                             LazyColumn(
+                                state = allSubListState,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f)
@@ -1365,7 +1431,11 @@ fun SubscriptionsScreen(
                                             item = item,
                                             viewModel = viewModel,
                                             onPromptSkip = { if (it.scheduled.dueDate >= todayStart) itemToPromptSkip = it },
-                                            onStateChanged = onScheduledStateChanged
+                                            onStateChanged = onScheduledStateChanged,
+                                            isActionsExpanded = expandedScheduledId == item.scheduled.id,
+                                            onToggleActionsExpanded = {
+                                                expandedScheduledId = if (expandedScheduledId == item.scheduled.id) null else item.scheduled.id
+                                            }
                                         )
                                     }
                                 }
@@ -1578,7 +1648,9 @@ fun ScheduledItemRow(
     item: ScheduledWithDetails,
     viewModel: BookishViewModel,
     onPromptSkip: ((ScheduledWithDetails) -> Unit)? = null,
-    onStateChanged: ((oldScheduled: ScheduledSubscription, newScheduled: ScheduledSubscription, message: String) -> Unit)? = null
+    onStateChanged: ((oldScheduled: ScheduledSubscription, newScheduled: ScheduledSubscription, message: String) -> Unit)? = null,
+    isActionsExpanded: Boolean = false,
+    onToggleActionsExpanded: (() -> Unit)? = null
 ) {
     val userState by viewModel.userState.collectAsState()
     val currency = userState?.currency ?: "$"
@@ -1592,8 +1664,59 @@ fun ScheduledItemRow(
 
     val isDark = isSystemInDarkTheme()
     val context = LocalContext.current
+    var localIsActionsExpanded by remember { mutableStateOf(false) }
+    val effectiveIsActionsExpanded = if (onToggleActionsExpanded != null) isActionsExpanded else localIsActionsExpanded
+    val toggleActions = {
+        if (onToggleActionsExpanded != null) {
+            onToggleActionsExpanded()
+        } else {
+            localIsActionsExpanded = !localIsActionsExpanded
+        }
+    }
     var showEditDialog by remember { mutableStateOf(false) }
     var showViewerDialog by remember { mutableStateOf(false) }
+    var showTransferPreorderDialog by remember { mutableStateOf(false) }
+
+    val onTransferClick = {
+        val sc = item.scheduled
+        val hasTitleAndAuthor = sc.bookTitle.isNotBlank() && sc.bookAuthor.isNotBlank()
+        if (hasTitleAndAuthor) {
+            val sub = item.subscriptionType
+            val bookstoreId = sub?.bookstoreId ?: item.bookstore?.id ?: 0
+            val now = System.currentTimeMillis()
+            val isPast = sc.dueDate <= now
+            val targetStatus = if (isPast) "Released" else "Upcoming"
+
+            viewModel.addPreorder(
+                bookstoreId = bookstoreId,
+                picturePath = sc.picturePath ?: sub?.picturePath,
+                bookTitle = sc.bookTitle,
+                bookAuthor = sc.bookAuthor,
+                description = sc.description,
+                price = sub?.price ?: 0.0,
+                saleDateStart = sc.dueDate,
+                saleDateEnd = 0L,
+                status = targetStatus,
+                reminderEnabled = sub?.reminderEnabled ?: false,
+                reminderDDayOffset = sub?.reminderDDayOffset ?: 0,
+                reminderHour = sub?.reminderHour ?: 8,
+                reminderMinute = sub?.reminderMinute ?: 0,
+                rating = sc.rating,
+                shippingAddressId = sub?.shippingAddressId,
+                currency = sub?.currency,
+                basePrice = sub?.basePrice,
+                discountedAmount = sub?.discountedAmount,
+                shippingPrice = sub?.shippingPrice,
+                taxPrice = sub?.taxPrice,
+                forwardShippingPrice = sub?.forwardShippingPrice,
+                forwardTaxPrice = sub?.forwardTaxPrice,
+                wishlist = sc.bookmark
+            )
+            android.widget.Toast.makeText(context, "Transferred to Preorders ($targetStatus)", android.widget.Toast.LENGTH_SHORT).show()
+        } else {
+            showTransferPreorderDialog = true
+        }
+    }
 
     val activeImageModel = item.scheduled.picturePath.takeIf { !it.isNullOrEmpty() }
 
@@ -1904,12 +2027,118 @@ fun ScheduledItemRow(
                 }
             }
         ) {
-            Card(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showEditDialog = true }
-                    .padding(vertical = 6.dp),
-                shape = RoundedCornerShape(20.dp),
+                    .animateContentSize()
+                    .padding(vertical = 4.dp)
+            ) {
+                AnimatedVisibility(
+                    visible = effectiveIsActionsExpanded,
+                    enter = expandVertically(animationSpec = androidx.compose.animation.core.tween(220)) + fadeIn(animationSpec = androidx.compose.animation.core.tween(220)),
+                    exit = shrinkVertically(animationSpec = androidx.compose.animation.core.tween(180)) + fadeOut(animationSpec = androidx.compose.animation.core.tween(180))
+                ) {
+                    val statsCardBg = if (!isDark) Color(0xFFFF5722).copy(alpha = 0.05f) else MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
+                    val statsCardBorder = if (!isDark) BorderStroke(1.dp, Color(0xFFFF5722).copy(alpha = 0.15f)) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 2.dp),
+                        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+                        color = statsCardBg,
+                        border = statsCardBorder
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 1. Bookmark button
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable {
+                                        val newBookmark = !item.scheduled.bookmark
+                                        viewModel.updateScheduledSubscription(item.scheduled.copy(bookmark = newBookmark))
+                                    }
+                                    .testTag("scheduled_bookmark_btn_${item.scheduled.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (item.scheduled.bookmark) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                    contentDescription = "Bookmark",
+                                    modifier = Modifier.size(22.dp),
+                                    tint = if (item.scheduled.bookmark) Color(0xFFEC4899) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            // Divider 1
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(24.dp)
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                            )
+
+                            // 2. Edit button
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable {
+                                        showEditDialog = true
+                                    }
+                                    .testTag("scheduled_edit_btn_${item.scheduled.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            // Divider 2
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(24.dp)
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                            )
+
+                            // 3. Transfer button
+                            val isTransferEnabled = curSubStatus !in listOf("renewed", "paid", "forwarded", "in suite", "shipped", "received")
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable(enabled = isTransferEnabled) {
+                                        onTransferClick()
+                                    }
+                                    .testTag("scheduled_transfer_btn_${item.scheduled.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SwapHoriz,
+                                    contentDescription = "Transfer",
+                                    modifier = Modifier.size(22.dp),
+                                    tint = if (isTransferEnabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { toggleActions() }
+                        .testTag("scheduled_card_${item.scheduled.id}"),
+                    shape = if (effectiveIsActionsExpanded) RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp) else RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = when (item.scheduled.status.lowercase()) {
                         "upcoming" -> Color(0xFF64748B).copy(alpha = if (isDark) 0.12f else 0.06f)
@@ -2085,6 +2314,14 @@ fun ScheduledItemRow(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
+                            if (item.scheduled.bookmark) {
+                                Icon(
+                                    imageVector = Icons.Default.Bookmark,
+                                    contentDescription = "Bookmark",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = Color(0xFFEC4899)
+                                )
+                            }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2170,6 +2407,7 @@ fun ScheduledItemRow(
                     }
                 }
             }
+        }
     }
 }
 
@@ -2179,6 +2417,50 @@ fun ScheduledItemRow(
             viewModel = viewModel,
             onDismiss = { showEditDialog = false },
             onPromptSkip = onPromptSkip
+        )
+    }
+
+    if (showTransferPreorderDialog) {
+        val sc = item.scheduled
+        val sub = item.subscriptionType
+        val bookstoreId = sub?.bookstoreId ?: item.bookstore?.id ?: 0
+        val now = System.currentTimeMillis()
+        val isPast = sc.dueDate <= now
+        val targetStatus = if (isPast) "Released" else "Upcoming"
+        val transferBase = remember(item) {
+            Preorder(
+                id = 0,
+                bookstoreId = bookstoreId,
+                picturePath = sc.picturePath ?: sub?.picturePath,
+                bookTitle = sc.bookTitle,
+                bookAuthor = sc.bookAuthor,
+                description = sc.description,
+                price = sub?.price ?: 0.0,
+                rangedSaleDateStart = sc.dueDate,
+                rangedSaleDateEnd = 0L,
+                status = targetStatus,
+                reminderEnabled = sub?.reminderEnabled ?: false,
+                reminderDDayOffset = sub?.reminderDDayOffset ?: 0,
+                reminderHour = sub?.reminderHour ?: 8,
+                reminderMinute = sub?.reminderMinute ?: 0,
+                rating = sc.rating,
+                shippingAddressId = sub?.shippingAddressId,
+                currency = sub?.currency,
+                basePrice = sub?.basePrice,
+                discountedAmount = sub?.discountedAmount,
+                shippingPrice = sub?.shippingPrice,
+                taxPrice = sub?.taxPrice,
+                forwardShippingPrice = sub?.forwardShippingPrice,
+                forwardTaxPrice = sub?.forwardTaxPrice,
+                wishlist = sc.bookmark
+            )
+        }
+        val bookstoresState by viewModel.bookstoresState.collectAsState()
+        AddPreorderDialog(
+            viewModel = viewModel,
+            bookstores = bookstoresState,
+            basePreorder = transferBase,
+            onDismiss = { showTransferPreorderDialog = false }
         )
     }
 }
@@ -3127,10 +3409,12 @@ fun EditSubscriptionSkipDialog(
                             },
                             label = { Text("Num. of Skips", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             placeholder = { Text("e.g. 2") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardActions = rememberNextKeyboardActions(),
                             modifier = Modifier
                                 .weight(1f)
-                                .testTag("number_of_skips_input"),
+                                .testTag("number_of_skips_input")
+                                .nextOnEnter(),
                             singleLine = true,
                             enabled = true,
                             shape = RoundedCornerShape(8.dp)
@@ -3150,11 +3434,13 @@ fun EditSubscriptionSkipDialog(
                                 }
                             },
                             label = { Text("Skips Left", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            placeholder = { Text("e.g. 1") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            placeholder = { Text("e.g. 2") },
+                            keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardActions = rememberNextKeyboardActions(),
                             modifier = Modifier
                                 .weight(1f)
-                                .testTag("skips_left_input"),
+                                .testTag("skips_left_input")
+                                .nextOnEnter(),
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp)
                         )
@@ -3737,7 +4023,10 @@ fun SkipMethodEditorDialog(
                         onValueChange = { customLabel = it },
                         label = { Text("Custom Field Label", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         placeholder = { Text("e.g. Chat Support, WhatsApp") },
-                        modifier = Modifier.fillMaxWidth().testTag("skip_method_custom_label")
+                        singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().testTag("skip_method_custom_label").nextOnEnter()
                     )
                 }
 
@@ -3791,11 +4080,13 @@ fun SkipMethodEditorDialog(
                     onValueChange = { value = it },
                     label = { Text(valueLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     placeholder = { Text(placeholderText) },
-                    keyboardOptions = if (methodType.equals("Phone", true)) KeyboardOptions(keyboardType = KeyboardType.Phone)
-                                      else if (methodType.equals("Email", true)) KeyboardOptions(keyboardType = KeyboardType.Email)
-                                      else if (methodType.equals("Website", true)) KeyboardOptions(keyboardType = KeyboardType.Uri)
-                                      else KeyboardOptions.Default,
-                    modifier = Modifier.fillMaxWidth().testTag("skip_method_value")
+                    keyboardOptions = if (methodType.equals("Phone", true)) nextKeyboardOptions(keyboardType = KeyboardType.Phone)
+                                      else if (methodType.equals("Email", true)) nextKeyboardOptions(keyboardType = KeyboardType.Email)
+                                      else if (methodType.equals("Website", true)) nextKeyboardOptions(keyboardType = KeyboardType.Uri)
+                                      else nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("skip_method_value").nextOnEnter()
                 )
 
                 if (showTextField) {
@@ -3868,7 +4159,8 @@ fun SkipMethodEditorDialog(
                             },
                             label = { Text("Used after (skips)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             placeholder = { Text("0") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardActions = rememberNextKeyboardActions(),
                             singleLine = true,
                             trailingIcon = {
                                 Row(
@@ -3910,7 +4202,7 @@ fun SkipMethodEditorDialog(
                                     }
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().testTag("consecutive_skips_input")
+                            modifier = Modifier.fillMaxWidth().testTag("consecutive_skips_input").nextOnEnter()
                         )
                     }
                 }
@@ -4104,7 +4396,10 @@ fun AddSubscriptionTypeDialog(
                                 value = title,
                                 onValueChange = { title = it },
                                 label = { Text("Subscription Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                modifier = Modifier.fillMaxWidth().testTag("add_sub_title")
+                                singleLine = true,
+                                keyboardOptions = nextKeyboardOptions(),
+                                keyboardActions = rememberNextKeyboardActions(),
+                                modifier = Modifier.fillMaxWidth().testTag("add_sub_title").nextOnEnter()
                             )
                         }
 
@@ -4147,8 +4442,10 @@ fun AddSubscriptionTypeDialog(
                                     },
                                     label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier.weight(1f).testTag("add_sub_price")
+                                    keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    keyboardActions = rememberNextKeyboardActions(),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f).testTag("add_sub_price").nextOnEnter()
                                 )
                             }
                         }
@@ -4238,7 +4535,15 @@ fun AddSubscriptionTypeDialog(
                                     }
                                     Switch(
                                         checked = reminderEnabled,
-                                        onCheckedChange = { reminderEnabled = it }
+                                        onCheckedChange = { enabled ->
+                                            reminderEnabled = enabled
+                                            if (enabled && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                                val perm = android.Manifest.permission.POST_NOTIFICATIONS
+                                                if (context.checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                                    (context as? android.app.Activity)?.requestPermissions(arrayOf(perm), 101)
+                                                }
+                                            }
+                                        }
                                     )
                                 }
 
@@ -4295,16 +4600,18 @@ fun AddSubscriptionTypeDialog(
                                                 value = numberOfMonthsStr,
                                                 onValueChange = { numberOfMonthsStr = it.filter { ch -> ch.isDigit() } },
                                                 label = { Text("Months", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardActions = rememberNextKeyboardActions(),
                                                 singleLine = true,
-                                                modifier = Modifier.weight(1f).height(64.dp).testTag("add_sub_number_of_months")
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("add_sub_number_of_months").nextOnEnter()
                                             )
                                             OutlinedTextField(
                                                 value = numberOfSkipsStr,
                                                 onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
                                                 label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                                                 placeholder = { Text("0") },
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardActions = rememberNextKeyboardActions(),
                                                 singleLine = true,
                                                 trailingIcon = {
                                                     Row(
@@ -4342,7 +4649,7 @@ fun AddSubscriptionTypeDialog(
                                                         }
                                                     }
                                                 },
-                                                modifier = Modifier.weight(1f).height(64.dp).testTag("add_sub_number_of_skips")
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("add_sub_number_of_skips").nextOnEnter()
                                             )
                                         }
                                     } else {
@@ -4351,7 +4658,8 @@ fun AddSubscriptionTypeDialog(
                                             onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
                                             label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                                             placeholder = { Text("0") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                                            keyboardActions = rememberNextKeyboardActions(),
                                             singleLine = true,
                                             trailingIcon = {
                                                 Row(
@@ -4389,7 +4697,7 @@ fun AddSubscriptionTypeDialog(
                                                     }
                                                 }
                                             },
-                                            modifier = Modifier.fillMaxWidth().height(64.dp).testTag("add_sub_number_of_skips")
+                                            modifier = Modifier.fillMaxWidth().height(64.dp).testTag("add_sub_number_of_skips").nextOnEnter()
                                         )
                                     }
                                 }
@@ -4710,7 +5018,10 @@ fun EditSubscriptionTypeDialog(
                                 value = title,
                                 onValueChange = { title = it },
                                 label = { Text("Subscription Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                modifier = Modifier.fillMaxWidth().testTag("edit_sub_title")
+                                singleLine = true,
+                                keyboardOptions = nextKeyboardOptions(),
+                                keyboardActions = rememberNextKeyboardActions(),
+                                modifier = Modifier.fillMaxWidth().testTag("edit_sub_title").nextOnEnter()
                             )
                         }
 
@@ -4753,8 +5064,10 @@ fun EditSubscriptionTypeDialog(
                                     },
                                     label = { Text("Price ($currency)", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     leadingIcon = { Text(currency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    modifier = Modifier.weight(1f).testTag("edit_sub_price")
+                                    keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    keyboardActions = rememberNextKeyboardActions(),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f).testTag("edit_sub_price").nextOnEnter()
                                 )
                             }
                         }
@@ -4844,7 +5157,15 @@ fun EditSubscriptionTypeDialog(
                                     }
                                     Switch(
                                         checked = reminderEnabled,
-                                        onCheckedChange = { reminderEnabled = it }
+                                        onCheckedChange = { enabled ->
+                                            reminderEnabled = enabled
+                                            if (enabled && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                                val perm = android.Manifest.permission.POST_NOTIFICATIONS
+                                                if (context.checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                                    (context as? android.app.Activity)?.requestPermissions(arrayOf(perm), 101)
+                                                }
+                                            }
+                                        }
                                     )
                                 }
 
@@ -4901,16 +5222,18 @@ fun EditSubscriptionTypeDialog(
                                                 value = numberOfMonthsStr,
                                                 onValueChange = { numberOfMonthsStr = it.filter { ch -> ch.isDigit() } },
                                                 label = { Text("Months", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardActions = rememberNextKeyboardActions(),
                                                 singleLine = true,
-                                                modifier = Modifier.weight(1f).height(64.dp).testTag("edit_sub_number_of_months")
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("edit_sub_number_of_months").nextOnEnter()
                                             )
                                             OutlinedTextField(
                                                 value = numberOfSkipsStr,
                                                 onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
                                                 label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                                                 placeholder = { Text("0") },
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                                                keyboardActions = rememberNextKeyboardActions(),
                                                 singleLine = true,
                                                 trailingIcon = {
                                                     Row(
@@ -4948,7 +5271,7 @@ fun EditSubscriptionTypeDialog(
                                                         }
                                                     }
                                                 },
-                                                modifier = Modifier.weight(1f).height(64.dp).testTag("edit_sub_number_of_skips")
+                                                modifier = Modifier.weight(1f).height(64.dp).testTag("edit_sub_number_of_skips").nextOnEnter()
                                             )
                                         }
                                     } else {
@@ -4957,7 +5280,8 @@ fun EditSubscriptionTypeDialog(
                                             onValueChange = { numberOfSkipsStr = it.filter { ch -> ch.isDigit() } },
                                             label = { Text("Num. Skips", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                                             placeholder = { Text("0") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                                            keyboardActions = rememberNextKeyboardActions(),
                                             singleLine = true,
                                             trailingIcon = {
                                                 Row(
@@ -4995,7 +5319,7 @@ fun EditSubscriptionTypeDialog(
                                                     }
                                                 }
                                             },
-                                            modifier = Modifier.fillMaxWidth().height(64.dp).testTag("edit_sub_number_of_skips")
+                                            modifier = Modifier.fillMaxWidth().height(64.dp).testTag("edit_sub_number_of_skips").nextOnEnter()
                                         )
                                     }
                                 }
@@ -5162,6 +5486,7 @@ fun AddScheduledSubscriptionDialog(
 
     var imageUrl by remember { mutableStateOf("") }
     var rating by remember { mutableStateOf(0.0) }
+    var bookmark by remember { mutableStateOf(false) }
 
     LaunchedEffect(isForwardingAddress) {
         if (!isForwardingAddress && status in listOf("Forwarded", "In Suite")) {
@@ -5245,7 +5570,10 @@ fun AddScheduledSubscriptionDialog(
                         value = bookTitle,
                         onValueChange = { bookTitle = it },
                         label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.fillMaxWidth()
+                        singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().nextOnEnter()
                     )
                 }
 
@@ -5254,7 +5582,10 @@ fun AddScheduledSubscriptionDialog(
                         value = bookAuthor,
                         onValueChange = { bookAuthor = it },
                         label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.fillMaxWidth()
+                        singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().nextOnEnter()
                     )
                 }
 
@@ -5318,6 +5649,33 @@ fun AddScheduledSubscriptionDialog(
                         }
                     }
                 }
+
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { bookmark = !bookmark }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (bookmark) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = "Bookmark",
+                                tint = if (bookmark) Color(0xFFEC4899) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text("Bookmark", fontWeight = FontWeight.Medium)
+                        }
+                        Switch(
+                            checked = bookmark,
+                            onCheckedChange = { bookmark = it }
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
@@ -5337,7 +5695,8 @@ fun AddScheduledSubscriptionDialog(
                             dueDate = dueDate,
                             status = status,
                             picturePath = imageUrl.ifEmpty { null },
-                            rating = rating
+                            rating = rating,
+                            bookmark = bookmark
                         )
                         onDismiss()
                     }
@@ -5534,7 +5893,10 @@ fun EditScheduledSubscriptionDialog(
                         value = bookTitle,
                         onValueChange = { bookTitle = it },
                         label = { Text("Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.fillMaxWidth()
+                        singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().nextOnEnter()
                     )
                 }
 
@@ -5543,7 +5905,10 @@ fun EditScheduledSubscriptionDialog(
                         value = bookAuthor,
                         onValueChange = { bookAuthor = it },
                         label = { Text("Book Author", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.fillMaxWidth()
+                        singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().nextOnEnter()
                     )
                 }
 
@@ -5596,7 +5961,8 @@ fun EditScheduledSubscriptionDialog(
                             isSkipped = isNowSkipped,
                             dueDate = dueDate,
                             picturePath = imageUrl.ifEmpty { null },
-                            rating = rating
+                            rating = rating,
+                            bookmark = sc.bookmark
                         )
 
                         viewModel.updateScheduledSubscription(updatedScheduled)
@@ -5640,6 +6006,7 @@ fun EditScheduledSubscriptionDialog(
             originId = sc.id,
             viewModel = viewModel,
             hasForwardingAddress = isForwardingAddress,
+            onStatusChanged = { newStatus -> status = newStatus },
             onDismiss = { showPackageDialog = false }
         )
     }
@@ -5727,14 +6094,20 @@ fun SubscriptionFilterDialog(
                         value = authorText,
                         onValueChange = { authorText = it },
                         label = { Text("Filter by Author Name", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.fillMaxWidth()
+                        singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().nextOnEnter()
                     )
 
                     OutlinedTextField(
                         value = bookText,
                         onValueChange = { bookText = it },
                         label = { Text("Filter by Book Title", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.fillMaxWidth()
+                        singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().nextOnEnter()
                     )
                 }
             },

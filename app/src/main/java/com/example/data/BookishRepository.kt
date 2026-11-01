@@ -893,9 +893,9 @@ class BookishRepository(private val database: BookishDatabase) {
         var receivedDate = pkg.receivedDate
 
         // Purchase date:
-        // When preorders change status from upcoming/released to preordered (or higher)
+        // When preorders change status from upcoming/released/wishlist to preordered (or higher)
         if (originTable == "preorders") {
-            if ((old == "upcoming" || old == "released") && (next == "preordered" || next == "forwarded" || next == "in suite" || next == "shipped" || next == "received")) {
+            if ((old == "upcoming" || old == "released" || old == "wishlist") && (next == "preordered" || next == "forwarded" || next == "in suite" || next == "shipped" || next == "received")) {
                 purchaseDate = today
             }
         }
@@ -908,7 +908,7 @@ class BookishRepository(private val database: BookishDatabase) {
         }
 
         val isOldPreorderedOrRenewed = old == "preordered" || old == "renewed" || old == "paid"
-        val isNextPreorderedOrRenewed = next == "preordered" || next == "renewed" || next == "paid" || next == "upcoming" || next == "released" || next == "skipped"
+        val isNextPreorderedOrRenewed = next == "preordered" || next == "renewed" || next == "paid" || next == "upcoming" || next == "released" || next == "wishlist" || next == "skipped"
 
         // 1. when status changes from preordered (in preorders)/renewed (scheduled subs) to shipped/forwarded, update store shipped date in packages table to today
         if (isOldPreorderedOrRenewed && (next == "shipped" || next == "forwarded")) {
@@ -983,8 +983,8 @@ class BookishRepository(private val database: BookishDatabase) {
             receivedDate = null
         }
 
-        // 5e. Reverting back to upcoming/released/skipped clears purchase date:
-        if (originTable == "preorders" && (next == "upcoming" || next == "released")) {
+        // 5e. Reverting back to upcoming/released/wishlist/skipped clears purchase date:
+        if (originTable == "preorders" && (next == "upcoming" || next == "released" || next == "wishlist")) {
             purchaseDate = null
             storeShippingDate = null
             forwarderReceivedDate = null
@@ -1040,11 +1040,91 @@ class BookishRepository(private val database: BookishDatabase) {
     }
 
     suspend fun updatePackage(packageItem: PackageItem) {
-        packageDao.update(packageItem)
+        val oldPkg = packageDao.getPackageDirect(packageItem.originTable, packageItem.originId)
+
+        // If store tracking number is informed, automatically update store shipped date to today
+        var effectiveStoreShippingDate = packageItem.storeShippingDate
+        if (effectiveStoreShippingDate == null && !packageItem.storeTrackingNumber.isNullOrBlank()) {
+            effectiveStoreShippingDate = System.currentTimeMillis()
+        }
+
+        // If forwarder tracking number is informed, automatically update forwarder shipped date to today
+        var effectiveForwarderShippedDate = packageItem.forwarderShippedDate
+        if (effectiveForwarderShippedDate == null && !packageItem.forwarderTrackingNumber.isNullOrBlank()) {
+            effectiveForwarderShippedDate = System.currentTimeMillis()
+        }
+
+        val resolvedPkg = packageItem.copy(
+            storeShippingDate = effectiveStoreShippingDate,
+            forwarderShippedDate = effectiveForwarderShippedDate
+        )
+        packageDao.update(resolvedPkg)
+
+        val newStatus = when {
+            resolvedPkg.receivedDate != null && (oldPkg?.receivedDate == null || oldPkg.receivedDate != resolvedPkg.receivedDate) -> "Received"
+            resolvedPkg.forwarderShippedDate != null && (oldPkg?.forwarderShippedDate == null || oldPkg.forwarderShippedDate != resolvedPkg.forwarderShippedDate) -> "Forwarded"
+            resolvedPkg.forwarderReceivedDate != null && (oldPkg?.forwarderReceivedDate == null || oldPkg.forwarderReceivedDate != resolvedPkg.forwarderReceivedDate) -> "In Suite"
+            resolvedPkg.storeShippingDate != null && (oldPkg?.storeShippingDate == null || oldPkg.storeShippingDate != resolvedPkg.storeShippingDate) -> "Shipped"
+            resolvedPkg.receivedDate != null -> "Received"
+            resolvedPkg.forwarderShippedDate != null -> "Forwarded"
+            resolvedPkg.forwarderReceivedDate != null -> "In Suite"
+            resolvedPkg.storeShippingDate != null -> "Shipped"
+            else -> null
+        }
+
+        if (newStatus != null) {
+            if (resolvedPkg.originTable == "preorders") {
+                val preorder = preorderDao.getPreorderById(resolvedPkg.originId)
+                if (preorder != null && !preorder.status.equals(newStatus, ignoreCase = true)) {
+                    preorderDao.update(preorder.copy(status = newStatus))
+                }
+            } else if (resolvedPkg.originTable == "scheduled_subs") {
+                val sub = scheduledSubscriptionDao.getScheduledSubscriptionById(resolvedPkg.originId)
+                if (sub != null && !sub.status.equals(newStatus, ignoreCase = true)) {
+                    scheduledSubscriptionDao.update(sub.copy(status = newStatus))
+                }
+            }
+        }
     }
 
     suspend fun insertPackage(packageItem: PackageItem): Long {
-        return packageDao.insert(packageItem)
+        var effectiveStoreShippingDate = packageItem.storeShippingDate
+        if (effectiveStoreShippingDate == null && !packageItem.storeTrackingNumber.isNullOrBlank()) {
+            effectiveStoreShippingDate = System.currentTimeMillis()
+        }
+
+        var effectiveForwarderShippedDate = packageItem.forwarderShippedDate
+        if (effectiveForwarderShippedDate == null && !packageItem.forwarderTrackingNumber.isNullOrBlank()) {
+            effectiveForwarderShippedDate = System.currentTimeMillis()
+        }
+
+        val resolvedPkg = packageItem.copy(
+            storeShippingDate = effectiveStoreShippingDate,
+            forwarderShippedDate = effectiveForwarderShippedDate
+        )
+        val id = packageDao.insert(resolvedPkg)
+
+        val newStatus = when {
+            resolvedPkg.receivedDate != null -> "Received"
+            resolvedPkg.forwarderShippedDate != null -> "Forwarded"
+            resolvedPkg.forwarderReceivedDate != null -> "In Suite"
+            resolvedPkg.storeShippingDate != null -> "Shipped"
+            else -> null
+        }
+        if (newStatus != null) {
+            if (resolvedPkg.originTable == "preorders") {
+                val preorder = preorderDao.getPreorderById(resolvedPkg.originId)
+                if (preorder != null && !preorder.status.equals(newStatus, ignoreCase = true)) {
+                    preorderDao.update(preorder.copy(status = newStatus))
+                }
+            } else if (resolvedPkg.originTable == "scheduled_subs") {
+                val sub = scheduledSubscriptionDao.getScheduledSubscriptionById(resolvedPkg.originId)
+                if (sub != null && !sub.status.equals(newStatus, ignoreCase = true)) {
+                    scheduledSubscriptionDao.update(sub.copy(status = newStatus))
+                }
+            }
+        }
+        return id
     }
 
     suspend fun importSpreadsheetData(
@@ -1314,8 +1394,43 @@ class BookishRepository(private val database: BookishDatabase) {
                         (!pkg.forwarderTrackingNumber.isNullOrBlank() && existing.forwarderTrackingNumber == pkg.forwarderTrackingNumber)
                     }
                     if (duplicate == null) {
-                        val insertedId = packageDao.insert(pkg.copy(id = 0, originId = resolvedOriginId)).toInt()
-                        existingPackages.add(pkg.copy(id = insertedId, originId = resolvedOriginId))
+                        var effStoreShip = pkg.storeShippingDate
+                        if (effStoreShip == null && !pkg.storeTrackingNumber.isNullOrBlank()) {
+                            effStoreShip = System.currentTimeMillis()
+                        }
+                        var effFwdShip = pkg.forwarderShippedDate
+                        if (effFwdShip == null && !pkg.forwarderTrackingNumber.isNullOrBlank()) {
+                            effFwdShip = System.currentTimeMillis()
+                        }
+                        val resolvedPkg = pkg.copy(
+                            id = 0,
+                            originId = resolvedOriginId,
+                            storeShippingDate = effStoreShip,
+                            forwarderShippedDate = effFwdShip
+                        )
+                        val insertedId = packageDao.insert(resolvedPkg).toInt()
+                        existingPackages.add(resolvedPkg.copy(id = insertedId))
+
+                        val importedStatus = when {
+                            resolvedPkg.receivedDate != null -> "Received"
+                            resolvedPkg.forwarderShippedDate != null -> "Forwarded"
+                            resolvedPkg.forwarderReceivedDate != null -> "In Suite"
+                            resolvedPkg.storeShippingDate != null -> "Shipped"
+                            else -> null
+                        }
+                        if (importedStatus != null) {
+                            if (pkg.originTable == "preorders") {
+                                val pr = preorderDao.getPreorderById(resolvedOriginId)
+                                if (pr != null && !pr.status.equals(importedStatus, ignoreCase = true)) {
+                                    preorderDao.update(pr.copy(status = importedStatus))
+                                }
+                            } else if (pkg.originTable == "scheduled_subs") {
+                                val sc = scheduledSubscriptionDao.getScheduledSubscriptionById(resolvedOriginId)
+                                if (sc != null && !sc.status.equals(importedStatus, ignoreCase = true)) {
+                                    scheduledSubscriptionDao.update(sc.copy(status = importedStatus))
+                                }
+                            }
+                        }
                     }
                 }
 

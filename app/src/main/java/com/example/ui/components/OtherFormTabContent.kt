@@ -434,11 +434,13 @@ fun OtherFormTabContent(
                 leadingIcon = {
                     Text(selectedCurrency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardActions = rememberNextKeyboardActions(),
                 singleLine = true,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("other_tab_base_price")
+                    .nextOnEnter()
             )
 
             // Discounted Amount (to the right of base price)
@@ -449,11 +451,13 @@ fun OtherFormTabContent(
                 leadingIcon = {
                     Text(selectedCurrency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardActions = rememberNextKeyboardActions(),
                 singleLine = true,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("other_tab_discounted_amount")
+                    .nextOnEnter()
             )
         }
 
@@ -470,11 +474,13 @@ fun OtherFormTabContent(
                 leadingIcon = {
                     Text(selectedCurrency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardActions = rememberNextKeyboardActions(),
                 singleLine = true,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("other_tab_shipping_price")
+                    .nextOnEnter()
             )
 
             OutlinedTextField(
@@ -484,11 +490,13 @@ fun OtherFormTabContent(
                 leadingIcon = {
                     Text(selectedCurrency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardActions = rememberNextKeyboardActions(),
                 singleLine = true,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("other_tab_tax_price")
+                    .nextOnEnter()
             )
         }
 
@@ -537,11 +545,13 @@ fun OtherFormTabContent(
                         leadingIcon = {
                             Text(selectedCurrency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        keyboardActions = rememberNextKeyboardActions(),
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
                             .testTag("other_tab_forward_shipping_price")
+                            .nextOnEnter()
                     )
 
                     OutlinedTextField(
@@ -551,11 +561,13 @@ fun OtherFormTabContent(
                         leadingIcon = {
                             Text(selectedCurrency, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        keyboardActions = rememberNextKeyboardActions(),
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
                             .testTag("other_tab_forward_tax_price")
+                            .nextOnEnter()
                     )
                 }
             }

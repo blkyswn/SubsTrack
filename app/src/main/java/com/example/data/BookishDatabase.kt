@@ -24,7 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SubscriptionSkip::class,
         PackageItem::class
     ],
-    version = 28,
+    version = 30,
     exportSchema = false
 )
 abstract class BookishDatabase : RoomDatabase() {
@@ -331,8 +331,20 @@ abstract class BookishDatabase : RoomDatabase() {
             }
         }
 
-        fun ensureColumnExists(db: SupportSQLiteDatabase, table: String, column: String, colDef: String) {
-            try {
+        fun tableExists(db: SupportSQLiteDatabase, table: String): Boolean {
+            return try {
+                val cursor = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", arrayOf(table))
+                val exists = cursor.moveToFirst()
+                cursor.close()
+                exists
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        fun hasColumn(db: SupportSQLiteDatabase, table: String, column: String): Boolean {
+            if (!tableExists(db, table)) return false
+            return try {
                 val cursor = db.query("PRAGMA table_info(`$table`)")
                 var exists = false
                 while (cursor.moveToNext()) {
@@ -343,7 +355,16 @@ abstract class BookishDatabase : RoomDatabase() {
                     }
                 }
                 cursor.close()
-                if (!exists) {
+                exists
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        fun ensureColumnExists(db: SupportSQLiteDatabase, table: String, column: String, colDef: String) {
+            try {
+                if (!tableExists(db, table)) return
+                if (!hasColumn(db, table, column)) {
                     db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $colDef")
                     android.util.Log.d("BookishDatabase", "Safely added column $column to $table without data loss")
                 }
@@ -386,6 +407,24 @@ abstract class BookishDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureColumnExists(db, "preorders", "wishlist", "INTEGER NOT NULL DEFAULT 0")
+                ensureColumnExists(db, "scheduled_subscriptions", "wishlist", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                ensureColumnExists(db, "scheduled_subscriptions", "bookmark", "INTEGER NOT NULL DEFAULT 0")
+                if (hasColumn(db, "scheduled_subscriptions", "wishlist")) {
+                    try {
+                        db.execSQL("UPDATE scheduled_subscriptions SET bookmark = wishlist WHERE bookmark = 0 AND wishlist = 1")
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
         private fun backupDatabaseFiles(context: Context) {
             try {
                 val dbFile = context.getDatabasePath("bookish_database")
@@ -425,7 +464,8 @@ abstract class BookishDatabase : RoomDatabase() {
                 MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
                 MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21,
                 MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28
+                MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
+                MIGRATION_29_30
             )
             .addCallback(object : RoomDatabase.Callback() {
                 override fun onOpen(db: SupportSQLiteDatabase) {
@@ -443,6 +483,13 @@ abstract class BookishDatabase : RoomDatabase() {
                     ensureColumnExists(db, "forwarding_services", "reminderHour", "INTEGER NOT NULL DEFAULT 8")
                     ensureColumnExists(db, "forwarding_services", "reminderMinute", "INTEGER NOT NULL DEFAULT 0")
                     ensureColumnExists(db, "packages", "purchaseDate", "INTEGER")
+                    ensureColumnExists(db, "preorders", "wishlist", "INTEGER NOT NULL DEFAULT 0")
+                    ensureColumnExists(db, "scheduled_subscriptions", "bookmark", "INTEGER NOT NULL DEFAULT 0")
+                    if (hasColumn(db, "scheduled_subscriptions", "wishlist")) {
+                        try {
+                            db.execSQL("UPDATE scheduled_subscriptions SET bookmark = wishlist WHERE bookmark = 0 AND wishlist = 1")
+                        } catch (_: Exception) {}
+                    }
                     try {
                         db.execSQL("CREATE TEMP TABLE IF NOT EXISTS room_table_modification_log (table_id INTEGER PRIMARY KEY, invalidated INTEGER NOT NULL DEFAULT 0);")
                     } catch (_: Exception) {}
@@ -451,13 +498,31 @@ abstract class BookishDatabase : RoomDatabase() {
             .build()
         }
 
+        fun resetInstanceForTesting() {
+            synchronized(this) {
+                try {
+                    INSTANCE?.close()
+                } catch (_: Exception) {}
+                INSTANCE = null
+            }
+        }
+
         fun getDatabase(context: Context): BookishDatabase {
-            return INSTANCE ?: synchronized(this) {
-                // Safeguard user data: always backup before opening or migrating
-                backupDatabaseFiles(context)
-                val instance = buildDatabase(context)
-                INSTANCE = instance
-                instance
+            val existing = INSTANCE
+            if (existing != null && existing.isOpen) {
+                return existing
+            }
+            return synchronized(this) {
+                val current = INSTANCE
+                if (current != null && current.isOpen) {
+                    current
+                } else {
+                    // Safeguard user data: always backup before opening or migrating
+                    backupDatabaseFiles(context)
+                    val instance = buildDatabase(context)
+                    INSTANCE = instance
+                    instance
+                }
             }
         }
 

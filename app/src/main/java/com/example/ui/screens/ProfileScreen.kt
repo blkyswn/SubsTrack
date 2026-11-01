@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
 import android.widget.Toast
+import com.example.ui.components.nextOnEnter
+import com.example.ui.components.nextKeyboardOptions
+import com.example.ui.components.rememberNextKeyboardActions
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -718,7 +721,10 @@ fun ProfileScreen(
                                         autoSave(username = newValue)
                                     },
                                     label = { Text("Display Username", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    modifier = Modifier.fillMaxWidth().testTag("profile_username"),
+                                    singleLine = true,
+                                    keyboardOptions = nextKeyboardOptions(),
+                                    keyboardActions = rememberNextKeyboardActions(),
+                                    modifier = Modifier.fillMaxWidth().testTag("profile_username").nextOnEnter(),
                                     leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) }
                                 )
 
@@ -1004,8 +1010,10 @@ fun ProfileScreen(
                                     label = { Text("Default Scheduled Subs to Create", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     placeholder = { Text("6") },
                                     leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.fillMaxWidth().testTag("profile_scheduled_count")
+                                    keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Number),
+                                    keyboardActions = rememberNextKeyboardActions(),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().testTag("profile_scheduled_count").nextOnEnter()
                                 )
 
                                 // Default Tracking URL field
@@ -1018,6 +1026,10 @@ fun ProfileScreen(
                                     label = { Text("Default Tracking URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     placeholder = { Text("e.g. https://parcelsapp.com/en/tracking/{tracking}") },
                                     leadingIcon = { Icon(Icons.Default.TravelExplore, contentDescription = null) },
+                                    keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Uri),
+                                    keyboardActions = rememberNextKeyboardActions(),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().testTag("profile_tracking_url").nextOnEnter(),
                                     trailingIcon = {
                                         if (editDefaultTrackingUrl.isNotEmpty()) {
                                             IconButton(
@@ -1033,10 +1045,7 @@ fun ProfileScreen(
                                                 )
                                             }
                                         }
-                                    },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                                    modifier = Modifier.fillMaxWidth().testTag("profile_default_tracking_url")
+                                    }
                                 )
 
                                 // App Folder field
@@ -2403,9 +2412,12 @@ private fun AddressFormDialog(
                         { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                     } else null,
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("address_form_street1")
+                        .nextOnEnter()
                 )
 
                 // Street Address 2
@@ -2416,9 +2428,12 @@ private fun AddressFormDialog(
                     placeholder = { Text("e.g. Apt 4B, Suite 200") },
                     leadingIcon = { Icon(Icons.Default.LocationCity, contentDescription = null) },
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("address_form_street2")
+                        .nextOnEnter()
                 )
 
                 // City
@@ -2441,9 +2456,12 @@ private fun AddressFormDialog(
                         { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                     } else null,
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("address_form_city")
+                        .nextOnEnter()
                 )
 
                 // State / Region
@@ -2454,9 +2472,12 @@ private fun AddressFormDialog(
                     placeholder = { Text("State") },
                     leadingIcon = { Icon(Icons.Default.Map, contentDescription = null) },
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("address_form_state")
+                        .nextOnEnter()
                 )
 
                 // Postal Code
@@ -2479,9 +2500,12 @@ private fun AddressFormDialog(
                         { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                     } else null,
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("address_form_postal")
+                        .nextOnEnter()
                 )
 
                 // Country with Dropdown Menu (Styled identically to User Profile country field)

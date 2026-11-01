@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import com.example.ui.components.nextOnEnter
+import com.example.ui.components.nextKeyboardOptions
+import com.example.ui.components.rememberNextKeyboardActions
+import androidx.compose.ui.text.input.KeyboardType
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -841,7 +845,9 @@ fun BookstoresScreen(
                                 { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                             } else null,
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("add_bookstore_name")
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("add_bookstore_name").nextOnEnter()
                         )
 
                         // Google Contacts style contact fields
@@ -1163,7 +1169,9 @@ fun BookstoresScreen(
                                 { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                             } else null,
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("edit_bookstore_name")
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("edit_bookstore_name").nextOnEnter()
                         )
 
                         // Google Contacts style contact fields
@@ -1296,7 +1304,9 @@ fun BookstoresScreen(
                                 { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                             } else null,
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("add_forwarding_service_name")
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("add_forwarding_service_name").nextOnEnter()
                         )
 
                         OutlinedTextField(
@@ -1316,7 +1326,9 @@ fun BookstoresScreen(
                                 )
                             },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("add_forwarding_service_storage_days")
+                            keyboardOptions = nextKeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("add_forwarding_service_storage_days").nextOnEnter()
                         )
 
                         // Reminder Notification Section
@@ -1493,7 +1505,9 @@ fun BookstoresScreen(
                                 { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                             } else null,
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("edit_forwarding_service_name")
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("edit_forwarding_service_name").nextOnEnter()
                         )
 
                         OutlinedTextField(
@@ -1513,7 +1527,9 @@ fun BookstoresScreen(
                                 )
                             },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("edit_forwarding_service_storage_days")
+                            keyboardOptions = nextKeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("edit_forwarding_service_storage_days").nextOnEnter()
                         )
 
                         // Reminder Notification Section
@@ -1894,7 +1910,9 @@ fun BookstoresScreen(
                                 { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                             } else null,
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("add_shipping_company_name")
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("add_shipping_company_name").nextOnEnter()
                         )
 
                         BookstoreContactsSection(
@@ -2018,7 +2036,9 @@ fun BookstoresScreen(
                                 { Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error) }
                             } else null,
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("edit_shipping_company_name")
+                            keyboardOptions = nextKeyboardOptions(),
+                            keyboardActions = rememberNextKeyboardActions(),
+                            modifier = Modifier.fillMaxWidth().testTag("edit_shipping_company_name").nextOnEnter()
                         )
 
                         BookstoreContactsSection(
@@ -2136,9 +2156,12 @@ fun BookstoreContactsSection(
                         )
                     },
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Uri),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("contact_field_website_${item.id}")
+                        .nextOnEnter()
                 )
                 IconButton(
                     onClick = { onRemoveContact(item.id) },
@@ -2183,9 +2206,12 @@ fun BookstoreContactsSection(
                             )
                         },
                         singleLine = true,
+                        keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Uri),
+                        keyboardActions = rememberNextKeyboardActions(),
                         modifier = Modifier
                             .weight(1f)
                             .testTag("contact_field_tracking_url_${item.id}")
+                            .nextOnEnter()
                     )
                     IconButton(
                         onClick = { onRemoveContact(item.id) },
@@ -2230,9 +2256,12 @@ fun BookstoreContactsSection(
                         )
                     },
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Email),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("contact_field_email_${item.id}")
+                        .nextOnEnter()
                 )
                 IconButton(
                     onClick = { onRemoveContact(item.id) },
@@ -2276,9 +2305,12 @@ fun BookstoreContactsSection(
                         )
                     },
                     singleLine = true,
+                    keyboardOptions = nextKeyboardOptions(keyboardType = KeyboardType.Phone),
+                    keyboardActions = rememberNextKeyboardActions(),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("contact_field_phone_${item.id}")
+                        .nextOnEnter()
                 )
                 IconButton(
                     onClick = { onRemoveContact(item.id) },
@@ -2332,7 +2364,9 @@ fun BookstoreContactsSection(
                             )
                         },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("custom_label_${item.id}")
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().testTag("custom_label_${item.id}").nextOnEnter()
                     )
                     OutlinedTextField(
                         value = item.value,
@@ -2347,7 +2381,9 @@ fun BookstoreContactsSection(
                             )
                         },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("custom_value_${item.id}")
+                        keyboardOptions = nextKeyboardOptions(),
+                        keyboardActions = rememberNextKeyboardActions(),
+                        modifier = Modifier.fillMaxWidth().testTag("custom_value_${item.id}").nextOnEnter()
                     )
                 }
                 IconButton(

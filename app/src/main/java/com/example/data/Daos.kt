@@ -179,6 +179,9 @@ interface ScheduledSubscriptionDao {
     @Query("DELETE FROM scheduled_subscriptions WHERE subscriptionTypeId = :subTypeId")
     suspend fun deleteScheduledSubsForType(subTypeId: Int)
 
+    @Query("SELECT * FROM scheduled_subscriptions WHERE bookmark = 1 ORDER BY dueDate ASC")
+    fun getBookmarkedScheduledSubscriptions(): Flow<List<ScheduledSubscription>>
+
     @Query("DELETE FROM scheduled_subscriptions")
     suspend fun deleteAllScheduledSubscriptions()
 }
@@ -190,6 +193,9 @@ interface PreorderDao {
 
     @Query("SELECT * FROM preorders")
     suspend fun getAllPreordersList(): List<Preorder>
+
+    @Query("SELECT * FROM preorders WHERE wishlist = 1 ORDER BY rangedSaleDateStart ASC")
+    fun getWishlistPreorders(): Flow<List<Preorder>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(preorder: Preorder): Long
